@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
-import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization } from './setup-lib.mjs'
+import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -40,8 +40,9 @@ if (/\r|\n/.test(serverUrl) || /\r|\n/.test(userKey)) throw new Error('平台配
 await mkdir(configDir,{recursive:true,mode:0o700}); await writeFile(configFile,`CAPITAL_AGENT_SERVER_URL=${serverUrl}\nCAPITAL_AGENT_USER_KEY=${userKey}\n`,{mode:0o600}); await chmod(configFile,0o600)
 
 const installed = []
-if (!args.claudeOnly) installed.push(`Codex: ${(await installSkillLinks(join(root,'skills'),join(homedir(),'.codex/skills'))).length}`)
-if (!args.codexOnly) installed.push(`Claude: ${(await installSkillLinks(join(root,'skills'),join(homedir(),'.claude/skills'))).length}`)
+const targets = skillTargets(homedir())
+if (!args.claudeOnly) installed.push(`Codex: ${(await installSkillLinks(join(root,'skills'),targets.codex)).length}`)
+if (!args.codexOnly) installed.push(`Claude: ${(await installSkillLinks(join(root,'skills'),targets.claude)).length}`)
 const wrapper = join(here,'mcp-remote.mjs')
 if (!args.configOnly && !args.claudeOnly && commandExists('codex')) { try { run('codex',['mcp','remove','capital-agent']) } catch {}; run('codex',['mcp','add','capital-agent','--',process.execPath,wrapper]) }
 if (!args.configOnly && !args.codexOnly && commandExists('claude')) { try { run('claude',['mcp','remove','capital-agent','-s','user']) } catch {}; run('claude',['mcp','add','-s','user','capital-agent','--',process.execPath,wrapper]) }

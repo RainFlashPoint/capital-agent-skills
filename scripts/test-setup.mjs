@@ -3,12 +3,15 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization } from './setup-lib.mjs'
+import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
   assert.equal(normalizeServerUrl('https://example.test/'), 'https://example.test')
   assert.throws(() => normalizeServerUrl('file:///tmp/a'))
+})
+test('uses the current Codex user skill discovery directory', () => {
+  assert.equal(skillTargets('/home/dev').codex, '/home/dev/.agents/skills')
 })
 test('installs links without replacing an existing directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cap-setup-')); const source = join(root,'source'); const target = join(root,'target')

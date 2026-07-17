@@ -6,6 +6,8 @@ export function parseSetupArgs(argv = []) {
   return { server: value('--server'), project: argv.includes('--project'), doctor: argv.includes('--doctor'), upgrade: argv.includes('--upgrade'), configOnly: argv.includes('--config-only'), codexOnly: argv.includes('--codex-only'), claudeOnly: argv.includes('--claude-only') }
 }
 
+export const skillTargets = home => ({ codex: join(home, '.agents/skills'), claude: join(home, '.claude/skills') })
+
 export async function installSkillLinks(sourceDir, targetDir) {
   const { readdir } = await import('fs/promises')
   await mkdir(targetDir, { recursive: true })

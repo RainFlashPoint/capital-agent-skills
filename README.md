@@ -39,10 +39,10 @@ node /path/to/capital-agent-skills/scripts/install-git-governance.mjs
 ```bash
 git clone https://github.com/RainFlashPoint/capital-agent-skills.git
 # Claude Code: 作为 plugin 加载(见 .claude-plugin/)，或把 skills/* 链接到 ~/.claude/skills/
-# Codex: 把 skills/* 链接到 ~/.codex/skills/
+# Codex: 把 skills/* 链接到 ~/.agents/skills/
 ```
 
-**跑 cap 流程**：在会话里调用 `/cap`（driver 会读状态、路由到合适的阶段 skill）。首次进一个 brownfield 项目先跑 map 建 PROFILE。
+**跑 cap 流程**：Codex 输入 `$cap`（也可先输入 `/skills` 浏览并选择 `cap`）；Claude Code 输入 `/cap`。driver 会读状态并路由到合适阶段。首次进入 brownfield 项目会先 map 建 PROFILE。
 
 **开经验闭环**：先按 [setup-mcp.md](skills/harvest-experience/references/setup-mcp.md) 注册 `capital-agent` MCP server，之后 `harvest-experience` 会在编码会话首尾自动注入/沉淀。
 
