@@ -42,3 +42,11 @@ export async function pollDeviceAuthorization(serverUrl, secret, { fetchImpl = f
   }
   throw new Error('设备授权已超时，请重新运行安装')
 }
+
+export async function checkPlatformConnection(serverUrl, userKey, fetchImpl = fetch) {
+  if (!serverUrl || !userKey) return false
+  try {
+    const response = await fetchImpl(`${serverUrl}/api/auth/heartbeat`, { method: 'PUT', headers: { 'x-user-key': userKey } })
+    return response.ok
+  } catch { return false }
+}

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization } from './setup-lib.mjs'
+import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -20,4 +20,12 @@ test('polls until browser approval', async () => {
   let calls = 0
   const key = await pollDeviceAuthorization('https://example.test','secret',{ wait: async()=>{}, fetchImpl: async()=>({ ok: ++calls > 1, status: calls > 1 ? 200 : 202, json: async()=>calls > 1 ? {data:{user_key:'u1'}} : {data:{status:'pending'}} }) })
   assert.equal(key,'u1')
+})
+test('doctor probes an authenticated API route behind the public gateway', async () => {
+  let request
+  const ok = await checkPlatformConnection('https://example.test','user-key',async (url, options) => { request = { url, options }; return { ok: true } })
+  assert.equal(ok,true)
+  assert.equal(request.url,'https://example.test/api/auth/heartbeat')
+  assert.equal(request.options.method,'PUT')
+  assert.equal(request.options.headers['x-user-key'],'user-key')
 })

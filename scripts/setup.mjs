@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
-import { installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization } from './setup-lib.mjs'
+import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -19,6 +19,13 @@ function openBrowser(url) {
   const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'
   const values = process.platform === 'win32' ? ['/c','start','',url] : [url]
   try { spawn(command,values,{detached:true,stdio:'ignore'}).unref() } catch {}
+}
+
+if (args.doctor) {
+  const health = await checkPlatformConnection(serverUrl,userKey)
+  process.stdout.write(`平台身份连接: ${health?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\nCodex CLI: ${commandExists('codex')?'PASS':'未安装'}\nClaude CLI: ${commandExists('claude')?'PASS':'未安装'}\n`)
+  if (!health) process.exitCode=1
+  process.exit()
 }
 
 if (args.upgrade) run('git',['pull','--ff-only'],{cwd:root})
@@ -39,8 +46,4 @@ const wrapper = join(here,'mcp-remote.mjs')
 if (!args.configOnly && !args.claudeOnly && commandExists('codex')) { try { run('codex',['mcp','remove','capital-agent']) } catch {}; run('codex',['mcp','add','capital-agent','--',process.execPath,wrapper]) }
 if (!args.configOnly && !args.codexOnly && commandExists('claude')) { try { run('claude',['mcp','remove','capital-agent','-s','user']) } catch {}; run('claude',['mcp','add','-s','user','capital-agent','--',process.execPath,wrapper]) }
 if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
-if (args.doctor) {
-  const health = await fetch(`${serverUrl}/health`).then(r=>r.ok).catch(()=>false)
-  process.stdout.write(`平台连接: ${health?'PASS':'FAIL'}\n配置权限: 0600\n${installed.join('\n')}\n`)
-  if (!health) process.exitCode=1
-} else process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}。配置仅保存在 ${configFile}。\n`)
+process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}。配置仅保存在 ${configFile}。\n`)
