@@ -1,0 +1,45 @@
+#!/bin/sh
+# cap-flow post-checkout —— 切分支时把当前在飞特性的源叶 status flush 落盘(混合写回·硬层)。
+# git 在每次 checkout 后自动跑;传 $1=prev_HEAD $2=new_HEAD $3=branch_flag(1=切分支,0=切文件)。
+# 设计意图:中间态(shaped/planned/built/verified)平时惰性派生只活在 STATE;切分支离开特性时,
+#          STATE 可能被另一特性覆盖 → 此钩子在离开瞬间把过渡态固化进叶文件,避免丢失。
+#          **由 git 执行,模型/人绕不过**(唯一逃逸=删钩子或 --no-verify 不适用 checkout)。
+# 永不阻断 checkout:任何失败只警告 + exit 0。
+# 装:cap-map 脚手架自检询问后拷到 .git/hooks/post-checkout 并 chmod +x;
+#    或手动:cp 本文件 .git/hooks/post-checkout && chmod +x .git/hooks/post-checkout
+#
+# 注:对自身无 requirements 树的项目是 no-op(下面 [ -d "$req" ] 守住)。
+
+[ "$3" = "1" ] || exit 0   # 只在真切分支时动作
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+STATE="$repo_root/.cap/STATE.md"; [ -f "$STATE" ] || exit 0
+
+val() { grep -iE "^$1:" "$STATE" 2>/dev/null | head -1 | sed "s/^[^:]*: *//" | tr -d '\r' | sed 's/^ *//;s/ *$//'; }
+leaf=$(val source-leaf); stage=$(val stage)
+[ -n "$leaf" ] && [ "$leaf" != "(none)" ] || exit 0
+
+# stage → status 映射(与 intake.STAGE_TO_STATUS 一致;非过渡 stage 不 flush)
+case "$stage" in
+  shape)          to="shaped" ;;
+  plan)           to="planned" ;;
+  build)          to="built" ;;
+  verify|review)  to="verified" ;;
+  release)        to="shipped" ;;
+  *)              exit 0 ;;
+esac
+
+req="$repo_root/.cap/requirements"; [ -d "$req" ] || exit 0
+
+# 找 intake.py(优先项目内,再常见安装位置)
+ik=""
+for c in \
+  "$repo_root/scripts/intake.py" \
+  "$HOME/.claude/skills/cap-flow/scripts/intake.py" \
+  "$HOME/.claude/plugins/cache"/*/capital-agent-skills/*/scripts/intake.py ; do
+  [ -f "$c" ] && { ik="$c"; break; }
+done
+[ -n "$ik" ] || exit 0
+
+python3 "$ik" set-status --root "$req" --leaf "$leaf" --to "$to" >/dev/null 2>&1 \
+  || echo "ℹ post-checkout: flush 叶 '$leaf' -> $to 失败(非阻断;手动可 intake.py set-status)" >&2
+exit 0

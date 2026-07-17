@@ -1,0 +1,36 @@
+#!/bin/sh
+# cap-flow pre-commit —— 并发/边界硬门禁。
+# 作用:commit 前由 git 自动跑 cap-guard(skills/cap-flow/scripts/),检测 STATE 与当前 branch/worktree 是否串台。
+#       **由 git 执行,不是模型执行** → 模型绕不过;唯一逃逸 = 人显式 `git commit --no-verify`。
+# 安装:由 cap-map 脚手架自检询问后拷到 .git/hooks/pre-commit 并 chmod +x;
+#       或手动:cp 本文件 .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# 找 cap-guard:优先用项目内软链/拷贝的 cap 技能;否则在常见安装位置找。
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+guard=""
+for c in \
+  "$repo_root/.cap/bin/cap-guard" \
+  "$HOME/.claude/skills/cap-flow/scripts/cap-guard" \
+  "$HOME/.claude/plugins/cache"/*/capital-agent-skills/*/skills/cap-flow/scripts/cap-guard ; do
+  [ -f "$c" ] && { guard="$c"; break; }
+done
+
+if [ -z "$guard" ]; then
+  # 找不到脚本时不静默放行也不硬挂:做内联最小检查(branch 戳)。
+  STATE="$repo_root/.cap/STATE.md"
+  [ -f "$STATE" ] || exit 0
+  st_branch=$(grep -iE '^branch:' "$STATE" | head -1 | sed 's/^[^:]*: *//' | tr -d '[:space:]')
+  cur=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+  if [ -n "$st_branch" ] && [ "$st_branch" != "$cur" ]; then
+    echo "✗ cap-guard(内联): STATE 属于分支 '$st_branch',当前 '$cur' —— 串台。"
+    echo "  切回 '$st_branch',或为新工作开 worktree/分支。绕过:git commit --no-verify"
+    exit 1
+  fi
+  exit 0
+fi
+
+( cd "$repo_root" && sh "$guard" ) || {
+  echo "  (绕过:git commit --no-verify —— 仅当你确知在做什么)"
+  exit 1
+}
+exit 0

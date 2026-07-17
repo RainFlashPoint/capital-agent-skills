@@ -1,0 +1,25 @@
+# .cap/ 二分:在飞工作态本地忽略;已完成/已蒸馏产物纳入 git 跨机器持久
+.cap/*
+!.cap/archive/
+!.cap/EVOLUTION.md
+!.cap/PROFILE.md
+.DS_Store
+.idea/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+node_modules/
+.superpowers/
+docs/dogfood/
+.playwright-mcp/    # 浏览器 MCP 会话产物(console/page 快照),非源码
+
+# web-review 运行时产物（server.py 在其目录跑测试/审阅时生成，非源码）
+skills/cap-flow/references/web-review/feedback.json
+skills/cap-flow/references/web-review/feedback-history.jsonl
+skills/cap-flow/references/web-review/replies.json
+skills/cap-flow/references/web-review/rev
+
+# 需求树 board 渲染产物(派生,可由 intake.py board 重生成)
+_board.html

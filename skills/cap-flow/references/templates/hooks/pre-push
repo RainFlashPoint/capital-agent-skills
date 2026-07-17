@@ -1,0 +1,63 @@
+#!/bin/sh
+# cap-flow pre-push 检查
+# 作用：代码离开本机(push)前，确保该跑的 cap 检查(verify + review)都过了。
+# 纯 shell —— 不调用任何 AI、不需要任何密钥(评审由你在本地用 /cap 跑到 review 阶段，
+#            它会把结论写进 .cap/STATE.md；本 hook 只核对那行结论)。
+# 绕过(明知故犯)：git push --no-verify
+#
+# 安装：由 cap-map 的"脚手架自检"主动询问后拷到 .git/hooks/pre-push 并 chmod +x，
+#       或手动：cp 本文件 .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+
+STATE=".cap/STATE.md"
+HEAD_SHA=$(git rev-parse HEAD 2>/dev/null)
+SHORT=$(git rev-parse --short HEAD 2>/dev/null)
+
+if [ ! -f "$STATE" ]; then
+  # 无 STATE 有两种情形:① 特性已退场(retire 清栈,工件归档到 .cap/archive/)= 合法收尾
+  #                    ② 从没走过 cap 流程。用 archive 区分。
+  if [ -n "$(ls -A .cap/archive 2>/dev/null)" ]; then
+    echo "✓ cap: 无在飞特性(STATE 已随退场归档),.cap/archive 有退场记录 —— 放行 (HEAD ${SHORT})"
+    exit 0
+  fi
+  echo "✗ cap: 没找到 $STATE 且无 .cap/archive —— 这些改动还没走过 cap 流程。"
+  echo "  先跑 /cap 走一遍(shape→plan→build→verify→review)。"
+  echo "  确实要跳过：git push --no-verify"
+  exit 1
+fi
+
+# 契约：cap-review 全部通过时，会向 STATE 写入恰好一行：
+#   cap-gate: PASS reviewed-head=<被评审的 commit sha>
+# 未通过/被门控时写 BLOCK。本 hook 只认这行。
+GATE_LINE=$(grep -iE '^cap-gate:' "$STATE" | tail -1)
+
+case "$GATE_LINE" in
+  *"PASS"*) ;;  # 继续核对 head
+  *)
+    echo "✗ cap: STATE 里没有 'cap-gate: PASS' —— verify / review 还没全过。"
+    echo "  跑 /cap(会进 verify)走到 review。绕过：git push --no-verify"
+    exit 1 ;;
+esac
+
+REVIEWED=$(printf '%s' "$GATE_LINE" | sed -n 's/.*reviewed-head=\([0-9a-f]*\).*/\1/p')
+if [ -n "$REVIEWED" ] && [ "$REVIEWED" != "$HEAD_SHA" ]; then
+  # HEAD 移过 reviewed-head 不一定是"又改了代码":退场归档(retire)+合并收尾会推进 HEAD 但
+  # 只动 .cap/ bookkeeping。判据=reviewed-head..HEAD 间【非 .cap/ 的代码】是否真有改动。
+  # 先确认 reviewed-head 是本仓有效 commit(异仓/rebase 致失效时 diff 会空,不能据此误放行)→ 失效则保守拦。
+  if ! git cat-file -e "${REVIEWED}^{commit}" 2>/dev/null; then
+    echo "✗ cap: reviewed-head ${REVIEWED} 不是本仓有效 commit(可能 rebase/异仓)—— 保守拦截。"
+    echo "  重新跑 /cap 到 review 刷新 reviewed-head。绕过：git push --no-verify"
+    exit 1
+  fi
+  CODE_CHANGED=$(git diff --name-only "$REVIEWED..$HEAD_SHA" -- . ':(exclude).cap' 2>/dev/null)
+  if [ -z "$CODE_CHANGED" ]; then
+    echo "✓ cap: 评审后仅 .cap/ 收尾变动(retire/merge),代码未变 —— 放行 (reviewed ${REVIEWED} → HEAD ${SHORT})"
+    exit 0
+  fi
+  echo "✗ cap: 评审过的是 ${REVIEWED}，当前 HEAD 是 ${HEAD_SHA} —— 评审之后改了代码:"
+  printf '    %s\n' $CODE_CHANGED
+  echo "  重新跑 /cap 到 review。绕过：git push --no-verify"
+  exit 1
+fi
+
+echo "✓ cap: verify + review 均通过 (HEAD ${SHORT})"
+exit 0

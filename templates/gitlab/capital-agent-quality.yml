@@ -1,0 +1,13 @@
+capital-agent-commit-policy:
+  stage: .pre
+  image: alpine:3.20
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+  script:
+    - |
+      subject="$(git log -1 --pretty=%s)"
+      echo "$subject" | grep -Eq '^(feat|fix|refactor|perf|test|docs|build|ci|chore|revert)(\([a-zA-Z0-9._/-]+\))?!?: .{8,}$' || { echo "无效 Commit: $subject"; exit 1; }
+    - |
+      body="$(git log -1 --pretty=%B)"
+      echo "$body" | grep -Eq '^Task: task_[a-zA-Z0-9_-]+' || { echo "Commit 缺少 Task trailer"; exit 1; }

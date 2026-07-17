@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+message_file="$1"
+subject="$(sed -n '1p' "$message_file" | tr -d '\r')"
+normalized="$(printf '%s' "$subject" | tr '[:upper:]' '[:lower:]' | xargs)"
+
+case "$normalized" in
+  fix|"fix bug"|bugfix|update|wip|tmp|temp|test|修改|修复|更新|调整|临时提交)
+    echo "Commit 信息过于模糊：$subject" >&2
+    echo "请使用 type(scope): meaningful outcome，并关联 Task。" >&2
+    exit 1
+    ;;
+esac
+
+printf '%s' "$subject" | grep -Eq '^(feat|fix|refactor|perf|test|docs|build|ci|chore|revert)(\([a-zA-Z0-9._/-]+\))?!?: .{8,}$' || {
+  echo "Commit 格式应为 type(scope): meaningful outcome" >&2
+  exit 1
+}
+
+state_file=".cap/STATE.md"
+if [ -f "$state_file" ]; then
+  task_id="$(sed -nE 's/^[[:space:]]*(task-id|task_id):[[:space:]]*([^[:space:]]+).*/\2/p' "$state_file" | head -1)"
+  session_id="$(sed -nE 's/^[[:space:]]*(session-id|session_id):[[:space:]]*([^[:space:]]+).*/\2/p' "$state_file" | head -1)"
+  if [ -n "$task_id" ] && ! grep -Eqi '^Task:' "$message_file"; then printf '\nTask: %s\n' "$task_id" >> "$message_file"; fi
+  if [ -n "$session_id" ] && ! grep -Eqi '^Session:' "$message_file"; then printf 'Session: %s\n' "$session_id" >> "$message_file"; fi
+fi

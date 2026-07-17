@@ -1,0 +1,42 @@
+#!/usr/bin/env sh
+# cap-guard —— 并发/边界**硬门禁**(代码级、确定性)。
+# 设计意图:不靠"模型记得检查"(那是软的、可被合理化绕过),而是由 git pre-commit hook
+#          调用本脚本 → git 来跑、不是模型来跑 → 模型绕不过(唯一逃逸 = 人显式 `git commit --no-verify`)。
+# 也被 cap-flow driver 入口调用作可移植软层(Codex/无 hook 环境)。
+# 退出码:0 = 边界一致,放行;1 = 边界违例,阻断。
+#
+# 检测(确定性,只读 git + .cap/STATE.md):
+#   ① STATE.branch ≠ 当前分支    → 串台(STATE 属于别的分支)
+#   ② STATE.worktree ≠ 当前根    → 串台(STATE 属于别的 worktree)
+#   ③ 无违例时:把"当前活跃特性 + 阶段"大声打出来 —— 提醒"若本次提交不属于它 = 你在同分支并行,先隔离"
+
+STATE=".cap/STATE.md"
+[ -f "$STATE" ] || exit 0   # 无活跃特性 → 放行
+
+cur_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+cur_root=$(git rev-parse --show-toplevel 2>/dev/null)
+val(){ grep -iE "^$1:" "$STATE" 2>/dev/null | head -1 | sed "s/^[^:]*: *//" | tr -d '\r'; }
+st_branch=$(val branch | tr -d '[:space:]')
+st_worktree=$(val worktree | tr -d '[:space:]')
+st_stage=$(val stage | tr -d '[:space:]')
+st_status=$(val status | tr -d '[:space:]')
+st_feature=$(grep -iE '^# Cap State:' "$STATE" 2>/dev/null | head -1 | sed 's/^# Cap State: *//')
+
+viol=0
+if [ -n "$st_branch" ] && [ "$st_branch" != "$cur_branch" ]; then
+  echo "✗ cap-guard: 当前 STATE 属于分支 '$st_branch',你现在在 '$cur_branch' —— 串台风险。"
+  echo "  出路:1) 切回 '$st_branch' 续接该特性  2) 为新工作开 worktree / 新分支(各自独立 .cap)"
+  viol=1
+fi
+if [ -n "$st_worktree" ] && [ "$st_worktree" != "$cur_root" ]; then
+  echo "✗ cap-guard: 当前 STATE 属于 worktree '$st_worktree',你现在在 '$cur_root' —— 串台风险。"
+  echo "  出路:回到该 worktree;或本 worktree 用自己的 .cap(每 worktree 一份)。"
+  viol=1
+fi
+
+if [ "$viol" -eq 0 ]; then
+  echo "✓ cap-guard: 活跃特性 '${st_feature:-?}'(stage=${st_stage:-?}, status=${st_status:-?})@ '$cur_branch' — 边界一致。"
+  echo "  ⚠ 若本次提交**不属于**这个特性,你正在同分支并行第二个特性 = 危险(文件冲突 + STATE 互覆盖)。"
+  echo "    真要并行:先为新特性开 worktree(推荐)或新分支,别在同分支同时跑两个。"
+fi
+exit $viol

@@ -1,0 +1,75 @@
+/* annotate.css — 通用划词批注层（注入任意页面） */
+:root{ --an-accent:#3a3df0; --an-hl:#fff1a8; --an-hl-line:#e8c200; }
+
+mark.annot-hl{ background:var(--an-hl); border-bottom:2px solid var(--an-hl-line);
+  border-radius:2px; padding:0 1px; cursor:pointer; transition:background .15s; }
+mark.annot-hl:hover, mark.annot-hl.active{ background:#ffe45e; }
+
+/* 浮动“添加评论”按钮 */
+#an-addbtn{ position:absolute; z-index:9998; display:none; transform:translate(-50%,-100%);
+  background:#16181d; color:#fff; border:0; border-radius:8px; padding:7px 12px;
+  font:600 13px/-apple-system,'PingFang SC',sans-serif; cursor:pointer;
+  box-shadow:0 6px 20px rgba(0,0,0,.25); white-space:nowrap; }
+#an-addbtn::after{ content:''; position:absolute; left:50%; bottom:-5px; transform:translateX(-50%);
+  border:6px solid transparent; border-top-color:#16181d; border-bottom:0; }
+#an-addbtn:hover{ background:var(--an-accent); }
+
+/* 评论输入气泡 */
+#an-pop{ position:absolute; z-index:9999; display:none; width:300px; transform:translate(-50%,8px);
+  background:#fff; border:1px solid #e4e0d6; border-radius:12px; padding:12px;
+  box-shadow:0 12px 40px rgba(0,0,0,.18); font-family:-apple-system,'PingFang SC',sans-serif; }
+#an-pop .q{ font-size:12px; color:#8b909c; border-left:3px solid var(--an-hl-line);
+  padding-left:8px; margin-bottom:8px; max-height:54px; overflow:auto; }
+#an-pop textarea{ width:100%; min-height:64px; border:1px solid #e4e0d6; border-radius:8px;
+  padding:8px; font:14px/-apple-system,sans-serif; resize:vertical; box-sizing:border-box; }
+#an-pop .row{ display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+#an-pop button{ border:0; border-radius:7px; padding:7px 14px; font:600 13px sans-serif; cursor:pointer; }
+#an-pop .save{ background:var(--an-accent); color:#fff; }
+#an-pop .cancel{ background:#f0eee8; color:#4a4f5a; }
+
+/* 右侧批注面板 */
+#an-panel{ position:fixed; top:64px; right:16px; z-index:9997; width:300px; max-height:80vh;
+  display:flex; flex-direction:column; background:#fff; border:1px solid #e4e0d6; border-radius:14px;
+  box-shadow:0 12px 40px rgba(0,0,0,.12); font-family:-apple-system,'PingFang SC',sans-serif;
+  transition:transform .25s; }
+#an-panel.collapsed{ transform:translateX(calc(100% + 24px)); }
+#an-panel h4{ margin:0; padding:14px 16px; font-size:14px; border-bottom:1px solid #e4e0d6;
+  display:flex; justify-content:space-between; align-items:center; }
+#an-panel h4 .t{ display:flex; align-items:center; gap:8px; }
+#an-panel h4 .cnt{ font:600 12px var(--an-mono,monospace); background:var(--an-accent); color:#fff;
+  border-radius:999px; padding:2px 9px; }
+#an-panel h4 .an-collapse{ border:0; background:#f0eee8; color:#4a4f5a; width:26px; height:26px;
+  border-radius:7px; font-size:18px; line-height:1; cursor:pointer; padding:0; }
+#an-panel h4 .an-collapse:hover{ background:var(--an-accent); color:#fff; }
+#an-list{ overflow:auto; padding:8px; flex:1; }
+#an-list .empty{ color:#8b909c; font-size:13px; text-align:center; padding:24px 8px; }
+.an-item{ border:1px solid #e4e0d6; border-radius:9px; padding:9px 10px; margin-bottom:8px; cursor:pointer; }
+.an-item:hover{ border-color:var(--an-accent); }
+.an-item .sec{ font:600 10px monospace; color:var(--an-accent); text-transform:uppercase; }
+.an-item .quote{ font-size:12px; color:#8b909c; margin:3px 0; }
+.an-item .quote b{ background:var(--an-hl); color:#16181d; font-weight:400; }
+.an-item .cm{ font-size:13.5px; color:#16181d; }
+.an-item .reply{ margin-top:7px; padding:7px 9px; background:#eef0ff; border-left:3px solid var(--an-accent);
+  border-radius:0 7px 7px 0; font-size:12.5px; color:#2b2e8c; white-space:pre-wrap; }
+.an-item .reply .who{ display:block; font:700 10px monospace; color:var(--an-accent);
+  margin-bottom:2px; text-transform:uppercase; letter-spacing:.03em; }
+.an-item .del{ float:right; color:#cf3b3b; font-size:12px; }
+
+/* 提交栏 */
+#an-foot{ border-top:1px solid #e4e0d6; padding:12px 14px; }
+#an-foot .verdict{ display:flex; gap:6px; margin-bottom:10px; }
+#an-foot label{ flex:1; text-align:center; font-size:12.5px; padding:7px 4px; border:1px solid #e4e0d6;
+  border-radius:8px; cursor:pointer; }
+#an-foot input{ display:none; }
+#an-foot input:checked + span{ font-weight:700; }
+#an-foot label:has(input[value=approve]:checked){ border-color:#0c8f5a; background:#e3f6ec; color:#0c8f5a; }
+#an-foot label:has(input[value=changes]:checked){ border-color:#b9741a; background:#fbeede; color:#b9741a; }
+#an-foot .submit{ width:100%; border:0; border-radius:9px; padding:11px; font:700 14px sans-serif;
+  background:var(--an-accent); color:#fff; cursor:pointer; }
+#an-foot .submit:disabled{ background:#c9c9d6; cursor:not-allowed; }
+#an-foot .msg{ font-size:12.5px; margin-top:8px; text-align:center; }
+
+/* 折叠把手 */
+#an-toggle{ position:fixed; top:64px; right:16px; z-index:9996; background:var(--an-accent); color:#fff;
+  border:0; border-radius:10px; padding:9px 12px; font:600 13px sans-serif; cursor:pointer;
+  box-shadow:0 6px 20px rgba(58,61,240,.3); display:none; }
