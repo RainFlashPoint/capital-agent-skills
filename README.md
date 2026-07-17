@@ -15,13 +15,13 @@
 
 平台地址和个人身份只通过研发本机环境变量提供：`CAPITAL_AGENT_SERVER_URL`、`CAPITAL_AGENT_USER_KEY`。开源仓库不内置任何公司地址或密钥；推荐使用 `scripts/mcp-remote.mjs` 启动 MCP。
 
-一键初始化（自动保存本机运行时配置、注册已安装的 Codex/Claude MCP；加 `--project` 同时安装当前仓库 Git 治理）：
+一键初始化（自动打开浏览器授权，不需要复制个人 Key；自动安装 Codex/Claude Skills 并注册 MCP）：
 
 ```bash
-CAPITAL_AGENT_SERVER_URL="https://your-server" \
-CAPITAL_AGENT_USER_KEY="your-key" \
-node /path/to/capital-agent-skills/scripts/setup.mjs
+node /path/to/capital-agent-skills/scripts/setup.mjs --server "https://your-server"
 ```
+
+升级与诊断：`setup.mjs --server "https://your-server" --upgrade`、`setup.mjs --server "https://your-server" --doctor`。环境变量仍作为服务器/CI 的非交互兼容方式。
 
 Skills 与 MCP 是研发机器全局安装。只有需要在某个仓库强制 Commit 格式时，才进入该仓库追加运行 `node /path/to/capital-agent-skills/scripts/setup.mjs --project`；不加不影响 Task、知识沉淀和 Docker 复验主链。
 

@@ -6,6 +6,14 @@
 
 ## 方式 A：环境变量启动器（推荐）
 
+研发人员推荐直接运行设备授权安装，不需要查看或复制个人 Key：
+
+```bash
+node /path/to/capital-agent-skills/scripts/setup.mjs --server "https://your-capital-agent-server"
+```
+
+安装器会打开平台登录授权页，将凭证保存到研发机的 `~/.config/capital-agent/env`（0600），并自动安装 Codex/Claude Skills、注册 MCP。下面的环境变量方式保留给 CI 与无浏览器环境。
+
 只在研发本机设置，不要写入业务仓库：
 
 ```bash
