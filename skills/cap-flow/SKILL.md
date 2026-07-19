@@ -1,7 +1,7 @@
 ---
 name: cap-flow
 description: >
-  研发主线的编排器 / 路由器 / 跨会话交接中枢。读取 <target-repo>/.cap/(PROFILE 工程记忆 + STATE 特性状态),
+  研发主线的编排器 / 路由器 / 跨会话交接中枢。读取目标仓 .cap/(PROFILE 工程记忆 + STATE 特性状态),
   判断本次从哪个阶段进入,依据改动面把工作派发给对应的 cap-* 阶段技能,并在每一步把进度写回 STATE,
   让下一次会话或另一个 agent 能无缝接力。同时内建**需求集合(intake)**的分叉决策:检测到需求树时引导选叶起特性。
   触发场景:用户显式调用 "$cap"、"/cap"，或说 "走一遍研发流程"、"开始一个新特性"、"接着上次做"、"resume"、"这个 repo 跑 cap"、
@@ -68,6 +68,8 @@ Claude、Codex 或其它 CLI 上都能跑。
 # 一、Orient —— 定位现在在哪
 
 目标仓 = 当前工作目录(或用户指定的 `<target-repo>`)。所有状态都落在 `<target-repo>/.cap/`:
+
+进入 Git 仓库后先静默确保 Capital Agent 项目 Hook 已安装（复用 package 根 `scripts/install-git-governance.mjs`）；幂等失败不阻断流程，也不要求用户执行额外命令。
 
 | 文件 | 是什么 | 谁写 |
 |---|---|---|
@@ -350,7 +352,9 @@ source-leaf: <需求树叶 id 或 (none)>
 - `gated` → 停在门口,等用户确认(编号文本列出待批项)。
 - `blocked` → 报告阻塞原因,不前进。
 
-若 capital-agent MCP 提供 `record_skill_event`，每次 HANDOFF 写完 STATE 后追加一条同 `session_id` 事件：阶段进入用 `stage_entered`，门通过用 `gate_passed`，阻塞用 `stage_blocked`；verify/review 阶段分别用对应完成事件。artifact_refs 只传 `.cap` 产物路径、报告 ID 或 commit，不传文件正文。MCP 不可用时静默降级，纯文件主线仍可独立运行。
+若 capital-agent MCP 提供 `record_skill_event`，每次 HANDOFF 写完 STATE 后追加一条同 `session_id` 事件：阶段进入用 `stage_entered`，门通过用 `gate_passed`，阻塞用 `stage_blocked`；verify/review 阶段分别用对应完成事件。artifact_refs 只传已登记的 Artifact ID 或路径，不传文件正文。
+
+同一 HANDOFF 若 MCP 提供 `record_task_artifact`，先登记本阶段新建或更新的 `.cap` 文件，再记录事件：`PROFILE.md→profile`、`spec.md→spec`、`plan.md→plan`、`STATE.md→state`、`verify/*→verify`、`review/*→review`、`release/*→release`，其余为 `other`。每个文件只传 `task_id / kind / repo-root 相对 path / SHA-256 hash / git_ref / stage / status / 一句 summary`；禁止传正文、本机绝对路径、内部服务地址或密钥。没有 task-id、工具不存在或单个登记失败时静默降级，不阻塞纯文件主线；同一路径同一 hash 不重复登记。
 
 若 STATE 尚无 `task-id` 且 MCP 提供 `create_or_attach_task`，在首次 shape/intake 前自动创建统一 Task 并写回 `task-id`/`session-id`；退场时用 `record_task_delivery` 回写真实 Commit 与验证证据。具体契约见 `../harvest-experience/references/platform-task-loop.md`。
 

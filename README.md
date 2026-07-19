@@ -2,7 +2,7 @@
 
 骑在 CLI 上的研发流程 + 经验闭环技能族。给你的 coding agent（Claude Code / Codex / 其它）装一套**结构化研发流程**，外加一个**跨会话、跨人积累的经验中枢**：会话开始注入相关经验，会话结束沉淀本次改动，所有人的经验汇入同一个中心知识库。
 
-> **状态**：v0.1.0，持续演进中。核心是把结构化研发流程与连中心知识库的经验闭环 `harvest-experience` 合在一起。
+> **状态**：v0.1.2，持续演进中。核心是把结构化研发流程与连中心知识库的经验闭环 `harvest-experience` 合在一起。
 
 ## 这是什么
 
@@ -23,13 +23,7 @@ node /path/to/capital-agent-skills/scripts/setup.mjs --server "https://your-serv
 
 升级与诊断：`setup.mjs --server "https://your-server" --upgrade`、`setup.mjs --server "https://your-server" --doctor`。环境变量仍作为服务器/CI 的非交互兼容方式。
 
-Skills 与 MCP 是研发机器全局安装。只有需要在某个仓库强制 Commit 格式时，才进入该仓库追加运行 `node /path/to/capital-agent-skills/scripts/setup.mjs --project`；不加不影响 Task、知识沉淀和 Docker 复验主链。
-
-安装项目 Git 治理（Commit 规范、Task/Session trailer、`.cap` 忽略边界、GitLab CI 模板）：
-
-```bash
-node /path/to/capital-agent-skills/scripts/install-git-governance.mjs
-```
+Skills 与 MCP 只需在研发机器安装一次。之后正常使用 Codex/Claude 描述编码需求即可，不强制输入 `$cap`；首次进入 Git 项目时，Skill 会静默安装兼容现有 Hook 的关联器，正常 `git commit` 自动附加 Task/Session。研发不需要手工安装 Hook、填写 Task ID 或配置 GitLab CI。
 
 **为什么两条要在一起**：流程定义了任务边界，边界产出干净的经验原子（spec 决策 / review findings / 蒸馏 pattern）；经验闭环把这些原子汇入中心知识库、下次跨人复用。流程是产出口，知识库是积累池。
 
@@ -42,7 +36,7 @@ git clone https://github.com/RainFlashPoint/capital-agent-skills.git
 # Codex: 把 skills/* 链接到 ~/.agents/skills/
 ```
 
-**跑 cap 流程**：Codex 输入 `$cap`（也可先输入 `/skills` 浏览并选择 `cap`）；Claude Code 输入 `/cap`。driver 会读状态并路由到合适阶段。首次进入 brownfield 项目会先 map 建 PROFILE。
+**开始研发**：正常描述“实现需求 / 修改代码 / 修 bug”即可自动进入 Task 与经验闭环。Codex 的 `$cap` / Claude Code 的 `/cap` 作为需要完整显式流程时的高级入口保留。
 
 **开经验闭环**：先按 [setup-mcp.md](skills/harvest-experience/references/setup-mcp.md) 注册 `capital-agent` MCP server，之后 `harvest-experience` 会在编码会话首尾自动注入/沉淀。
 

@@ -9,6 +9,22 @@
 3. 把返回的 `task_id`、`session_id`、Skill/知识快照 ID 写入 `.cap/STATE.md` 顶层元数据。
 4. 后续 `enrich_context`、`record_skill_event`、`record_experience` 始终复用同一 repo URL 和 session ID。
 
+## Artifact 元数据
+
+每次阶段 HANDOFF 后，若 MCP 提供 `record_task_artifact`，登记本阶段实际存在且有变化的产物：
+
+| 路径 | kind |
+|---|---|
+| `.cap/PROFILE.md` | `profile` |
+| `.cap/spec.md` | `spec` |
+| `.cap/plan.md` | `plan` |
+| `.cap/STATE.md` | `state` |
+| `.cap/verify/*` | `verify` |
+| `.cap/review/*` | `review` |
+| `.cap/release/*` | `release` |
+
+只传 `task_id`、`kind`、仓库相对 `path`、文件 SHA-256 `hash`、当前 `git_ref`、`stage`、`status` 和一句 `summary`。禁止上传正文、本机绝对路径、平台地址或凭据。同一路径同一 hash 不重复上报；工具不存在、无 task-id 或调用失败时静默降级。
+
 ## 交付
 
 当代码已形成且存在有效 Commit 时，自动收集：
@@ -20,7 +36,7 @@ git branch --show-current
 git diff-tree --no-commit-id --name-only -r HEAD
 ```
 
-调用 `record_task_delivery`，同时传本项目实际执行成功的 `verification_commands`；只上传 Commit、文件路径、验证和 Review 结构化结论，不上传代码正文。
+先补登记尚未上报的 Artifact 元数据，再调用 `record_task_delivery`，同时传本项目实际执行成功的 `verification_commands`；只上传 Commit、文件路径、验证和 Review 结构化结论，不上传代码正文。
 
 只有同时满足以下条件才调用 `request_docker_verification`：
 

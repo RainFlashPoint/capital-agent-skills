@@ -2,6 +2,19 @@
 
 遵循语义化版本。格式参考 Keep a Changelog。
 
+## [0.1.2] — 2026-07-19
+
+### Added
+- 普通编码请求自动进入 Task/经验闭环，无需显式 `$cap`；首次进入 Git 项目时静默安装兼容现有 Hook 的 `prepare-commit-msg`，自动把 Task/Session 写入 Commit。
+
+### Changed
+- 项目 Hook 不再强制 Commit 格式、不覆盖原 Hook，也不默认生成 GitLab CI 文件。
+
+## [0.1.1] — 2026-07-19
+
+### Added
+- cap-flow 在阶段 HANDOFF 后通过可选 `record_task_artifact` 上报 `.cap` Artifact 元数据；仅包含相对路径、哈希、Git ref、阶段、状态和摘要，工具不可用时静默降级。
+
 ## [0.1.0] — 2026-07-09
 
 ### Added

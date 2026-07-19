@@ -1,6 +1,6 @@
 {
   "name": "capital-agent-skills",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "骑在 CLI 上的研发流程 + 经验闭环技能族。cap-flow driver(含 intake) + 7 流程 skill + 角色卡 + verify 三 checks + 语言包 + Codex adapter;叠加 harvest-experience(会话首尾 enrich_context/record_experience,连 capital-agent 中心知识库)。逐步演进为连中心 KB、跨人积累、可自证价值的团队记忆中枢。",
   "author": {
     "name": "RainFlashPoint"

@@ -1,11 +1,11 @@
 ---
-name: Harvest & Inject Coding Experience
+name: harvest-experience
 description: >
   骑在 CLI 上的经验闭环。会话开始时从 capital-agent 知识库注入相关经验（enrich_context），
   会话结束时把本次的意图与改动文件沉淀回知识库（record_experience），供后续会话复用。
   依赖已配置的 MCP server `capital-agent`（提供 enrich_context / record_experience 等工具）。
 
-  Trigger keywords: 开始编码, 写代码, 实现需求, 修 bug, 重构, coding session, 经验沉淀, harvest experience, 会话结束
+  Trigger keywords: 任何真实编码、实现需求、修改代码、修 bug、重构、测试、review、coding session、经验沉淀、会话结束。用户不需要显式输入 $cap。
 allowed-tools:
   - Bash
 ---
@@ -18,6 +18,8 @@ allowed-tools:
 前置：MCP server `capital-agent` 已在本 CLI 注册（提供 `enrich_context`、`record_experience`、`search_knowledge` 等工具）。若这些工具不可用，跳过本 skill，正常编码即可。
 
 ## 1. 会话开始 —— 登记 + 注入
+
+若当前目录属于 Git 仓库，开始实质工作前静默运行仓库自带的 `scripts/install-git-governance.mjs`（从本 skill 所属 package 根定位）。它幂等安装 `prepare-commit-msg`，保留并先执行项目原 Hook，只负责把 `.cap/STATE.md` 中有效的 Task/Session 自动追加到 Commit；失败时降级，不阻塞编码。不要要求用户手工安装或理解 Hook。
 
 若 MCP 提供 `create_or_attach_task`，优先按 `references/platform-task-loop.md` 创建/复用统一 Task；把返回的 `task_id`、`session_id` 写入 `.cap/STATE.md`。仅当该工具不存在时才退回 `start_skill_session`。工具不可用时降级为原有流程，不阻塞编码。
 
@@ -70,6 +72,8 @@ git diff --name-only HEAD    # 未提交改动
 随后若 MCP 提供 `record_skill_event`：
 - 记录 `experience_recorded`，artifact_refs 只放知识文档 ID。
 - 记录 `session_finished`，data 放 verify/review 的结构化结论，不放代码正文。
+
+若 MCP 提供 `record_task_artifact`，按 `references/platform-task-loop.md` 补登记本轮 `.cap` 产物元数据。只传相对路径、hash、Git ref 和结构化摘要；不传文件正文。无 task-id、工具不存在或调用失败时静默降级。
 
 若已有有效 Git Commit 且 MCP 提供 `record_task_delivery`，按 `references/platform-task-loop.md` 自动回写 Commit、改动文件路径、verify/review。HEAD 已推送且门禁满足时，再调用 `request_docker_verification`；不得上传未提交工作区或代码正文。
 
