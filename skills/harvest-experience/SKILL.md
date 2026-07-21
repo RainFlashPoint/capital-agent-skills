@@ -1,11 +1,6 @@
 ---
 name: harvest-experience
-description: >
-  骑在 CLI 上的经验闭环。会话开始时从 capital-agent 知识库注入相关经验（enrich_context），
-  会话结束时把本次的意图与改动文件沉淀回知识库（record_experience），供后续会话复用。
-  依赖已配置的 MCP server `capital-agent`（提供 enrich_context / record_experience 等工具）。
-
-  Trigger keywords: 任何真实编码、实现需求、修改代码、修 bug、重构、测试、review、coding session、经验沉淀、会话结束。用户不需要显式输入 $cap。
+description: Capital Agent 的自动经验闭环。真实编码、修复、测试或评审开始前注入相关项目经验，完成后只沉淀意图、验证结论和改动文件路径；通常自动触发，不需要用户手动选择。
 allowed-tools:
   - Bash
 ---

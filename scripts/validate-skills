@@ -40,6 +40,10 @@ ok "verify checks 交叉引用检查完成($(ls "$ROOT"/cap-test/checks/*.md | w
 
 echo "== 4.1 public entry vocabulary =="
 grep -q '唯一公开入口' "$ROOT/cap/SKILL.md" || err "cap 未声明为唯一公开入口"
+grep -q "publicSkillNames = \['cap'\]" scripts/setup-lib.mjs || err "安装器未限制为唯一公开 Skill: cap"
+for internal in harvest-experience cap-flow cap-understand cap-define cap-plan cap-implement cap-test cap-review cap-release; do
+  if grep -q "publicSkillNames.*$internal" scripts/setup-lib.mjs; then err "内部阶段被暴露为公开 Skill: $internal"; fi
+done
 for word in 项目了解 需求确认 开发计划 编码实现 测试验证 代码评审 发布上线; do
   grep -q "$word" "$ROOT/cap/SKILL.md" || err "cap 缺少公开阶段名: $word"
   grep -q "$word" "$ROOT/cap-flow/SKILL.md" || err "cap-flow 缺少公开阶段名: $word"

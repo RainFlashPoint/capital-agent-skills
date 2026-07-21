@@ -1,5 +1,7 @@
-import { lstat, mkdir, readlink, symlink } from 'fs/promises'
+import { lstat, mkdir, readlink, symlink, unlink } from 'fs/promises'
 import { basename, join } from 'path'
+
+export const publicSkillNames = ['cap']
 
 export function parseSetupArgs(argv = []) {
   const value = flag => { const index = argv.indexOf(flag); return index >= 0 ? argv[index + 1] || '' : '' }
@@ -8,21 +10,34 @@ export function parseSetupArgs(argv = []) {
 
 export const skillTargets = home => ({ codex: join(home, '.agents/skills'), claude: join(home, '.claude/skills') })
 
-export async function installSkillLinks(sourceDir, targetDir) {
+export async function installSkillLinks(sourceDir, targetDir, skillNames = publicSkillNames) {
   const { readdir } = await import('fs/promises')
   await mkdir(targetDir, { recursive: true })
   const entries = await readdir(sourceDir, { withFileTypes: true })
+  const available = new Set(entries.filter(item => item.isDirectory()).map(item => item.name))
+  const selected = [...new Set(skillNames)].filter(name => available.has(name))
+
+  // 升级时清理旧版本安装的内部阶段链接。只删除仍指向本技能包 sourceDir 的软链接，
+  // 不碰用户自己创建的目录、文件或指向其他来源的同名 Skill。
+  for (const entry of entries.filter(item => item.isDirectory() && !selected.includes(item.name))) {
+    const target = join(targetDir, entry.name)
+    try {
+      const stat = await lstat(target)
+      if (stat.isSymbolicLink() && (await readlink(target)) === join(sourceDir, entry.name)) await unlink(target)
+    } catch {}
+  }
+
   const installed = []
-  for (const entry of entries.filter(item => item.isDirectory())) {
-    const source = join(sourceDir, entry.name); const target = join(targetDir, entry.name)
+  for (const name of selected) {
+    const source = join(sourceDir, name); const target = join(targetDir, name)
     try {
       const stat = await lstat(target)
       if (!stat.isSymbolicLink()) continue
-      if (await readlink(target) === source) { installed.push(entry.name); continue }
-      const { unlink } = await import('fs/promises'); await unlink(target)
+      if (await readlink(target) === source) { installed.push(name); continue }
+      await unlink(target)
     } catch {}
     await symlink(source, target, process.platform === 'win32' ? 'junction' : 'dir')
-    installed.push(entry.name)
+    installed.push(name)
   }
   return installed
 }

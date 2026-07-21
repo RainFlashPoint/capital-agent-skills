@@ -1,11 +1,11 @@
 ---
 name: cap
-description: Capital Agent 研发工作的唯一公开入口。Codex 中用 $cap，Claude Code 中用 /cap；用户只需描述要实现、修复、测试、评审或发布的事情，系统自动续接正确阶段。也支持“/cap 需求、计划、开发、测试、评审、发布”等直白动作，不要求用户理解 cap-define、cap-implement 等内部名称。
+description: Capital Agent 研发工作的统一入口。用于实现功能、修复问题、测试验证、代码评审和发布交付；系统根据任务复杂度自动选择必要步骤，用户不需要理解或手动调用内部阶段。
 ---
 
 # Capital Agent 研发入口
 
-完整读取并遵循同级目录 `../cap-flow/SKILL.md`。本技能是研发唯一需要记住的公开入口，不复制流程规则。
+完整读取并遵循同级目录 `../cap-flow/SKILL.md`；真实编码会话同时读取 `../harvest-experience/SKILL.md`，自动完成经验注入与沉淀。本技能是研发唯一公开入口，也是唯一安装到客户端列表的 Skill，不复制内部流程规则。
 
 ## 用户语言
 

@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readlink } from 'fs/promises'
+import { lstat, mkdtemp, mkdir, readlink, symlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
+import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -13,11 +13,27 @@ test('parses setup modes and validates server URL', () => {
 test('uses the current Codex user skill discovery directory', () => {
   assert.equal(skillTargets('/home/dev').codex, '/home/dev/.agents/skills')
 })
-test('installs links without replacing an existing directory', async () => {
+test('installs only the cap public entry without replacing an existing directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cap-setup-')); const source = join(root,'source'); const target = join(root,'target')
-  await mkdir(join(source,'cap-flow'), { recursive: true }); await mkdir(join(source,'custom'), { recursive: true }); await mkdir(join(target,'custom'), { recursive: true })
-  assert.deepEqual(await installSkillLinks(source,target), ['cap-flow'])
-  assert.equal(await readlink(join(target,'cap-flow')), join(source,'cap-flow'))
+  for (const name of ['cap','harvest-experience','cap-flow','cap-define']) await mkdir(join(source,name), { recursive: true })
+  await mkdir(join(target,'harvest-experience'), { recursive: true })
+  assert.deepEqual(publicSkillNames, ['cap'])
+  assert.deepEqual(await installSkillLinks(source,target), ['cap'])
+  assert.equal(await readlink(join(target,'cap')), join(source,'cap'))
+  assert.equal((await lstat(join(target,'harvest-experience'))).isDirectory(), true)
+  await assert.rejects(readlink(join(target,'cap-flow')))
+})
+test('upgrade removes only old internal links owned by this skill package', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cap-setup-clean-')); const source = join(root,'source'); const target = join(root,'target'); const other = join(root,'other')
+  for (const name of ['cap','harvest-experience','cap-flow','cap-define']) await mkdir(join(source,name), { recursive: true })
+  await mkdir(other, { recursive: true }); await mkdir(target, { recursive: true })
+  await symlink(join(source,'cap-flow'),join(target,'cap-flow'))
+  await symlink(join(source,'harvest-experience'),join(target,'harvest-experience'))
+  await symlink(other,join(target,'cap-define'))
+  await installSkillLinks(source,target)
+  await assert.rejects(lstat(join(target,'cap-flow')))
+  await assert.rejects(lstat(join(target,'harvest-experience')))
+  assert.equal(await readlink(join(target,'cap-define')), other)
 })
 test('polls until browser approval', async () => {
   let calls = 0
