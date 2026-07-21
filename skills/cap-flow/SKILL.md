@@ -17,6 +17,15 @@ description: >
 
 # cap-flow — 主线编排器（导演 / 路由 / 交接）
 
+## 两条全程硬契约
+
+每次进入后先加载并执行：
+
+- `references/progress-protocol.md`：阶段开始、执行中和交接都必须向用户明确说明当前动作与下一步。
+- `references/task-reconnaissance.md`：每个新任务必须基于当前仓库真实代码建立或刷新 `.cap/task-context.md`；`PROFILE.md` 只作索引，不能替代任务级代码调查。
+
+任一阶段被直接调用时也必须遵守这两条契约。没有新鲜 `task-context.md` 时，不得直接进入计划或编码。
+
 ## 公开语言与内部 ID
 
 研发只需要记住 `$cap`（Claude Code 为 `/cap`）。所有对话、选项、下一步和错误提示都优先使用下列直白名称，**不得要求用户调用内部技能名**：
@@ -102,6 +111,7 @@ Claude、Codex 或其它 CLI 上都能跑。
 |---|---|---|
 | `PROFILE.md` | **工程记忆**(长寿):技术栈 / 约定 / surface-map / 入口 / 测试命令 | `cap-understand`,漂移时刷新 |
 | `STATE.md` | **特性交接**(短寿):阶段 / 状态 / 门 / 活跃角色 / 改动文件 / 决策 / 下一步 | 各阶段经本编排器写 |
+| `task-context.md` | **任务级代码事实**：入口、调用链、相似实现、测试与影响范围 | 每个新任务先建立，HEAD/意图变化时刷新 |
 | `spec.md` `plan.md` | 阶段产物 | `cap-define` / `cap-plan` |
 | `verify/*.md` `review/*.md` | 验证 / 评审报告 | `cap-test` / `cap-review` |
 | `requirements/` | 需求树(可选,intake 建立) | intake 操作(见 `references/intake.md`) |
@@ -381,7 +391,7 @@ source-leaf: <需求树叶 id 或 (none)>
 
 若 capital-agent MCP 提供 `record_skill_event`，每次 HANDOFF 写完 STATE 后追加一条同 `session_id` 事件：阶段进入用 `stage_entered`，门通过用 `gate_passed`，阻塞用 `stage_blocked`；verify/review 阶段分别用对应完成事件。artifact_refs 只传已登记的 Artifact ID 或路径，不传文件正文。
 
-同一 HANDOFF 若 MCP 提供 `record_task_artifact`，先登记本阶段新建或更新的 `.cap` 文件，再记录事件：`PROFILE.md→profile`、`spec.md→spec`、`plan.md→plan`、`STATE.md→state`、`verify/*→verify`、`review/*→review`、`release/*→release`，其余为 `other`。每个文件只传 `task_id / kind / repo-root 相对 path / SHA-256 hash / git_ref / stage / status / 一句 summary`；禁止传正文、本机绝对路径、内部服务地址或密钥。没有 task-id、工具不存在或单个登记失败时静默降级，不阻塞纯文件主线；同一路径同一 hash 不重复登记。
+同一 HANDOFF 若 MCP 提供 `record_task_artifact`，先登记本阶段新建或更新的 `.cap` 文件，再记录事件：`PROFILE.md→profile`、`task-context.md→other`、`spec.md→spec`、`plan.md→plan`、`STATE.md→state`、`verify/*→verify`、`review/*→review`、`release/*→release`，其余为 `other`。每个文件只传 `task_id / kind / repo-root 相对 path / SHA-256 hash / git_ref / stage / status / 一句 summary`；禁止传正文、本机绝对路径、内部服务地址或密钥。没有 task-id、工具不存在或单个登记失败时静默降级，不阻塞纯文件主线；同一路径同一 hash 不重复登记。
 
 若 STATE 尚无 `task-id` 且 MCP 提供 `create_or_attach_task`，在首次 shape/intake 前自动创建统一 Task 并写回 `task-id`/`session-id`；退场时用 `record_task_delivery` 回写真实 Commit 与验证证据。具体契约见 `../harvest-experience/references/platform-task-loop.md`。
 

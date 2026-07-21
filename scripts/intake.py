@@ -43,7 +43,7 @@ LEGACY_STAGE_ALIASES = {"map": "understand", "shape": "define", "build": "implem
 def normalize_stage(stage):
     value = str(stage or "").strip().lower()
     return LEGACY_STAGE_ALIASES.get(value, value)
-RETIRE_ARTIFACTS = ["spec.md", "plan.md", "verify", "review", "STATE.md"]
+RETIRE_ARTIFACTS = ["task-context.md", "spec.md", "plan.md", "verify", "review", "STATE.md"]
 
 
 def parse_frontmatter(text):

@@ -12,6 +12,8 @@ description: >
 
 # cap-understand — brownfield 入口：测绘已有项目 → PROFILE.md
 
+> **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+
 你是主线的**测绘师**。一个已有项目第一次走这套流程时,cap-flow 先把你叫进来。你的唯一交付物是
 `<target-repo>/.cap/PROFILE.md` —— 项目级、长寿、被之后**每个**特性共享的记忆。其中最关键的是
 **surface-map**(模块 → glob → 默认角色 → 验证项),它是改动代码路由的可追踪输入。

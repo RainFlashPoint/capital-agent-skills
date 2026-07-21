@@ -30,4 +30,6 @@ description: Capital Agent 研发工作的唯一公开入口。Codex 中用 $cap
 3. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。
 4. 会话结束时沉淀意图与改动文件路径，并维护统一 Task/Skills Session。
 
+开始任何阶段前，加载并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。项目画像只能作为定位索引；每个新任务必须先从当前仓库代码建立 `.cap/task-context.md`。
+
 向用户汇报时使用“需求确认、开发计划、编码实现、测试验证、代码评审、发布上线”等对外名称。只有诊断状态文件或开发 Skills 本身时，才在括号中补充内部 ID。

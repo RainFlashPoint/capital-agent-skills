@@ -251,7 +251,7 @@ python3 scripts/intake.py move --root <root> --leaf <leaf-id> --to <domain>/<sub
 
 | 步 | 动作 | 谁做 | 适用 |
 |---|---|---|---|
-| ① 归档 | `.cap/{spec.md,plan.md,verify,review,STATE.md}` → `.cap/archive/<date>-<slug>/` | 脚本 | 全部特性 |
+| ① 归档 | `.cap/{task-context.md,spec.md,plan.md,verify,review,STATE.md}` → `.cap/archive/<date>-<slug>/` | 脚本 | 全部特性 |
 | ② 回流 | 从 `STATE.Decisions log` 蒸馏耐久决策 / 教训 / 新风险成一行,append `.cap/EVOLUTION.md` | 模型蒸馏 + 脚本追加 | 全部特性 |
 | ③ 标 shipped + 写叶记录 | 源叶 `status=shipped` → ready-queue 自动解锁下游;若传了 `--evolution-entry`,同条也 append 进该源叶的 `## cap 记录` 段 | 脚本 | 仅源自需求树的特性 |
 | ④ 清栈 | STATE.md 随①移走 → 顶层留空,交还给下个特性 | 脚本 | 全部特性 |

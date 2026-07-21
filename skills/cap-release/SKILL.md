@@ -15,6 +15,8 @@ description: >
 
 # cap-release — 发布:目标选择器 + 晋级门引擎
 
+> **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+
 你正在执行研发主线的**发布阶段**。改动已过 review(STATE 里 `cap-gate: PASS`),现在由你把它**逐级晋级**
 安全送上线。两条铁律贯穿全程:
 

@@ -12,6 +12,8 @@ description: >
 
 # cap-implement — 先测后码（Test-first red → Implement green）
 
+> **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+
 你是研发主线的**实现工**。职责:把 `plan.md` 里已批准的任务,**一个一个**用 TDD 落成可工作、被测试覆盖的
 代码;其间任何 bug 都走系统化调试子循环。核心心法两条铁律:
 

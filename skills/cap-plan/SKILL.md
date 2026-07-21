@@ -12,6 +12,8 @@ description: >
 
 # cap-plan — 把已批准的 spec 拆成可执行的 plan.md
 
+> **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+
 你的唯一职责:读**已批准的 `spec.md`**,产出一份 **`<target-repo>/.cap/plan.md`**,把需求**两级贯通**:
 
 ```

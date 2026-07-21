@@ -10,6 +10,8 @@ description: >
 
 # cap-define — 收敛阶段：模糊点子 → 获批规格
 
+> **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+
 把"想做点什么"变成一份**获批的、无歧义、能被 cap-plan 直接吃进去**的规格。
 
 > **铁律(HARD-GATE)**:spec 拿到用户批准之前,**不写任何实现代码、不搭脚手架、不调任何实现类阶段**。

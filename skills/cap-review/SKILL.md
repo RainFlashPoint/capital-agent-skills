@@ -15,6 +15,8 @@ description: >
 
 # cap-review — 多角色评审 + 验证收尾
 
+> **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+
 你正在执行研发主线的**评审阶段**。目标:在改动落地前,从**改动代码自动选出的多个专业角色视角**审一遍,
 做完整性 / 范围审计与安全门控,把每条问题分类处置,产出可审计的 findings,并把门控结论写回 `STATE.md`。
 

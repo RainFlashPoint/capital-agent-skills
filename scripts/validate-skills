@@ -11,7 +11,7 @@ err(){ echo "  ✗ $1"; fail=$((fail+1)); }
 ok(){ echo "  ✓ $1"; }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -53,6 +53,14 @@ for old in cap-map cap-shape cap-build cap-verify; do
 done
 grep -q 'stage: understand | define | plan | implement | test | review | release | done' "$REF/templates/STATE.md" || err "STATE 阶段枚举未迁移"
 ok "阶段协议迁移检查完成"
+
+echo "== 4.3 progress and repository reconnaissance =="
+for f in "$ROOT"/cap-{understand,define,plan,implement,test,review,release}/SKILL.md; do
+  grep -q 'progress-protocol.md' "$f" || err "$f 未加载可见进度协议"
+  grep -q 'task-reconnaissance.md' "$f" || err "$f 未加载任务级代码侦察协议"
+done
+grep -q 'task-context.md' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未要求任务级代码事实"
+ok "进度与代码侦察协议检查完成"
 
 echo "== 5. 可移植自检:流程 skill 不得硬依赖 Claude 专属工具 =="
 for f in "$ROOT"/*/SKILL.md; do
