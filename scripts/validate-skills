@@ -11,7 +11,7 @@ err(){ echo "  ✗ $1"; fail=$((fail+1)); }
 ok(){ echo "  ✓ $1"; }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$ROOT/cap-flow/scripts/cap-context-guard" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -60,6 +60,7 @@ for f in "$ROOT"/cap-{understand,define,plan,implement,test,review,release}/SKIL
   grep -q 'task-reconnaissance.md' "$f" || err "$f 未加载任务级代码侦察协议"
 done
 grep -q 'task-context.md' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未要求任务级代码事实"
+grep -q 'cap-context-guard' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未执行 task-context 确定性门禁"
 ok "进度与代码侦察协议检查完成"
 
 echo "== 5. 可移植自检:流程 skill 不得硬依赖 Claude 专属工具 =="

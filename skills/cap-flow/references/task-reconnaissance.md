@@ -61,3 +61,13 @@
 ```
 
 侦察结果是后续 spec、plan、代码修改和验证路由的输入。没有真实代码证据时，不得声称已理解项目或影响范围。
+
+## 确定性门禁
+
+进入 `plan / implement / test / review / release` 前执行：
+
+```bash
+bash <cap-flow>/scripts/cap-context-guard --stage <stage> [--intent "<当前任务原文>"] <repo>
+```
+
+门禁检查文件存在、必填段、intent、branch、HEAD、PROFILE 的 `index-only` 声明，以及入口/测试/影响范围中的真实路径。失败时先刷新 `task-context.md`，不得口头解释后绕过。

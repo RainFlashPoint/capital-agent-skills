@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -u
+
+repo="${CAP_REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+context="$repo/.cap/task-context.md"
+expected_intent=""
+stage=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --intent) expected_intent="${2:-}"; shift 2 ;;
+    --stage) stage="${2:-}"; shift 2 ;;
+    *) repo="$1"; context="$repo/.cap/task-context.md"; shift ;;
+  esac
+done
+
+fail() { printf 'cap-context: BLOCKED — %s\n' "$1" >&2; exit 1; }
+field() { sed -n "s/^- $1:[[:space:]]*//p" "$context" | head -1 | sed 's/[[:space:]]*$//'; }
+section_has_path() {
+  awk -v heading="$1" '
+    $0 == heading { active=1; next }
+    active && /^## / { exit }
+    active && /^- `[^`]+`/ { found=1 }
+    END { exit found ? 0 : 1 }
+  ' "$context"
+}
+
+[ -f "$context" ] || fail "缺少 .cap/task-context.md；先按 task-reconnaissance.md 调查当前代码"
+
+for heading in "## Entry points" "## Call chain and data flow" "## Similar implementations" "## Tests and environment" "## Impact surface" "## Profile drift"; do
+  grep -qF "$heading" "$context" || fail "task-context 缺少必填段：$heading"
+done
+
+intent="$(field intent)"; recorded_branch="$(field branch)"; recorded_head="$(field head)"
+[ -n "$intent" ] || fail "task-context 缺少 intent"
+[ -n "$recorded_branch" ] || fail "task-context 缺少 branch"
+[ -n "$recorded_head" ] || fail "task-context 缺少 head"
+[ "$(field profile-used-as)" = "index-only" ] || fail "PROFILE 必须标记为 index-only，不能代替代码事实"
+
+current_branch="$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+current_head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
+[ "$recorded_branch" = "$current_branch" ] || fail "分支已变化：记录=${recorded_branch} 当前=${current_branch}；重新调查代码"
+[ "$recorded_head" = "$current_head" ] || fail "HEAD 已变化：记录=${recorded_head} 当前=${current_head}；刷新 task-context"
+
+if [ -n "$expected_intent" ] && [ "$intent" != "$expected_intent" ]; then
+  fail "任务意图已变化；刷新 task-context（记录=${intent}）"
+fi
+
+section_has_path "## Entry points" || fail "Entry points 没有真实代码路径"
+section_has_path "## Tests and environment" || fail "Tests and environment 没有测试或配置路径"
+grep -qE '^- (modify|inspect-only|out-of-scope): `[^`]+`' "$context" || fail "Impact surface 没有带路径的范围证据"
+
+case "$stage" in
+  plan|implement|test|review|release|'') ;;
+  *) fail "未知阶段：$stage" ;;
+esac
+
+printf 'cap-context: PASS — intent/branch/HEAD/代码证据均新鲜%s\n' "${stage:+，允许进入 $stage}"

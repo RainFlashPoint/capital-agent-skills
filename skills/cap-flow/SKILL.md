@@ -25,6 +25,7 @@ description: >
 - `references/task-reconnaissance.md`：每个新任务必须基于当前仓库真实代码建立或刷新 `.cap/task-context.md`；`PROFILE.md` 只作索引，不能替代任务级代码调查。
 
 任一阶段被直接调用时也必须遵守这两条契约。没有新鲜 `task-context.md` 时，不得直接进入计划或编码。
+准备进入 `plan / implement / test / review / release` 时，必须运行 `scripts/cap-context-guard`；失败就留在当前阶段刷新代码调查，不能只靠模型自判“应该没问题”。
 
 ## 公开语言与内部 ID
 
