@@ -149,6 +149,8 @@ roles/<r>.md   ┌───┴───┐
 - `repo_url`:当前仓库地址——**必须与注入(enrich_context)时同一个**,否则归因静默断裂(见 §5 repoTail)。
 - `operator`:贡献者归因(谁悟到 / 谁踩的坑)。
 - `session_id`:可选,会话标识。
+- `experience`:必须显式提供 `problem / solution / conditions / counterexamples / evidence_refs / outcome`。没有结构化教训和验证引用时只允许进入 candidate draft，不能作为团队建议注入。
+- `verify_verdict` / `review_verdict`:至少一项有明确 PASS，经验才能成为当前项目的 validated published 知识。
 
 **就近合并进本地卡片**(可选、二级出口),照搬编译式合并纪律:
 1. **合并、不覆盖**:融进目标卡对应 section,保留有价值旧内容。

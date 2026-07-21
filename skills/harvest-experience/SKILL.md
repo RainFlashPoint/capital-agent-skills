@@ -48,6 +48,13 @@ git diff --name-only HEAD    # 未提交改动
 - `intent`: 本次会话的意图/需求。**优先用你对本次会话的总结**（比 commit message 信息量大）；若要用 commit message，先确认它不是 "fix bug" 这类空话，否则用总结。
 - `changed_files`: 上一步 `git diff --name-only` 得到的文件路径数组（**只传路径，绝不传代码内容**）
 - `repo_url`: 当前仓库地址（必须与第 1 步一致，否则闭环归因会断）
+- `experience`: 结构化经验，不得让服务端只凭需求标题和文件路径猜：
+  - `problem`: 本轮遇到的真实问题或原方案为何不成立。
+  - `solution`: 最终采用且被证据支持的解决方法。
+  - `conditions`: 适用前提。
+  - `counterexamples`: 不适用场景或禁区。
+  - `evidence_refs`: Commit、测试报告、Review 报告或 `.cap` 证据路径，只传引用不传代码正文。
+  - `outcome`: 最终结果，例如 `tests_passed + review_passed + adopted`。
 
 **归因字段(可选)**：
 - `session_id`: 会话标识
@@ -63,6 +70,8 @@ git diff --name-only HEAD    # 未提交改动
 
 > `predicted_files`(预测)对 `changed_files`(真值)打文件预测 F1,是"接入 KB 后模型有没有变准"的**适应度函数**,
 > 也是并行分支 A/B 测 skill 变体的第一把尺。
+
+发布纪律：`experience.problem/solution/evidence_refs` 完整，且 `verify_verdict` 或 `review_verdict` 有明确 PASS，才可成为 `validated/published` 项目经验。旧客户端或证据不足的调用只能进入 `candidate/draft`，不得注入后续 Agent。
 
 **前向兼容**：以上可选字段 server 端**不认识就忽略、不报错**——skills 可安全吐全集,server 侧收字段 + 落库算 F1
 属另一阶段的工作(不阻塞本 skill)。
@@ -82,7 +91,7 @@ git diff --name-only HEAD    # 未提交改动
 ## 规则
 
 - **意图质量优先**：intent 太短或是 "fix"/"update"/"修改" 这类空话时，服务端会自动跳过；请尽量给一句有信息量的意图总结。
-- **只传文件路径，不传代码内容**：沉淀的是"这类需求通常改哪些文件"的经验，不是代码本身。
+- **只传引用和路径，不传代码内容**：经验必须包含问题、解法、条件和证据引用；文件路径只是证据的一部分，不再等同于经验本身。
 - **repo_url 首尾一致（repoTail 不变量）**：注入和沉淀用同一个 repo_url，复用率统计才准确。服务端从 repo_url 派生 `projectKey` 做归因；**大小写 / 尾部差异会让 projectKey 不匹配、闭环归因静默断裂**——注入与沉淀务必逐字符同源。
 - **owner ≠ runner**：owner 记"这需求归谁",runner 记"这轮谁跑的"。夜间自治跑务必把 runner 标成 `night-factory`,别混进人的账。
 - **不确定就跳过沉淀**：如果本次会话没有真正的代码改动（纯问答、纯调研），不要调用 `record_experience`。
