@@ -2,6 +2,7 @@ import { lstat, mkdir, readlink, symlink, unlink } from 'fs/promises'
 import { basename, join } from 'path'
 
 export const publicSkillNames = ['cap']
+export const legacySkillNames = ['cap-map', 'cap-shape', 'cap-build', 'cap-verify']
 
 export function parseSetupArgs(argv = []) {
   const value = flag => { const index = argv.indexOf(flag); return index >= 0 ? argv[index + 1] || '' : '' }
@@ -24,6 +25,14 @@ export async function installSkillLinks(sourceDir, targetDir, skillNames = publi
     try {
       const stat = await lstat(target)
       if (stat.isSymbolicLink() && (await readlink(target)) === join(sourceDir, entry.name)) await unlink(target)
+    } catch {}
+  }
+  for (const name of legacySkillNames) {
+    const target = join(targetDir, name)
+    try {
+      const stat = await lstat(target)
+      const linked = stat.isSymbolicLink() ? await readlink(target) : ''
+      if (linked === join(sourceDir, name)) await unlink(target)
     } catch {}
   }
 

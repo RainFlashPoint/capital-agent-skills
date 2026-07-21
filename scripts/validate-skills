@@ -53,7 +53,7 @@ ok "公开入口与直白动作词检查完成"
 
 echo "== 4.2 canonical stage protocol =="
 for old in cap-map cap-shape cap-build cap-verify; do
-  if rg -q "$old" "$ROOT" scripts README.md CLAUDE.md --glob '!validate-skills'; then err "仍存在旧 Skill 名: $old"; fi
+  if rg -q "$old" "$ROOT" scripts README.md CLAUDE.md --glob '!validate-skills' --glob '!setup-lib.mjs' --glob '!test-setup.mjs'; then err "仍存在旧 Skill 名: $old"; fi
 done
 grep -q 'stage: understand | define | plan | implement | test | review | release | done' "$REF/templates/STATE.md" || err "STATE 阶段枚举未迁移"
 ok "阶段协议迁移检查完成"

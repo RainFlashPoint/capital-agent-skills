@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readlink, symlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { checkPlatformConnection, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -29,11 +29,14 @@ test('upgrade removes only old internal links owned by this skill package', asyn
   await mkdir(other, { recursive: true }); await mkdir(target, { recursive: true })
   await symlink(join(source,'cap-flow'),join(target,'cap-flow'))
   await symlink(join(source,'harvest-experience'),join(target,'harvest-experience'))
+  await symlink(join(source,'cap-shape'),join(target,'cap-shape'))
   await symlink(other,join(target,'cap-define'))
   await installSkillLinks(source,target)
   await assert.rejects(lstat(join(target,'cap-flow')))
   await assert.rejects(lstat(join(target,'harvest-experience')))
+  await assert.rejects(lstat(join(target,'cap-shape')))
   assert.equal(await readlink(join(target,'cap-define')), other)
+  assert.deepEqual(legacySkillNames, ['cap-map','cap-shape','cap-build','cap-verify'])
 })
 test('polls until browser approval', async () => {
   let calls = 0
