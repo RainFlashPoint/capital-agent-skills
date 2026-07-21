@@ -6,7 +6,7 @@ description: >
   按 L1-L4 复杂度自适应粒度。
   触发场景:用户说 "/cap plan"、"拆任务"、"做计划"、"规划阶段"、"把 spec 拆成任务"、"spec 批了下一步怎么做"、"cap-plan";
   cap-flow 判定 stage=plan 时也路由进来。
-  入口前提:spec.md 已存在且已获批(讨论已在 cap-shape 完成,本阶段不再做需求讨论)。
+  入口前提:spec.md 已存在且已获批(讨论已在 cap-define 完成,本阶段不再做需求讨论)。
   本阶段只产出 plan.md + 写回 STATE,不写代码 / 不跑测试 / 不评审。五准则 / 目标倒推 / 双向追溯门等见正文。
 ---
 
@@ -35,15 +35,15 @@ spec(已批准)  →  阶段 phase(含 depends_on + wave 波次)  →  任务 ta
 进入本阶段前确认:
 
 1. `<target-repo>/.cap/spec.md` **存在**。
-2. spec **已获批**(`cap-shape` 的出口门控已过;STATE 里 spec 状态为 approved)。
+2. spec **已获批**(`cap-define` 的出口门控已过;STATE 里 spec 状态为 approved)。
 
 > 硬前置:没有获批的 spec 就拆 plan,等于在没对齐的设计上排兵布阵。两条都满足才往下走。
 
-- **无 spec.md** → 停。用编号文本提示用户先走 `cap-shape`:
+- **无 spec.md** → 停。用编号文本提示用户先走 `cap-define`:
 
   ```
   没找到 .cap/spec.md。规划需要一份已批准的 spec 作输入。
-    1) 现在去跑 cap-shape 产出并批准 spec(推荐)
+    1) 现在去跑 cap-define 产出并批准 spec(推荐)
     2) 我手动指给你一个已有的 spec 文件路径
   回个编号。
   ```
@@ -53,11 +53,11 @@ spec(已批准)  →  阶段 phase(含 depends_on + wave 波次)  →  任务 ta
   ```
   找到 spec.md,但 STATE 里没看到"已获批"标记。规划会把 spec 当作锁定决策来拆。
     1) spec 已经批了,继续规划
-    2) 还没批,我先回 cap-shape 走批准门控
+    2) 还没批,我先回 cap-define 走批准门控
   回个编号。
   ```
 
-> **本阶段不做需求讨论 / questioning。** 那是 `cap-shape` 的事。这里把 spec 当作**锁定的输入**。若发现 spec
+> **本阶段不做需求讨论 / questioning。** 那是 `cap-define` 的事。这里把 spec 当作**锁定的输入**。若发现 spec
 > 有歧义 / 缺口,**不是**自己拍板补——而是记进 STATE 的 Decisions log 并按 §6 的 MISSING 流程上报,让用户
 > 决定(加任务 / 拆阶段 / 显式 defer)。
 
@@ -119,7 +119,7 @@ git -C <target-repo> status --porcelain
   **不当权威源**(真正的 role review 在 cap-review 时按那一刻的 diff 重算)。
 
 漂移检测:若目标 surface 落在 `PROFILE.surface-map` 之外(新建服务 / 首个移动目录),用编号文本提示"架构
-漂移,建议先刷新 PROFILE(重跑 cap-map 相关部分)"——不阻断,记 STATE。
+漂移,建议先刷新 PROFILE(重跑 cap-understand 相关部分)"——不阻断,记 STATE。
 
 ---
 
@@ -304,7 +304,7 @@ EVAL-CRIT  | E-01   | 答案准确率 ≥0.85(若有AI工作) | T5       | COVER
 ### 6.2 Coverage Gate（反向：每个任务 → 指回某需求）
 
 反向扫每个任务:它的 `requirements` 字段必须**非空**,指回 spec 的某需求 / 决策 ID。有任务指不回任何需求 →
-要么它是多余的(删),要么 spec 漏了该需求(回 cap-shape 补)。
+要么它是多余的(删),要么 spec 漏了该需求(回 cap-define 补)。
 
 ### 6.3 自查三扫（定稿前自己跑）
 
@@ -324,7 +324,7 @@ EVAL-CRIT  | E-01   | 答案准确率 ≥0.85(若有AI工作) | T5       | COVER
 
 ```
 实现计划已写入 `<path>`(N 个阶段 / M 个任务)。请你过一眼,
-有要改的告诉我;没问题我就进入 cap-build 开始 TDD 实现。
+有要改的告诉我;没问题我就进入 cap-implement 开始 TDD 实现。
 (plan 阶段多 / 任务多,逐条聊批太累?说「网页审」,我渲染成可划词批注的本地网页让你标。)
 ```
 
@@ -437,7 +437,7 @@ plan 定稿、双向追溯全过后,输出 `## HANDOFF` block,**经由 cap-flow*
 - **Active roles (from last diff scan)**:§2 预解析出的角色快照。
 - **Changed-files snapshot**:§2 取到的改动 / 目标 surface 路径。
 - **Decisions log**:追加本次复杂度定级理由 + 任何 spec 歧义 / MISSING 的处置结论。
-- **Next action**:`-> cap-build`(按 wave=1 的阶段开干)。
+- **Next action**:`-> cap-implement`(按 wave=1 的阶段开干)。
 
 > 时间戳由 caller 传入,本阶段**不自造时钟**。
 
@@ -454,14 +454,14 @@ plan 定稿、双向追溯全过后,输出 `## HANDOFF` block,**经由 cap-flow*
 7. [ ] 出口门控:Source Audit(正向全 COVERED)+ Coverage Gate(反向全指回)+ 自查三扫(§6)
 8. [ ] 写 `.cap/plan.md`(§7 schema,单写者)
 9. [ ] 输出 `## HANDOFF` 并经 cap-flow 写回 `STATE.md`:gates / roles / checks / changed-files / decisions / next(§8)
-10. [ ] 向用户报告:复杂度等级 / 阶段数与波次 / 下一步(-> cap-build)
+10. [ ] 向用户报告:复杂度等级 / 阶段数与波次 / 下一步(-> cap-implement)
 
 ---
 
 ## 10. 边界与不做什么
 
-- **不做需求讨论 / questioning** —— 那是 cap-shape。spec 当锁定输入;有歧义按 §6 MISSING 上报。
-- **不写代码、不跑测试、不做 review** —— 那是 cap-build / cap-verify / cap-review。
+- **不做需求讨论 / questioning** —— 那是 cap-define。spec 当锁定输入;有歧义按 §6 MISSING 上报。
+- **不写代码、不跑测试、不做 review** —— 那是 cap-implement / cap-test / cap-review。
 - **不缩水 scope** —— 太复杂就建议拆阶段,绝不把 action 写成 "v1 / 先静态"。
 - **不内联 role-routing 整张表** —— 调用 `cap-flow/references/role-routing.md` 解析,保持单一事实源。
 - **不依赖运行时** —— 无后台服务 / 子代理必需 / 特定目录约定 / 富交互控件;纯文件 + git + 编号文本。

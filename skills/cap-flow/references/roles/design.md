@@ -6,7 +6,7 @@ updated: 2026-06-26
 
 # design — 设计视角角色卡
 
-> 一张"看问题的镜片"，不是流程。被 cap-build / cap-verify / cap-review 在改动命中前端/UI 面时加载。
+> 一张"看问题的镜片"，不是流程。被 cap-implement / cap-test / cap-review 在改动命中前端/UI 面时加载。
 > 工程实现细节归 client-dev 卡；本卡只管"设计意图、体验、可用性、视觉品质"。
 > 两条腿：**(A) 视觉/前端代码审查**（AI-slop / 排版 / 交互态 / a11y，可从 diff 静态判定）+
 > **(B) UX 深度**（CSS 系统 / 信息架构 / 用户旅程走查，需要理解意图或跑页面）。
@@ -79,7 +79,7 @@ updated: 2026-06-26
 
 | 阶段 | 设计视角做什么 |
 |------|----------------|
-| **shape** | 当特性涉及 UI 面：确认风格方向（不要"clean minimal"含糊）、定调色板/排版策略、画信息架构骨架与关键用户旅程；这些进 spec，成为后续校准基线。**用具体参照物锚定风格而非形容词堆砌**（"1970 年代研究生讲义" > "modern/clean/premium"——参照物描述一个点、形容词描述一个区域，负约束随参照物自带）；DESIGN.md **散文为主、token 为辅**（token 是校准 context 不是渲染指令）。详见 cap-shape §2.6b。 |
+| **shape** | 当特性涉及 UI 面：确认风格方向（不要"clean minimal"含糊）、定调色板/排版策略、画信息架构骨架与关键用户旅程；这些进 spec，成为后续校准基线。**用具体参照物锚定风格而非形容词堆砌**（"1970 年代研究生讲义" > "modern/clean/premium"——参照物描述一个点、形容词描述一个区域，负约束随参照物自带）；DESIGN.md **散文为主、token 为辅**（token 是校准 context 不是渲染指令）。详见 cap-define §2.6b。 |
 | **build** | 实现时守 token 化、语义化 HTML、交互态、a11y 基线；A 腿 `[diff]` 检查清单可即时自查。 |
 | **verify (journey 模式)** | 跑页面执行 B 腿 `[render]` 检查：5 秒测试、断点无溢出、对比/键盘可达、reduced-motion；失败截图回灌 build。详见 verify-check `journey` playbook 下方。 |
 | **review** | 对 diff 跑完整 A 腿审查（读改动前端文件全文），按下方证据 schema 出 findings；与 client-dev 卡并行但各写各的文件，互不抢 STATE。 |
@@ -88,12 +88,12 @@ updated: 2026-06-26
 
 ## verify-check playbook：design 视觉/UX 审查（嵌入 journey 模式）
 
-> design 卡本身无流程；但当 cap-verify 的 **journey 模式**命中前端面时，按此 playbook 跑视觉/UX 那一刀。
+> design 卡本身无流程；但当 cap-test 的 **journey 模式**命中前端面时，按此 playbook 跑视觉/UX 那一刀。
 > 可移植：Web 用 Playwright MCP（环境已装）；无 Playwright/无并行能力时降级——见"门控"。
 
 ### 何时触发
 - diff 命中前端 glob（`web/** components/** *.tsx *.vue *.css *.html` 或移动端 `*.swift *.kt ios/** android/**`）。
-- 或显式 `/cap verify --check=journey`（视觉子项随 e2e 一起跑）。
+- 或显式 `/cap 测试 --check=journey`（视觉子项随 e2e 一起跑）。
 - 若 `git diff --name-only` 命中的路径**没有任何一条**匹配前端/UI glob（按 role-routing R1/R2 的 web/移动 glob，或 PROFILE.surface-map 的前端面）：**静默跳过**，不出任何输出。（可移植：不依赖任何 gstack 二进制，只用 diff + role-routing glob。）
 
 ### 步骤流程
@@ -109,7 +109,7 @@ updated: 2026-06-26
    - 键盘 Tab 走一遍：焦点顺序 + 焦点环可见；查颜色对比（可借 `zai-mcp-server` ui_diff_check / 自动 a11y 检查）。
    - 开 `prefers-reduced-motion` 复跑，确认动效降级。
    - 双主题则明暗各截一遍。
-4. **失败回灌**：任一 `[render]` 项失败 → before/target/after 三联截图 + 源码定位（file→route），作为 finding 回灌 cap-build 修复，修后复跑该项。
+4. **失败回灌**：任一 `[render]` 项失败 → before/target/after 三联截图 + 源码定位（file→route），作为 finding 回灌 cap-implement 修复，修后复跑该项。
 
 ### 产物
 - 写入 `<target-repo>/.cap/verify/journey-<scope>-report.md` 的 **design 小节**（与功能 e2e 同文件、分节）。

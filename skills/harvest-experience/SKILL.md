@@ -93,6 +93,6 @@ git diff --name-only HEAD    # 未提交改动
 `record_experience` 是 cap 家族沉淀的**统一出口**,三处都走它(不各造通道)：
 - **cap-flow** —— 退场 Retire 步⑤ 吐 labeled 数据点(`intake.md §6`);`/cap evolve` 推耐久教训(`evolve-loop.md`)。
 - **cap-review** —— 复发 findings 蒸馏成经验卡(`distillation-loop.md`)。
-- **cap-shape** —— 定型的耐久决策。
+- **cap-define** —— 定型的耐久决策。
 
 全部带 owner/runner 归因、同一 repo_url,汇进中心 KB 团队共享池。

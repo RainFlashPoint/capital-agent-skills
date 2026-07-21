@@ -11,7 +11,7 @@ err(){ echo "  ✗ $1"; fail=$((fail+1)); }
 ok(){ echo "  ✓ $1"; }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/roles" "$ROOT/cap-verify/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -30,13 +30,13 @@ for rf in "$REF"/roles/*.md; do
 done
 ok "角色卡交叉引用检查完成($(ls "$REF"/roles/*.md | wc -l | tr -d ' ') 个)"
 
-echo "== 4. verify checks:文件 ↔ role-routing ↔ cap-verify =="
-for mf in "$ROOT"/cap-verify/checks/*.md; do
+echo "== 4. verify checks:文件 ↔ role-routing ↔ cap-test =="
+for mf in "$ROOT"/cap-test/checks/*.md; do
   m="$(basename "$mf" .md)"
   grep -q "$m" "$REF/role-routing.md" || err "check '$m' 未在 role-routing.md"
-  grep -q "$m" "$ROOT/cap-verify/SKILL.md" || err "check '$m' 未被 cap-verify 引用"
+  grep -q "$m" "$ROOT/cap-test/SKILL.md" || err "check '$m' 未被 cap-test 引用"
 done
-ok "verify checks 交叉引用检查完成($(ls "$ROOT"/cap-verify/checks/*.md | wc -l | tr -d ' ') 个)"
+ok "verify checks 交叉引用检查完成($(ls "$ROOT"/cap-test/checks/*.md | wc -l | tr -d ' ') 个)"
 
 echo "== 4.1 public entry vocabulary =="
 grep -q '唯一公开入口' "$ROOT/cap/SKILL.md" || err "cap 未声明为唯一公开入口"
@@ -46,6 +46,13 @@ for word in 项目了解 需求确认 开发计划 编码实现 测试验证 代
 done
 grep -q '不得要求用户调用内部技能名' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 缺少内部名称隐藏纪律"
 ok "公开入口与直白动作词检查完成"
+
+echo "== 4.2 canonical stage protocol =="
+for old in cap-map cap-shape cap-build cap-verify; do
+  if rg -q "$old" "$ROOT" scripts README.md CLAUDE.md --glob '!validate-skills'; then err "仍存在旧 Skill 名: $old"; fi
+done
+grep -q 'stage: understand | define | plan | implement | test | review | release | done' "$REF/templates/STATE.md" || err "STATE 阶段枚举未迁移"
+ok "阶段协议迁移检查完成"
 
 echo "== 5. 可移植自检:流程 skill 不得硬依赖 Claude 专属工具 =="
 for f in "$ROOT"/*/SKILL.md; do

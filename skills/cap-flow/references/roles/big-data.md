@@ -24,7 +24,7 @@ triggers: ["*.sql", "**/pipelines/**", "**/dbt/**", "**/spark/**", "**/etl/**", 
 4. **数据质量与可追溯**——空值是否被刻意处理（不是隐式传播到 Gold）；Gold 是否带行级质量分；每行能否追回源头（lineage）。
 5. **迁移/schema 变更安全**——可逆性、锁时长、回填策略、索引并发创建、多阶段部署兼容（旧码+新 schema 不崩）。
 
-> 边界：这是**视角/知识卡**，不执行多步活动。具体"跑数据质量套件 / 跑覆盖率门控"属于 `cap-verify` 的 logic 模式；"按 rubric 评数据质量分"属于 model 模式。
+> 边界：这是**视角/知识卡**，不执行多步活动。具体"跑数据质量套件 / 跑覆盖率门控"属于 `cap-test` 的 logic 模式；"按 rubric 评数据质量分"属于 model 模式。
 
 ## 检查清单
 
@@ -109,7 +109,7 @@ triggers: ["*.sql", "**/pipelines/**", "**/dbt/**", "**/spark/**", "**/etl/**", 
 
 ## verify-check playbook：数据契约 + 迁移安全门（big-data 专属验证片段）
 
-> 这是 big-data 角色在 `cap-verify` 中贡献的可执行验证片段，被 logic 模式编排调用。
+> 这是 big-data 角色在 `cap-test` 中贡献的可执行验证片段，被 logic 模式编排调用。
 > 可移植：纯 Read/Bash/Grep，无 Task/AskUserQuestion 硬依赖；无并行能力时串行执行。
 
 ### 何时触发

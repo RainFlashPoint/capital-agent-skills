@@ -8,7 +8,7 @@
         PROFILE.md ## Evolution log（无 PROFILE 兜底 .cap/EVOLUTION.md）、（若源自需求树）标源叶
         shipped、清空本文件。由 cap-flow 在下次 /cap 检测到 stage==done 时触发（见 cap-flow §2 退场前置 / §4 路由）。
   与 PROFILE.md 的区别：
-    - PROFILE.md = 项目级、长命、所有 feature 共享（cap-map 建一次）。
+    - PROFILE.md = 项目级、长命、所有 feature 共享（cap-understand 建一次）。
     - STATE.md   = feature 级、短命、本任务的 handoff 载体（本文件）。
   写入规则：
     - 单写者（single-writer）：同一时刻只有主线（cap-flow）在写 STATE.md。
@@ -27,7 +27,7 @@
 
 # Cap State: <feature/topic 一句话标题>
 
-stage: map | shape | plan | build | verify | review | release | done
+stage: understand | define | plan | implement | test | review | release | done
 status: in-progress | gated | blocked
 work-type: feature | remediation | hotfix     # 流程画像(中央旋钮):各阶段读它自适应走多重。见下方说明
 branch: <写 STATE 时记 `git rev-parse --abbrev-ref HEAD`>     # 并发边界戳:cap-guard 据此防串台
@@ -42,7 +42,7 @@ cap-gate: <未设置>   # cap-review 全过(verdict=PASS)时写 `PASS reviewed-h
 <!--
   字段取值说明：
   - stage：当前所处阶段，枚举见上。done = 全部 gate 通过且 verify 完成。
-      · map：与需求树维护同为【项目级】工作 —— cap-map 产出 PROFILE.md；需求树
+      · map：与需求树维护同为【项目级】工作 —— cap-understand 产出 PROFILE.md；需求树
         （`<target-repo>/.cap/requirements/` 递归 domain→subdomain→leaf）由 cap-flow 内联的 intake
         流程维护，不属单特性生命周期。从需求树选中一片叶后【另起】单特性 STATE，stage 从 shape 起跑。
   - status：
@@ -50,7 +50,7 @@ cap-gate: <未设置>   # cap-review 全过(verdict=PASS)时写 `PASS reviewed-h
       gated       = 卡在某个 exit gate（等待批准/等待修复后重测）
       blocked     = 被外部依赖/缺口阻塞，无法推进（在 Decisions log 记原因）
   - updated：调用方传入的时间戳，skill 不自造时间。
-  - verify-checks：本轮 diff 解析出的验证项子集。可能值见 cap-verify/checks/ 目录：
+  - verify-checks：本轮 diff 解析出的验证项子集。可能值见 cap-test/checks/ 目录：
       logic（总是跑）/ journey（用户可见面变更）/ model（AI/模型/策略变更）。
   - work-type（流程画像 / 中央旋钮）：由 shape/map 在流程开始时定；各阶段入口读它来自适应"走多重"。
       · feature（默认）：完整 shape→plan→build→verify→review，按 L1-L4 + 各门控正常自适应。

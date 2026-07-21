@@ -1,16 +1,16 @@
 ---
-name: cap-map
+name: cap-understand
 description: >
   研发主线的 brownfield 入口阶段。把一个【已有项目】测绘成机器可路由的工程记忆——产出
   <target-repo>/.cap/PROFILE.md(技术栈 / 约定 / 入口 / 已知风险 + ★surface-map:模块→glob→默认角色→验证项;
   + AI-readiness 体检 + 部署探测)。surface-map 是改动代码路由的可追踪输入。
   触发场景:用户说 "map 这个项目"、"给这个仓库建 PROFILE"、"扫一下这个 codebase"、"分析已有项目准备走流程"、
-  "建立工程记忆"、"cap-map";cap-flow 判定为 brownfield(无 PROFILE 且 repo 非空)时也路由到此。
+  "建立工程记忆"、"cap-understand";cap-flow 判定为 brownfield(无 PROFILE 且 repo 非空)时也路由到此。
   也可独立调用,为现有项目首次建立工程记忆。
   本阶段只测绘并写 PROFILE.md(只读源码),不分叉 / 不写 spec / 不拆任务。四阶段管道(采证→类型→surface-map→聚合)见正文。
 ---
 
-# cap-map — brownfield 入口：测绘已有项目 → PROFILE.md
+# cap-understand — brownfield 入口：测绘已有项目 → PROFILE.md
 
 你是主线的**测绘师**。一个已有项目第一次走这套流程时,cap-flow 先把你叫进来。你的唯一交付物是
 `<target-repo>/.cap/PROFILE.md` —— 项目级、长寿、被之后**每个**特性共享的记忆。其中最关键的是
@@ -26,7 +26,7 @@ description: >
 
 > **共享 references 的位置**:本文提到的 `role-routing.md`、`roles/<role>.md`、`templates/*.md` 物理上都在
 > cap-flow 编排器目录下(`cap-flow/references/`),不在本阶段目录里。解析路径一律指向 `cap-flow/references/...`
-> (相对 skills 根),或经软链接定位——别当作相对本目录去读。验证项 playbook 则在 `cap-verify/checks/`。
+> (相对 skills 根),或经软链接定位——别当作相对本目录去读。验证项 playbook 则在 `cap-test/checks/`。
 
 - **交互**:凡需用户拿主意(确认技术栈推断、确认 surface-map 草案、确认新建还是刷新),用纯文本编号列表。
 - **并行**:采证阶段可拆成 4 个正交视角(stack / arch / conventions / concerns)。有并行能力就 fan-out,各自把发现
@@ -57,7 +57,7 @@ description: >
 repo: 非空(检测到 <N> 个被跟踪文件)
 → 模式:<新建 / 刷新(架构漂移:<触发面>)>
   1) 按上述模式开始(推荐)
-  2) 改为只跑一次现状审计(交回 cap-flow: cap-verify --check=journey --scope=full-chain)
+  2) 改为只跑一次现状审计(交回 cap-flow: cap-test --check=journey --scope=full-chain)
 回个编号。
 ```
 
@@ -105,7 +105,7 @@ Phase A 采证(纯 bash) → Phase B 类型+入口识别 → Phase C 自建 surf
    - 通用 / 其他(CLI / 工具 / 脚手架)。
 3. **定入口**:找出"系统怎么启动"的最小文件集——启动文件、路由表、CLI 命令、配置入口、迁移命令。
 4. **提测试命令抽象**:从 Phase A 的 scripts / pyproject 线索归纳出 `{ unit, coverage, e2e, typecheck, build }`
-   (语言无关命令,cap-verify 的 logic 检查据此发现并运行套件)。
+   (语言无关命令,cap-test 的 logic 检查据此发现并运行套件)。
 5. **建立验证环境初始画像**:只读探测 Dockerfile、CI、toolchain、Maven/npm 配置、Compose 与测试文档，填写 PROFILE 的 `## Verification environment`。凭据只写引用名或 `unknown`，禁止读取/复制密钥；未经真实执行确认的依赖必须标 `unknown`，不能臆测为已具备。
 
 > 三级解释纪律:先一句话定位 → 五分钟高层(任务 / 输入 / 输出 / 关键文件)→ 深入(代码流 / 边界)。把这三级
@@ -226,9 +226,9 @@ PROFILE.md 视为合格、可交回 cap-flow,需**全部**通过:
 
 本阶段**不直接写 STATE.md**。完成后向 cap-flow 返回以下结果,由它落进 STATE:
 
-- `stage: map` → 完成后建议下一步设为 `shape`(brownfield 主线:map → shape)。
+- `stage: understand` → 完成后建议下一步设为 `define`（项目了解 → 需求确认）。
 - Gates passed:勾选 `map:PROFILE.md 已建立 / 已确认无漂移`。
-- Next action:`-> cap-shape`(开始第一个特性),或若用户只想审计现状 → `-> cap-verify --check=journey --scope=full-chain`。
+- Next action:`-> cap-define`(开始第一个特性),或若用户只想审计现状 → `-> cap-test --check=journey --scope=full-chain`。
 - 告知 cap-flow:PROFILE.surface-map 已就绪,后续进 build / verify / review 时可被路由解析消费。
 
 返回话术:
@@ -237,8 +237,8 @@ PROFILE.md 视为合格、可交回 cap-flow,需**全部**通过:
 ✅ map 完成。
   - 写出:<repo>/.cap/PROFILE.md
   - surface-map:<N> 个面(<列出面名>)
-  - 下一步建议:开始第一个特性 → cap-shape
-交回 cap-flow:stage=map 完成,next=cap-shape。
+  - 下一步建议:开始第一个特性 → cap-define
+交回 cap-flow:stage=understand 完成,next=cap-define。
 ```
 
 ---

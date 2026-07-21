@@ -2,7 +2,7 @@
 
 骑在 CLI 上的研发流程 + 经验闭环技能族。给你的 coding agent（Claude Code / Codex / 其它）装一套**结构化研发流程**，外加一个**跨会话、跨人积累的经验中枢**：会话开始注入相关经验，会话结束沉淀本次改动，所有人的经验汇入同一个中心知识库。
 
-> **状态**：v0.1.2，持续演进中。核心是把结构化研发流程与连中心知识库的经验闭环 `harvest-experience` 合在一起。
+> **状态**：v0.3.0，持续演进中。核心是把结构化研发流程与连中心知识库的经验闭环 `harvest-experience` 合在一起。
 
 ## 这是什么
 
@@ -36,7 +36,7 @@ git clone https://github.com/RainFlashPoint/capital-agent-skills.git
 # Codex: 把 skills/* 链接到 ~/.agents/skills/
 ```
 
-**开始研发**：正常描述“实现需求 / 修改代码 / 修 bug”即可自动进入 Task 与经验闭环；想显式启动时只需使用 Codex 的 `$cap` 或 Claude Code 的 `/cap`。也可以说 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布`，不需要记 `cap-shape`、`cap-build` 等内部名字。
+**开始研发**：正常描述“实现需求 / 修改代码 / 修 bug”即可自动进入 Task 与经验闭环；想显式启动时只需使用 Codex 的 `$cap` 或 Claude Code 的 `/cap`。也可以说 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布`，不需要记 `cap-define`、`cap-implement` 等内部名字。
 
 **开经验闭环**：先按 [setup-mcp.md](skills/harvest-experience/references/setup-mcp.md) 注册 `capital-agent` MCP server，之后 `harvest-experience` 会在编码会话首尾自动注入/沉淀。
 

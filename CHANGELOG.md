@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 — 2026-07-21
+
+- 阶段协议统一为 `understand → define → plan → implement → test → review → release`。
+- Skill 本体同步改名为 `cap-understand`、`cap-define`、`cap-implement`、`cap-test`，不再保留难理解的旧 Skill 名。
+- 新生成的 `.cap/STATE.md`、Skills Session、Task Artifact 与平台事件只写新阶段 ID。
+- `map/shape/build/verify` 仅作为旧任务读取兼容值，读取后立即归一化，不再继续传播。
+
 ## 0.2.1 — 2026-07-21
 
 - 将 `$cap` / `/cap` 明确为研发唯一公开入口，用户无需理解内部阶段名。

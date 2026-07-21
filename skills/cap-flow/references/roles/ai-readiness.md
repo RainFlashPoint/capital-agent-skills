@@ -5,7 +5,7 @@ triggers: ["CLAUDE.md", "AGENTS.md", ".claude/**", "justfile", "Makefile", ".git
 
 # ai-readiness — 面向 AI 的友好度 / 可维护性视角角色卡
 
-> 一张"看问题的镜片",不是流程。被 `cap-map`(只读体检打分)、遗留改造类 feature(指导整改)、`cap-review`(可维护性透镜)在相关时加载。
+> 一张"看问题的镜片",不是流程。被 `cap-understand`(只读体检打分)、遗留改造类 feature(指导整改)、`cap-review`(可维护性透镜)在相关时加载。
 > 视角:**这个代码库对 AI agent 好不好用、好不好维护**(上下文架构 / scoped 命令 / 噪声 / 类型 / 测试 / LSP 就绪)。
 > 与 `architect` 分工:architect 看**全链路数据结构/契约**;ai-readiness 看**代码库对 agent 的友好度**。蒸馏自 arch-aifriendly-doctor(取其 10 维判据 + 23 模式知识,丢"整改动作"本身——整改是 feature,走流程)。
 
@@ -54,6 +54,6 @@ triggers: ["CLAUDE.md", "AGENTS.md", ".claude/**", "justfile", "Makefile", ".git
 
 ## 介入哪些阶段
 
-- **cap-map(只读体检打分)**:onboard 用本卡的 10 维做**只读评分**,把 AI-友好度健康分 + 缺口写进 PROFILE 的 `## Known risks`。**只评估,不整改**(守 onboard 只读纪律)。
+- **cap-understand(只读体检打分)**:onboard 用本卡的 10 维做**只读评分**,把 AI-友好度健康分 + 缺口写进 PROFILE 的 `## Known risks`。**只评估,不整改**(守 onboard 只读纪律)。
 - **遗留改造 feature**:当一个 feature 的目标是"把这个陈旧/不友好的仓改造成 AI-friendly"时,本卡的 23 模式是整改的"好的样子"清单。**整改是 feature → 走标准 spec→plan→build→validate→review loop**;但通常按 **L1 复杂度 + 文档/配置改动走 Skip-TDD**(加 CLAUDE.md/scoped 命令这类没法单测),**走轻但不短 review/verify 门**。
 - **cap-review**:作为可维护性透镜审"本次改动有没有降低 AI-友好度"(如新增巨石文件、删了 scoped 命令)。

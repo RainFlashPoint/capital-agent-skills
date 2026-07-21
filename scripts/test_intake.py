@@ -546,7 +546,7 @@ class BoardRenoTest(unittest.TestCase):
 
 
 class BoardLiveBadgeTest(unittest.TestCase):
-    def _setup(self, with_state=True, stage="build"):
+    def _setup(self, with_state=True, stage="implement"):
         self.tmp = tempfile.mkdtemp()
         req = os.path.join(self.tmp, "requirements")
         write_leaf(req, "user.auth.login", status="captured", title="登录")
@@ -556,13 +556,13 @@ class BoardLiveBadgeTest(unittest.TestCase):
         return req
 
     def test_overlay_when_state_present(self):
-        req = self._setup(stage="build")
+        req = self._setup(stage="implement")
         out = os.path.join(self.tmp, "b.html")
         r = run("board", "--out", out, root=req)
         self.assertEqual(r.returncode, 0)
         html_txt = _read(out)
         self.assertIn('class="live-badge', html_txt)  # 真元素(非 CSS 规则)
-        self.assertIn("build中", html_txt)            # 在飞 stage 显示
+        self.assertIn("implement中", html_txt)        # 在飞 stage 显示
 
     def test_no_overlay_without_state(self):
         req = self._setup(with_state=False)
@@ -633,9 +633,12 @@ class StatusEnumTest(unittest.TestCase):
         self.assertEqual(intake.STATUS_SET, set(intake.STATUS_ORDER))
 
     def test_stage_map(self):
-        self.assertEqual(intake.STAGE_TO_STATUS["shape"], "shaped")
-        self.assertEqual(intake.STAGE_TO_STATUS["build"], "built")
-        self.assertEqual(intake.STAGE_TO_STATUS["verify"], "verified")
+        self.assertEqual(intake.STAGE_TO_STATUS["define"], "shaped")
+        self.assertEqual(intake.STAGE_TO_STATUS["implement"], "built")
+        self.assertEqual(intake.STAGE_TO_STATUS["test"], "verified")
+        self.assertEqual(intake.normalize_stage("shape"), "define")
+        self.assertEqual(intake.normalize_stage("build"), "implement")
+        self.assertEqual(intake.normalize_stage("verify"), "test")
 
 
 if __name__ == "__main__":

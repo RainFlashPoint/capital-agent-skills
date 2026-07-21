@@ -16,7 +16,7 @@ triggers:
 
 > 这是一张**知识卡**，不是流程。它只回答"从服务端工程的专业视角看，这次改动应该关注什么"。
 > **语言细节(陷阱/测试/lint/LSP 命令)不在本卡** —— 按改动文件扩展名加载 `references/languages/<lang>.md`(后端常见 python/go/rust/java-spring,见 role-routing §7)。本卡只管服务端通用视角(API 契约 / 性能 N+1·index / security / 事务边界)。
-> 流程（跑测试、扫安全、写报告）由 `cap-build` / `cap-verify` / `cap-review` 这些 skill 执行，
+> 流程（跑测试、扫安全、写报告）由 `cap-implement` / `cap-test` / `cap-review` 这些 skill 执行，
 > 它们在路由命中本卡时把这里的关注点/清单当作透镜加载。
 
 ## 关注点
@@ -114,10 +114,10 @@ server-dev 透镜在 cap 主线的以下阶段被路由加载（`role-routing.md
 
 | 阶段 | server-dev 做什么 |
 |---|---|
-| **shape**（cap-shape） | 评审 API 契约设计、数据 schema、信任边界；对"改 AI/策略"的端点提示需要在此处定 eval 标准（交给 model 模式执行）。 |
+| **shape**（cap-define） | 评审 API 契约设计、数据 schema、信任边界；对"改 AI/策略"的端点提示需要在此处定 eval 标准（交给 model 模式执行）。 |
 | **plan**（cap-plan） | 把"迁移可回滚""端点向后兼容""加索引""加鉴权/限流"拆成带可验证 acceptance_criteria 的任务。 |
-| **build**（cap-build） | TDD 时优先为信任边界、authz、错误路径写测试（红）；实现绿。 |
-| **verify**（cap-verify） | 主要触发 **logic**（单测/集成 + 覆盖率门）与 **journey:OpenAPI**（端点用例 + 只读安全约束）；当改动涉及模型/策略时叠加 **model**。 |
+| **build**（cap-implement） | TDD 时优先为信任边界、authz、错误路径写测试（红）；实现绿。 |
+| **verify**（cap-test） | 主要触发 **logic**（单测/集成 + 覆盖率门）与 **journey:OpenAPI**（端点用例 + 只读安全约束）；当改动涉及模型/策略时叠加 **model**。 |
 | **review**（cap-review） | 本卡的检查清单 A/B/C/D 即 server-dev 的 review 维度；安全部分遵循 `gsd-secure-phase` 的 **verify-mitigation-exists + disposition(mitigate/accept/transfer) + open=0 硬门**。 |
 
 ### 证据 schema（review/verify 阶段每条 finding 落盘）

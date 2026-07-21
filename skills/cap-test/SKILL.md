@@ -1,18 +1,18 @@
 ---
-name: cap-verify
+name: cap-test
 description: >
   研发主线的**验证中枢**:build 之后、review 之前的独立验证阶段。
   根据本轮改动代码动态解析要跑哪些**验证项**——logic(总跑)/ journey(改用户可见面)/ model(改 AI / 模型 / 策略)——
   依次执行各验证项的厚 playbook,汇总写进 `.cap/verify/` 与 STATE。
   与 build 内的单元 TDD 不同:build 的 TDD 是"边写边红绿",verify 是"成体系地证明它真的能用"。
-  触发场景:用户说 "/cap verify"、"验证一下"、"跑 verify"、"测一遍"、"验收"、"e2e"、"跑端到端"、
-  "评估这次模型 / 策略改动"、"eval"、"现状审计 / health check"、"baseline 健康检查"、"cap-verify";
-  cap-flow 判定 stage=verify 时也路由进来,或某验证项被单独点名(`/cap verify --check=journey --scope=full-chain`)。
+  触发场景:用户说 "/cap 测试"、"验证一下"、"跑 verify"、"测一遍"、"验收"、"e2e"、"跑端到端"、
+  "评估这次模型 / 策略改动"、"eval"、"现状审计 / health check"、"baseline 健康检查"、"cap-test";
+  cap-flow 判定 stage=test 时也路由进来,或某验证项被单独点名(`/cap 测试 --check=journey --scope=full-chain`)。
   本阶段是**调度层**:自己不实测——它解析改动→选验证项→按序执行各 playbook→汇总门控→写交接。
   具体怎么测在 checks/{logic,journey,model}.md。
 ---
 
-# cap-verify — 验证中枢（调度层）
+# cap-test — 验证中枢（调度层）
 
 你是验证阶段的**调度员**。verify 是夹在 **build(实现)** 与 **review(评审)** 之间的独立阶段,职责是:把
 "应该能用"变成"已验证能用"的硬证据。
@@ -33,7 +33,7 @@ description: >
 ## 0. 可移植前置（每次入口先做）
 
 > **共享 references 的位置**:本文引用的 `role-routing.md` 物理上在编排器目录 `cap-flow/references/` 下;而
-> 各验证项 playbook `checks/<check>.md` 就在**本阶段目录**(`cap-verify/checks/`)下。解析路径分别指向
+> 各验证项 playbook `checks/<check>.md` 就在**本阶段目录**(`cap-test/checks/`)下。解析路径分别指向
 > `cap-flow/references/...` 与本目录的 `checks/...`,别混。
 
 本阶段要在 Claude 和 Codex 上都能跑。两条降级范式贯穿全程:
@@ -45,7 +45,7 @@ description: >
 本次 verify 要验的范围,选一个:
   1) feature   —— 只验本特性改动的旅程(默认)
   2) iteration —— 验本迭代累积的几处改动
-  3) full-chain —— 全链路现状审计(也充当 cap-map 的 baseline 健康检查)
+  3) full-chain —— 全链路现状审计(也充当 cap-understand 的 baseline 健康检查)
 回个编号即可。
 ```
 
@@ -69,11 +69,11 @@ description: >
 |---|---|---|
 | **主线推进** | build 阶段门控通过(实现 green),STATE.stage 推进到 `verify` | cap-flow 路由 |
 | **续接** | STATE.stage 已是 `verify`(上次卡在某验证项) | 跨会话 / 子 agent 接力 |
-| **单项点名** | 用户 `/cap verify --check=<check> [--scope=<scope>]` | 直接调用 |
-| **现状审计** | `--check=journey --scope=full-chain`(无需经 build) | cap-map 的 baseline 健康检查 |
+| **单项点名** | 用户 `/cap 测试 --check=<check> [--scope=<scope>]` | 直接调用 |
+| **现状审计** | `--check=journey --scope=full-chain`(无需经 build) | cap-understand 的 baseline 健康检查 |
 
 **前置门(进 verify 前应已满足,否则先回退)**:
-- build 的实现已 green(单元 TDD 通过)。若 build 未完成 → 编号文本提示先回 `cap-build`。
+- build 的实现已 green(单元 TDD 通过)。若 build 未完成 → 编号文本提示先回 `cap-implement`。
 - 工作树状态可知(下面 §2 要读 git diff)。脏树不阻断,但 journey 验证项需要能原子提交修复,见其 playbook。
 
 > 若 STATE.md / PROFILE.md 不存在(用户跳过 cap-flow 直接调本阶段):本阶段仍可独立跑——自己读 `git diff`
@@ -124,7 +124,7 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 ```
 ⚠ 这些改动不在 PROFILE.surface-map 内,验证项解析可能不全:
   - mobile/ios/App.swift
-  1) 现在重跑 cap-map 相关部分刷新 surface-map(推荐)
+  1) 现在重跑 cap-understand 相关部分刷新 surface-map(推荐)
   2) 本次按通用 routing 规则继续(已据规则判定需 journey:App)
 回个编号。
 ```
@@ -145,7 +145,7 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 
 1. **logic 先跑**(它是底座;它绿了再谈旅程 / 质量更有意义)。
 2. **journey / model** 在 logic 之后,二者之间无强依赖——可并行(§0.2)或串行。
-3. **失败回流不在本层修**:任何验证项暴露**实现 bug**,按该 playbook 的指引 **escalate 回 `cap-build`**
+3. **失败回流不在本层修**:任何验证项暴露**实现 bug**,按该 playbook 的指引 **escalate 回 `cap-implement`**
    (build 的 TDD↔调试子循环修),verify 这一轮对应需求标 PARTIAL。本调度层**不在 verify 偷改实现**。
 4. **单条问题 ≤ 3 次迭代仍无解 → escalate,不死磕**(沿用各 playbook 的反死磕约定)。
 
@@ -166,7 +166,7 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 3. **阶段总判定**:
    - 全部验证项 PASS → verify 阶段 = **PASS**,可进 review。
    - 任一验证项 GATED(覆盖率不达标 / 旅程失败已 escalate / eval 未达阈值)→ 阶段 = **gated**,STATE.next
-     指回缺口对应阶段(多为 `cap-build`)。
+     指回缺口对应阶段(多为 `cap-implement`)。
    - 任一验证项 BLOCKED(测试基建起不来 / eval 装置坏 / 缺评估契约且无法回退)→ 阶段 = **blocked**,在
      STATE.Decisions log 记原因。
 4. 写一份**阶段汇总**(可放 `.cap/verify/summary.md` 或直接体现在 STATE),列每个验证项的结果、归因分类与去向。
@@ -188,11 +188,11 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 | `<repo>/.cap/verify/model-<scope>-report.md` | **写** | model 验证项产物(质量 / 性能分) |
 | `<repo>/.cap/verify/summary.md` | **写**(可选) | 多验证项阶段汇总 |
 | `cap-flow/references/role-routing.md` | **读** | 解析 changed-files → active checks |
-| `cap-verify/checks/<check>.md` | **读** | 各验证项的执行 playbook(照做) |
+| `cap-test/checks/<check>.md` | **读** | 各验证项的执行 playbook(照做) |
 
 > spec→verify 的关键契约:**model 验证项的标准在 spec 阶段定**。若改了 AI 面但 `spec.md` 没写 rubric /
 > 数据集 / 阈值 → model playbook 会回退到"AI 工作一般最佳实践审计"并报警;本调度层在汇总时把它记为
-> **gated**,STATE.next 提示回 `cap-shape` 补 eval 契约。
+> **gated**,STATE.next 提示回 `cap-define` 补 eval 契约。
 
 ---
 
@@ -224,7 +224,7 @@ HANDOFF,再作为单写者应用。verify 阶段要更新的字段:
 
 ```markdown
 ## HANDOFF
-stage: verify            # 若全过且要进下一阶段,由 cap-flow 推进到 review
+stage: test            # 若全过且要进下一阶段,由 cap-flow 推进到 review
 status: in-progress | gated | blocked
 verify-checks: [logic, journey, model]   # 本轮 Step 1 解析出的子集(快照,非持久事实)
 active-roles: [server-dev, qa]           # Step 1 解析出的角色,与 checks 同源
@@ -238,8 +238,8 @@ gates-passed:
 decisions:
 - <date> escalate <实现 bug> 回 build;eval 阈值缺失,回 shape 补 rubric ...
 next-action: -> cap-review            # 全过
-# -> 回 cap-build 补覆盖率 / 修旅程失败    # gated
-# -> 回 cap-shape 补 eval 契约            # model 因缺契约 gated
+# -> 回 cap-implement 补覆盖率 / 修旅程失败    # gated
+# -> 回 cap-define 补 eval 契约            # model 因缺契约 gated
 ```
 
 要点:
@@ -255,10 +255,10 @@ next-action: -> cap-review            # 全过
 
 | # | 规则 | 在本阶段的体现 |
 |---|---|---|
-| 1 | 知识 + 状态都是纯文件 | 验证项 playbook 在 `cap-verify/checks/`;报告 / 状态在 `.cap/`——任何 caller 不靠技能机制也能跑 |
+| 1 | 知识 + 状态都是纯文件 | 验证项 playbook 在 `cap-test/checks/`;报告 / 状态在 `.cap/`——任何 caller 不靠技能机制也能跑 |
 | 2 | STATE 单写者;并行写各自文件 | 多验证项产物各写各的 `verify/<check>-report.md`;**只有调度层汇总后写一次 STATE**,防 fan-out 竞态 |
 | 3 | 流程平台无关;编排是加速器不是依赖 | 多验证项可 fan-out,无并行则串行(§0.2);所有提问用编号文本(§0.1);核心只需 Read/Edit/Bash/Grep + git |
-| 4 | 目标仓内维护 `.agents/skills/cap-*` 符号链接 | 由 cap-flow / cap-map 维护,Codex 仓库内可发现本阶段 |
+| 4 | 目标仓内维护 `.agents/skills/cap-*` 符号链接 | 由 cap-flow / cap-understand 维护,Codex 仓库内可发现本阶段 |
 
 > journey 验证项依赖 Playwright MCP;**无该 MCP 的环境**(纯 Codex)→ journey 的 Web / App 模态降级为"人工
 > 旅程检查清单 + 截图描述",在报告标 PARTIAL / INFERRED,不假装 TESTED(见 journey.md)。这不影响 logic /

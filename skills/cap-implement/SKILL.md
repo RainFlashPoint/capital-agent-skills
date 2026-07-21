@@ -1,16 +1,16 @@
 ---
-name: cap-build
+name: cap-implement
 description: >
   研发主线的"先测后码"实现阶段(red→green)。按已批准的 plan.md 逐任务做 TDD:写失败测试→看它失败→
   最小实现→看它通过→重构;遇到 bug 切入系统化调试子循环(根因优先,bug 三分类),再回到 TDD。
   入口先做改动面→角色 + 验证项解析(读 cap-flow 的 role-routing),把命中的角色卡作为实现视角。
   触发场景:用户说 "开始实现"、"进入 build"、"按 plan 写代码"、"red green"、"做这个任务"、"实现这个特性"、
-  "tdd 一下"、"边写边测"、"继续实现下一个任务"、"resume build"、"cap-build";cap-flow 判定 stage=build 时也路由进入。
-  本阶段只负责把 plan 的任务以 TDD 方式落成代码 + 调试。它不写 spec(cap-shape)、不拆任务(cap-plan)、
-  不跑验收级验证(cap-verify)、不做多角色评审(cap-review)。
+  "tdd 一下"、"边写边测"、"继续实现下一个任务"、"resume build"、"cap-implement";cap-flow 判定 stage=implement 时也路由进入。
+  本阶段只负责把 plan 的任务以 TDD 方式落成代码 + 调试。它不写 spec(cap-define)、不拆任务(cap-plan)、
+  不跑验收级验证(cap-test)、不做多角色评审(cap-review)。
 ---
 
-# cap-build — 先测后码（Test-first red → Implement green）
+# cap-implement — 先测后码（Test-first red → Implement green）
 
 你是研发主线的**实现工**。职责:把 `plan.md` 里已批准的任务,**一个一个**用 TDD 落成可工作、被测试覆盖的
 代码;其间任何 bug 都走系统化调试子循环。核心心法两条铁律:
@@ -93,7 +93,7 @@ Codex 运行时的具体 fan-out / 降级规则见 `cap-flow/references/runtime-
 | 有已批准的 `plan.md` | `<repo>/.cap/plan.md` 存在 | 回 `cap-plan`(无计划不实现) |
 | 在 git 仓库且非 main/master 直写 | 当前在特性分支,不是直写主干 | 提示先切特性分支(编号文本确认) |
 | 已 resolve 出 active 角色 + 验证项 | 读 `STATE.md` 的 `## Active roles`;若空则现做(§2) | 现场 resolve |
-| spec 已批准(SDD 前置) | `STATE.md` 中 spec 状态为 approved | 回 `cap-shape` |
+| spec 已批准(SDD 前置) | `STATE.md` 中 spec 状态为 approved | 回 `cap-define` |
 
 > 入口铁律:**改动面→角色 + 验证项解析先做**(§2),再开始第一个任务。这样实现时就带着对的视角
 > (client-dev / server-dev / ...)和对的"完成后要跑什么验证"的预期。
@@ -326,10 +326,10 @@ git -C <repo> status --porcelain           # 含 untracked
   │     → 【代码 bug】从根因处修(不是补丁式 ?. 掉所有 .map);修完 grep 全仓查同类问题
   │
   ├─ spec 里没定义,但当前行为是 feature 的自然延伸
-  │     → 【spec 缺失】先补 spec(回 cap-shape / 写 mini-ADR),再回来按 TDD 实现;不要硬修代码
+  │     → 【spec 缺失】先补 spec(回 cap-define / 写 mini-ADR),再回来按 TDD 实现;不要硬修代码
   │
   └─ spec 里没定义,当前行为不符合设计意图
-        → 【设计缺陷】不写代码,说清问题与连锁风险,引导回 cap-shape 想清楚该行为
+        → 【设计缺陷】不写代码,说清问题与连锁风险,引导回 cap-define 想清楚该行为
 ```
 
 **代码 bug 的修复规程(回到 TDD)**:
@@ -381,7 +381,7 @@ Status:          DONE | DONE_WITH_CONCERNS | BLOCKED
 发现顺序:① 读 `PROFILE.md` 的 `test-commands`;② 否则看 `package.json` scripts / `pyproject.toml` /
 `pytest.ini`;③ 仍无则编号文本问用户该用什么命令,并建议把它写进 PROFILE 供下次复用。
 
-> 数字化**覆盖率门控**(行 / 分支 ≥X% 否则 fail)不在 build——它是 `cap-verify` 的 `logic` 验证项职责。
+> 数字化**覆盖率门控**(行 / 分支 ≥X% 否则 fail)不在 build——它是 `cap-test` 的 `logic` 验证项职责。
 > build 只保证"每个新函数有测试、都先红后绿"。
 
 ---
@@ -399,7 +399,7 @@ Status:          DONE | DONE_WITH_CONCERNS | BLOCKED
 - [ ] 行为变更已同步相关 spec;无调试残留(console.log / print / 临时断言)。
 - [ ] 类型检查通过(`tsc --noEmit` / `mypy`,若适用)。
 
-**勾不全 = 跳过了 TDD,回去补**。全勾 → 报 `DONE`,交给 cap-flow 路由到 `cap-verify`(跑 §2 解析出的验证项)。
+**勾不全 = 跳过了 TDD,回去补**。全勾 → 报 `DONE`,交给 cap-flow 路由到 `cap-test`(跑 §2 解析出的验证项)。
 
 完成状态协议:`DONE`(有证据)/ `DONE_WITH_CONCERNS`(完成但列出顾虑)/ `BLOCKED`(说明阻塞 + 已尝试)/
 `NEEDS_CONTEXT`(说明缺什么)。3 次失败、不可验证的安全敏感改动、或无法验证的范围 → 升级。
@@ -412,7 +412,7 @@ Status:          DONE | DONE_WITH_CONCERNS | BLOCKED
 
 ```markdown
 ## HANDOFF
-stage: build
+stage: implement
 status: in-progress | gated | blocked
 verify-checks: [logic, journey:Web, ...]      # §2 本次 resolve 出的,留给 verify
 active-roles: [server-dev, client-dev, qa]
@@ -425,13 +425,13 @@ gates-passed:
 - refactor done
 decisions:
 - <date> 修了 <bug> 根因=<...> 分类=代码bug;若架构漂移亦记于此
-next-action: -> cap-verify (checks: logic + journey:Web)
+next-action: -> cap-test (checks: logic + journey:Web)
 ```
 
 并行产物(若有,如调试取证笔记)写各自文件,**不与 STATE 同写**(防竞态)。cap-flow 据 `status` 决定:
 `in-progress` 续到 verify;`gated` 停闸口列待批项;`blocked` 报阻塞不前进。
 
-跨会话:新会话 `/cap` 读 `STATE(stage=build)` + 角色卡 + `plan.md` 即可接力,无需重放上下文。
+跨会话:新会话 `/cap` 读 `STATE(stage=implement)` + 角色卡 + `plan.md` 即可接力,无需重放上下文。
 
 ---
 

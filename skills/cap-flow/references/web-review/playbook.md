@@ -2,7 +2,7 @@
 
 > 这份 playbook 是 **数据,不是 skill**(与 `evolve-loop.md` / `divergence-frames.md` 并列)。
 > 任何引擎(Claude + Read/Edit/Bash,或 Codex)都能照着跑;批注层/服务器是同目录的 **工具资产**(命令即交付物,保留)。
-> 由 `cap-shape` / `cap-plan` 的**用户复核 gate** 作为**可选**升级形态引用——文档长/结构复杂、聊天里逐条批太累时用;简单文档直接 text_mode 聊天批更快。
+> 由 `cap-define` / `cap-plan` 的**用户复核 gate** 作为**可选**升级形态引用——文档长/结构复杂、聊天里逐条批太累时用;简单文档直接 text_mode 聊天批更快。
 
 ---
 

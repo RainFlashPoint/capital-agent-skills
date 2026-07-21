@@ -1,6 +1,6 @@
 # receiving-feedback — 接收意见并修复的纪律
 
-> 共享纪律,被任何**有 fix-cycle 的地方**引用:`cap-build`(任务自检 / 调试修复)、`cap-review`(fix-first 处置)。
+> 共享纪律,被任何**有 fix-cycle 的地方**引用:`cap-implement`(任务自检 / 调试修复)、`cap-review`(fix-first 处置)。
 > 治的病:**agent 一被指出问题就疯狂乱改 / 表演式同意 / 盲目照单全收**。
 > 核心原则:**先核实再改、先问再假设、技术正确 > 社交舒适。意见是待评估的建议,不是必须执行的命令。**
 
@@ -38,5 +38,5 @@ IMPLEMENT   一次一项,每项各自验证
 | 改对了写"谢谢指出""好眼力" | 直接说"已修:<改了什么>",代码本身证明你听进去了 |
 
 ## 在 cap 流程里的接入点
-- **cap-build**:任务收尾两阶段自检(spec→quality)发现问题、调试子循环定位到 bug → 按本纪律修(核实→一次一项→验),不一被指出就乱改。
+- **cap-implement**:任务收尾两阶段自检(spec→quality)发现问题、调试子循环定位到 bug → 按本纪律修(核实→一次一项→验),不一被指出就乱改。
 - **cap-review**:Fix-First 处置每条 finding 前,先按本纪律核实该 finding 真成立、对本仓正确,再 AUTO-FIX;拿不准的 ASK,不盲修。

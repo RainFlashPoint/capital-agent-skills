@@ -5,7 +5,7 @@ triggers: ["__cross-cutting__"]   # 特殊触发:不是单一 glob,而是"改动
 
 # architect — 全链路架构视角角色卡
 
-> 一张"看问题的镜片",不是流程。被 cap-shape / cap-build / cap-verify / cap-review 在**改动跨越多个面**(前端+后端、后端+数据、全链路 e2e…)时加载。
+> 一张"看问题的镜片",不是流程。被 cap-define / cap-implement / cap-test / cap-review 在**改动跨越多个面**(前端+后端、后端+数据、全链路 e2e…)时加载。
 > 与其它角色的边界:client-dev / server-dev / big-data 各自**只看自己那一段**;architect **站在全链路看接缝**——数据结构在端到端是否对齐、跨边界契约是否一致、系统数据流是否自洽。**不替代单面角色,补它们之间的缝。**
 
 ## 关注点

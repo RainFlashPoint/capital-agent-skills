@@ -7,13 +7,13 @@ produces: .cap/verify/journey-<scope>-report.md
 # 验证项:journey（用户旅程端到端）
 
 > 站在**真实用户**的视角,沿用户旅程把改动跑一遍:Web 用 Playwright MCP 点真页面,OpenAPI 用真实端点
-> 正向跑用例(只读),App 用移动自动化(默认 Maestro,排最后)。失败不是终点——回 cap-build 定位源码、
+> 正向跑用例(只读),App 用移动自动化(默认 Maestro,排最后)。失败不是终点——回 cap-implement 定位源码、
 > 改、重测,每个修复留 before/target/after 三联证据。产物:`.cap/verify/journey-<scope>-report.md`,
 > 截图齐全、每条断言都标了证据等级。
 
-本文是 cap-verify 的**验证项 playbook**(照做,不重抄进 SKILL)。引擎 = 一个能 Read/Edit/Bash/Grep 的模型
-+ Playwright MCP。被 cap-verify 路由命中 journey 时加载,也可独立跑现状审计
-(`/cap verify --check=journey --scope=full-chain`,兼作 cap-map 的 baseline 健康检查)。
+本文是 cap-test 的**验证项 playbook**(照做,不重抄进 SKILL)。引擎 = 一个能 Read/Edit/Bash/Grep 的模型
++ Playwright MCP。被 cap-test 路由命中 journey 时加载,也可独立跑现状审计
+(`/cap 测试 --check=journey --scope=full-chain`,兼作 cap-understand 的 baseline 健康检查)。
 
 ---
 
@@ -26,7 +26,7 @@ produces: .cap/verify/journey-<scope>-report.md
 - **改了什么就验什么**:从 `git diff` 推导受影响的旅程,不盲跑全站。
 - **证据,不是感觉**:每条结论必须挂可观察证据(截图 / 网络记录 / 控制台 / 断言输出),并标注获取方式
   (TESTED / PARTIAL / INFERRED)。
-- **失败要能回到源码**:把"用例失败"翻译成"哪个文件哪行的问题",回 cap-build 修,而不是只报一句"页面崩了"。
+- **失败要能回到源码**:把"用例失败"翻译成"哪个文件哪行的问题",回 cap-implement 修,而不是只报一句"页面崩了"。
 
 ## 检查清单
 
@@ -36,7 +36,7 @@ produces: .cap/verify/journey-<scope>-report.md
 - [ ] 起好被测目标(dev server / API base URL / 模拟器),记下访问入口。
 - [ ] 每条旅程都跑到**终态**(成功页 / 错误页 / 空态),不是停在中间。
 - [ ] 每步留证据:Web=snapshot+screenshot+console+network;OpenAPI=request/response 对;App=screenshot+日志。
-- [ ] 失败用例已回 cap-build 定位源码并修复,留 before/target/after 三联。
+- [ ] 失败用例已回 cap-implement 定位源码并修复,留 before/target/after 三联。
 - [ ] 不能测的维度已**显式声明**(Scope Declaration),标 INFERRED,绝不猜成 TESTED。
 - [ ] 报告写到 `.cap/verify/journey-<scope>-report.md`,证据 schema 完整。
 
@@ -54,7 +54,7 @@ produces: .cap/verify/journey-<scope>-report.md
 |---|---|---|
 | 只跑 happy path | 上线后空态 / 错误态炸 | 每条旅程必须覆盖成功 + 失败 + 空态三个终态 |
 | 把"页面加载出来了"当通过 | 漏掉交互断裂 | 断言必须落到**用户目标达成**(数据出现 / 跳转正确 / 提示正确),不是 DOM 存在 |
-| 失败只报现象不回源码 | build 阶段无从下手 | 用 console/network/snapshot 三件套定位到文件,回 cap-build 修 |
+| 失败只报现象不回源码 | build 阶段无从下手 | 用 console/network/snapshot 三件套定位到文件,回 cap-implement 修 |
 | OpenAPI 模态跑了写操作 | 污染 / 删除真实数据 | journey 只读铁律;写 / 删用例放隔离环境或 mock |
 | App 模态没工具就硬编结论 | 报告造假 | 无移动自动化工具时,按 Scope Declaration 显式降级,标 INFERRED + 列人工验证步骤 |
 | 修复时顺手重构周边 | 引入新回归、修复不可信 | 最小修复,CSS / 配置优先;一修一提交,绝不打包 |
@@ -64,14 +64,14 @@ produces: .cap/verify/journey-<scope>-report.md
 
 - **shape**:(间接)journey 关心的"关键用户旅程"应在 spec 的验收标准里有迹可循;本验证项据此对齐旅程清单。
 - **verify**:主战场——本 playbook 在此执行。
-- **build**:失败回流目标——用例失败时回 cap-build 定位 + 修复,再回 verify 重测。
+- **build**:失败回流目标——用例失败时回 cap-implement 定位 + 修复,再回 verify 重测。
 - **review**:把 journey 报告作为"用户视角已验证"的证据交给 review,避免 review 重复手测。
 
 ---
 
 ## 何时触发
 
-由 cap-verify 的改动路由(见 `cap-flow/references/role-routing.md` / PROFILE surface-map)命中即触发;典型条件:
+由 cap-test 的改动路由(见 `cap-flow/references/role-routing.md` / PROFILE surface-map)命中即触发;典型条件:
 
 | 改动模式 | 触发的 journey 模态 |
 |---|---|
@@ -80,7 +80,7 @@ produces: .cap/verify/journey-<scope>-report.md
 | `**/*.swift *.kt mobile/** ios/** android/**` | **App**(移动自动化,默认 Maestro,排最后) |
 | `e2e/** *.spec.*` | 对应已有 e2e 套件的模态 |
 
-也可**独立运行**:`/cap verify --check=journey --scope=full-chain` 做全链路现状审计(兼作 cap-map baseline)。
+也可**独立运行**:`/cap 测试 --check=journey --scope=full-chain` 做全链路现状审计(兼作 cap-understand baseline)。
 
 > 多模态可并存:一次改动同时碰前端 + API,就同时跑 Web + OpenAPI 两个模态,各自出旅程、各自留证据,
 > 最后汇到同一份报告。
@@ -189,9 +189,9 @@ produces: .cap/verify/journey-<scope>-report.md
 
 ### Step 4 — 失败修复闭环
 
-任一模态用例失败时,进入修复闭环(按失败影响排序,逐条处理)。**注意:源码修复在 cap-build,
+任一模态用例失败时,进入修复闭环(按失败影响排序,逐条处理)。**注意:源码修复在 cap-implement,
 不在 verify 偷改实现——本闭环用于 journey 独立运行 / 现状审计时的就地修 UI 摩擦,
-主线场景下把失败 escalate 回 cap-build**:
+主线场景下把失败 escalate 回 cap-implement**:
 
 - **8a 定位源码**:用 console 报错 / network 失败请求 / snapshot 结构,Grep/Glob 到责任文件。只动与该失败
   直接相关的文件。
@@ -222,7 +222,7 @@ produces: .cap/verify/journey-<scope>-report.md
 
 ### Step 5 — 出报告
 
-写 `.cap/verify/journey-<scope>-report.md`(schema 见下),供 cap-verify 调度层汇总:gate 结果、报告路径、
+写 `.cap/verify/journey-<scope>-report.md`(schema 见下),供 cap-test 调度层汇总:gate 结果、报告路径、
 deferred / blocked 项。
 
 ---
@@ -248,7 +248,7 @@ deferred / blocked 项。
 - 不能测的维度已 Scope Declaration 声明,未伪装成已测。
 
 **FAIL / 回流条件:**
-- 任一 scope 内核心旅程终态断言不通过且未修复 → escalate 回 cap-build,报告标 `blocked`。
+- 任一 scope 内核心旅程终态断言不通过且未修复 → escalate 回 cap-implement,报告标 `blocked`。
 - 修复闭环触发熔断(风险 > 20% 或到 30 上限)→ STOP,交人决策。
 
 **降级(无并行 / 无 App 工具):**

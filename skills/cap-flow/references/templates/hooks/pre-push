@@ -5,7 +5,7 @@
 #            它会把结论写进 .cap/STATE.md；本 hook 只核对那行结论)。
 # 绕过(明知故犯)：git push --no-verify
 #
-# 安装：由 cap-map 的"脚手架自检"主动询问后拷到 .git/hooks/pre-push 并 chmod +x，
+# 安装：由 cap-understand 的"脚手架自检"主动询问后拷到 .git/hooks/pre-push 并 chmod +x，
 #       或手动：cp 本文件 .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 
 STATE=".cap/STATE.md"

@@ -73,7 +73,7 @@ deploy / promote / rollback **一律串行 inline**,一次只推一处。
 
 进 release 第一件事:把"往哪发、怎么发"的项目特定值从目标仓抽出来。
 
-1. **读 `<repo>/.cap/PROFILE.md` 的 `## Deploy` 节**(cap-map 探测写入):目标类型(static / container / vps)
+1. **读 `<repo>/.cap/PROFILE.md` 的 `## Deploy` 节**(cap-understand 探测写入):目标类型(static / container / vps)
    + 关键配置位置。
 2. **读目标仓现场配置**:`vercel.json` / `Dockerfile` + k8s manifests / 部署脚本 / 目标仓 `CLAUDE.md` 的部署段
    → 拿项目特定值(项目名 / 集群 / namespace / 主机 / 域名 / env 清单)。
@@ -106,7 +106,7 @@ deploy / promote / rollback **一律串行 inline**,一次只推一处。
 | 环境 | deploy 做什么 | 门(过了才晋级) |
 |---|---|---|
 | **dev 研发** | 构建 + 部署到研发环境 | 打包成功 + 基本 smoke(关键路径起得来) |
-| **staging 测试** | 部署到测试环境 | **集成 / e2e 通过**(复用 cap-verify 的 journey check 跑 staging)+ 配置 / 迁移就绪(迁移按 deployment-patterns 的 expand-contract,联动 architect) |
+| **staging 测试** | 部署到测试环境 | **集成 / e2e 通过**(复用 cap-test 的 journey check 跑 staging)+ 配置 / 迁移就绪(迁移按 deployment-patterns 的 expand-contract,联动 architect) |
 | **canary 线上小流量** | 小流量发布(适配器的灰度骨架) | **观察期指标健康**(错误率 / 延迟 / 饱和度三信号无异常)+ 编号文本确认 |
 | **full 线上全量** | 全量发布 | canary 通过 + **用户显式确认**(§0.1) |
 
@@ -133,7 +133,7 @@ deploy / promote / rollback **一律串行 inline**,一次只推一处。
 1. **回滚到 last-good** —— 用适配器卡对应骨架。前提:每次晋级前先记下 `<prev-good>`(上一个通过的版本 /
    deployment / release 目录)。
 2. **smoke 复验** —— 回滚后再探一次活,确认线上确实恢复。
-3. **记录** —— 回滚原因 + 哪一级失败 → 写进 release 报告 + STATE.Decisions log;严重的回 cap-build / cap-review。
+3. **记录** —— 回滚原因 + 哪一级失败 → 写进 release 报告 + STATE.Decisions log;严重的回 cap-implement / cap-review。
 4. **不原地反复重试** —— 失败即回滚到已知好版本,再回上游定位根因,别在线上死磕。
 
 ---
@@ -186,7 +186,7 @@ status: in-progress | gated | blocked
 
 ## 8. 边界与兼容性(载重规则)
 
-- **不写代码、不改业务逻辑** —— 那是 build 的事;发布中若发现实现 bug,回 cap-build,不在 release 偷改。
+- **不写代码、不改业务逻辑** —— 那是 build 的事;发布中若发现实现 bug,回 cap-implement,不在 release 偷改。
 - 纯文件 + 目标仓现有部署工具;不硬依赖结构化提问控件(编号文本兜底)、无子代理硬依赖。
 - **密钥只在部署环境 / 本地,绝不入仓** —— 这也是当初放弃"CI 里跑 agent"方案的根本原因。
 - 项目特定值全从目标仓抽,本阶段不预置任何项目的部署细节;适配器卡里出现的一律是 `<占位>`。

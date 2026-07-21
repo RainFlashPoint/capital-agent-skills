@@ -3,7 +3,7 @@
   ─────────────────────────────────────────────────────────
   作用：项目的"它是什么"长期画像。落在【目标仓库】的
         `<target-repo>/.cap/PROFILE.md`，不在 skill 里。
-  生命周期：长命。由 cap-map 建一次，被之后每个 feature 读取共享；
+  生命周期：长命。由 cap-understand 建一次，被之后每个 feature 读取共享；
             仅在架构漂移时刷新（见下文 cap-flow 的漂移检测）。
   与 STATE.md 的区别：
     - PROFILE.md = 项目级、长命、所有 feature 共享（本文件）。
@@ -13,11 +13,11 @@
     其中 surface-map 是慢变、被追踪的输入；diff 是每次重算的临时输入。
   漂移检测：cap-flow 在 session 开始时拿 diff 路径对照本 surface map；
             若变更触及 map 里没有的模块/面（如全新服务、首个移动端目录），
-            提示"架构已漂移——刷新 PROFILE？"并可重跑 cap-map 相关部分。
+            提示"架构已漂移——刷新 PROFILE？"并可重跑 cap-understand 相关部分。
   使用方式：
     1) 复制本模板到 <target-repo>/.cap/PROFILE.md
     2) 删除本注释块与所有 <填写...> 占位
-    3) 由 cap-map 据实填写；后续 feature 只读，不改（除非刷新）
+    3) 由 cap-understand 据实填写；后续 feature 只读，不改（除非刷新）
   ─────────────────────────────────────────────────────────
 -->
 
@@ -35,7 +35,7 @@ test-commands: { unit: "<例如 pytest>", coverage: "<例如 pytest --cov=<pkg> 
 
 ## Verification environment
 
-<!-- 测试环境画像只记录能力与 Secret 引用，不记录密钥值。cap-map 建初始画像；真实 ENV_BLOCKED 再补 confirmed-gaps。 -->
+<!-- 测试环境画像只记录能力与 Secret 引用，不记录密钥值。cap-understand 建初始画像；真实 ENV_BLOCKED 再补 confirmed-gaps。 -->
 
 - runtime: <jdk8-maven3 | node20 | python3.11 | unknown>
 - execution-zone: <local | docker | enterprise-runner | ci | unknown>
@@ -116,7 +116,7 @@ test-commands: { unit: "<例如 pytest>", coverage: "<例如 pytest --cov=<pkg> 
 ## Deploy
 
 <!--
-  部署事实（cap-map 只读探测；供 cap-release 用）。只记类型 + 配置位置，不抄密钥。
+  部署事实（cap-understand 只读探测；供 cap-release 用）。只记类型 + 配置位置，不抄密钥。
   source: 扫 vercel.json/Dockerfile/.github/workflows/部署脚本 + 目标工程 CLAUDE.md 部署段。
 -->
 

@@ -1,6 +1,6 @@
 ---
 name: cap
-description: Capital Agent 研发工作的唯一公开入口。Codex 中用 $cap，Claude Code 中用 /cap；用户只需描述要实现、修复、测试、评审或发布的事情，系统自动续接正确阶段。也支持“/cap 需求、计划、开发、测试、评审、发布”等直白动作，不要求用户理解 cap-shape、cap-build 等内部名称。
+description: Capital Agent 研发工作的唯一公开入口。Codex 中用 $cap，Claude Code 中用 /cap；用户只需描述要实现、修复、测试、评审或发布的事情，系统自动续接正确阶段。也支持“/cap 需求、计划、开发、测试、评审、发布”等直白动作，不要求用户理解 cap-define、cap-implement 等内部名称。
 ---
 
 # Capital Agent 研发入口
@@ -9,15 +9,15 @@ description: Capital Agent 研发工作的唯一公开入口。Codex 中用 $cap
 
 ## 用户语言
 
-不要要求用户输入 `cap-shape`、`cap-build`、`cap-verify` 等内部技能名。识别下列自然语言并在内部完成路由：
+不要要求用户输入 `cap-define`、`cap-implement`、`cap-test` 等内部技能名。识别下列自然语言并在内部完成路由：
 
 | 用户说法 | 对外名称 | 内部阶段 |
 |---|---|---|
-| 了解项目、建立项目档案 | 项目了解 | `map` / `cap-map` |
-| 梳理需求、确认方案、写规格 | 需求确认 | `shape` / `cap-shape` |
+| 了解项目、建立项目档案 | 项目了解 | `understand` / `cap-understand` |
+| 梳理需求、确认方案、写规格 | 需求确认 | `define` / `cap-define` |
 | 拆任务、制定计划 | 开发计划 | `plan` / `cap-plan` |
-| 开始开发、实现、修复 | 编码实现 | `build` / `cap-build` |
-| 测试、验证 | 测试验证 | `verify` / `cap-verify` |
+| 开始开发、实现、修复 | 编码实现 | `implement` / `cap-implement` |
+| 测试、验证 | 测试验证 | `test` / `cap-test` |
 | 代码评审、Review | 代码评审 | `review` / `cap-review` |
 | 发布、上线 | 发布上线 | `release` / `cap-release` |
 

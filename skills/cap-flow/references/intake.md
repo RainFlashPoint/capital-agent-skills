@@ -7,7 +7,7 @@
 > **在生命周期里的位置**:需求树是**项目级**产物(和 PROFILE 同类,长寿、不属某个单特性)。从树里选中一片叶
 > 之后,cap-flow 会**另起**一条单特性 STATE,从 `shape` 阶段起跑主线。需求树与单特性 STATE 互相解耦、互不覆盖。
 >
-> **边界**:这里只管"需求集合"。收敛单条需求成 spec = `cap-shape`;拆任务 = `cap-plan`;自治调度循环 = `/cap loop`。
+> **边界**:这里只管"需求集合"。收敛单条需求成 spec = `cap-define`;拆任务 = `cap-plan`;自治调度循环 = `/cap loop`。
 > 知识与状态全在纯文件,引擎 = 一个能 Read/Edit/Bash/Grep 的模型。
 
 ## 可移植约定
@@ -64,7 +64,7 @@ data_owner: <数据真相源>
 （原文 + 澄清后的意图）
 
 ## 验收线索
-（怎么算这片叶 done 的初步线索;正式验收在 cap-shape 阶段细化）
+（怎么算这片叶 done 的初步线索;正式验收在 cap-define 阶段细化）
 
 ## 老系统行为参照
 （old_system_ref 指向的实际行为，供重写对齐）
@@ -107,7 +107,7 @@ ready-queue 据此自动解锁下游叶。
 ## 2b. Generate —— 从代码逆向出带叶的树
 
 Seed 建空骨架靠人 Ingest;Generate 更进一步:**分析已有代码库 → 自动产出带叶的需求树**,打通"已有项目 →
-树 → 看板 → 选叶起特性"的闭环。这是**判断性的 agent 工作**(像 cap-map 那样读代码),机械落盘交给脚本。
+树 → 看板 → 选叶起特性"的闭环。这是**判断性的 agent 工作**(像 cap-understand 那样读代码),机械落盘交给脚本。
 
 > **产物用途 = PM 与业务对齐**,所以主轴必须业务可读。
 
@@ -123,7 +123,7 @@ Seed 建空骨架靠人 Ingest;Generate 更进一步:**分析已有代码库 →
   `built`;完整实现 + 有测试 → `verified` 封顶(**不要给 `shipped`**——是否上线代码里看不出来)。推断值在
   预览 / 落盘时**显式标为草稿**,靠人逐域校正,不可当权威。
 
-**输入**(不重造分析轮子):先读 `<target-repo>/.cap/PROFILE.md` 的 surface-map(无 PROFILE 就先跑 cap-map);
+**输入**(不重造分析轮子):先读 `<target-repo>/.cap/PROFILE.md` 的 surface-map(无 PROFILE 就先跑 cap-understand);
 再深读 `contracts/`(OpenAPI)、模块子目录、`db/schema`、`CLAUDE.md` / `docs`。
 
 **运行 = 两阶段并行**:
@@ -309,10 +309,10 @@ archive(本地工件留存)。
 ## 7. 出口 / 边界
 
 - intake 操作不推进单特性 stage;它维护项目级需求树 + 特性退场。
-- 选中一片就绪叶进入开发 → cap-flow 另起单特性 STATE(stage=shape),把该叶的 `id` / 需求描述 / `old_system_ref`
-  作为 cap-shape 的输入。
+- 选中一片就绪叶进入开发 → cap-flow 另起单特性 STATE(stage=define),把该叶的 `id` / 需求描述 / `old_system_ref`
+  作为 cap-define 的输入。
 - 特性 done → cap-flow 触发 Retire 收尾:归档 + 回流 + 标源叶 shipped + 清栈。
 - 需求树的"正确性" = `scripts/intake.py lint` 干净。
 
-**不做**:不收敛单条需求成 spec(cap-shape);不拆任务 / 不写测试 / 不写实现(cap-plan / cap-build);不把
+**不做**:不收敛单条需求成 spec(cap-define);不拆任务 / 不写测试 / 不写实现(cap-plan / cap-implement);不把
 `_index.md` 当事实源;Seed 不臆造需求;Ingest 不把一条需求拆成多叶。

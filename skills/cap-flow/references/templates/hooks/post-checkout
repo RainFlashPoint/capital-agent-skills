@@ -5,7 +5,7 @@
 #          STATE 可能被另一特性覆盖 → 此钩子在离开瞬间把过渡态固化进叶文件,避免丢失。
 #          **由 git 执行,模型/人绕不过**(唯一逃逸=删钩子或 --no-verify 不适用 checkout)。
 # 永不阻断 checkout:任何失败只警告 + exit 0。
-# 装:cap-map 脚手架自检询问后拷到 .git/hooks/post-checkout 并 chmod +x;
+# 装:cap-understand 脚手架自检询问后拷到 .git/hooks/post-checkout 并 chmod +x;
 #    或手动:cp 本文件 .git/hooks/post-checkout && chmod +x .git/hooks/post-checkout
 #
 # 注:对自身无 requirements 树的项目是 no-op(下面 [ -d "$req" ] 守住)。
@@ -20,10 +20,10 @@ leaf=$(val source-leaf); stage=$(val stage)
 
 # stage → status 映射(与 intake.STAGE_TO_STATUS 一致;非过渡 stage 不 flush)
 case "$stage" in
-  shape)          to="shaped" ;;
+  define|shape)   to="shaped" ;;
   plan)           to="planned" ;;
-  build)          to="built" ;;
-  verify|review)  to="verified" ;;
+  implement|build) to="built" ;;
+  test|verify|review) to="verified" ;;
   release)        to="shipped" ;;
   *)              exit 0 ;;
 esac

@@ -1,6 +1,6 @@
-# 示例:cap-map 的产出长什么样(脱敏通用样例)
+# 示例:cap-understand 的产出长什么样(脱敏通用样例)
 
-> 这是 `cap-map` 跑在一个**虚构** web+API 项目 `acme-shop` 上后写出的 `.cap/PROFILE.md` 样子。
+> 这是 `cap-understand` 跑在一个**虚构** web+API 项目 `acme-shop` 上后写出的 `.cap/PROFILE.md` 样子。
 > 仅供理解产出形态;**真实项目的 dogfood 产物不入库**(`docs/dogfood/` 已 gitignore,只在本地跑)。
 
 ```markdown

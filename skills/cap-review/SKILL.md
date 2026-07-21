@@ -10,7 +10,7 @@ description: >
   "走 cap review"、"准备合并 / 落地前检查"、"cap-review"、"代码评审 + 收尾";
   cap-flow 判定 stage=review 时也路由进来,或在 verify 通过后主动建议。
   本阶段是流程(可执行 playbook):读改动 → 解析角色 + 验证项 → 加载角色卡当透镜 → 产 findings → 门控 → 写状态。
-  它不写实现、不写测试、不跑端到端旅程(那是 cap-build / cap-verify 的事)。阶段末输出 `## HANDOFF`,cap-flow 是 STATE 单写者。
+  它不写实现、不写测试、不跑端到端旅程(那是 cap-implement / cap-test 的事)。阶段末输出 `## HANDOFF`,cap-flow 是 STATE 单写者。
 ---
 
 # cap-review — 多角色评审 + 验证收尾
@@ -66,7 +66,7 @@ description: >
 1. **有改动可审**:`git diff` 相对 base 非空。若为空 → 输出 `Nothing to review — 工作区与 base 无差异` 并停。
 2. **build 已 green**:`STATE.gates` 里 `tests written (red)` 与 `implement (green)` 已勾(或当前确实有实现 diff)。
 3. **verify 已跑**(推荐但不强制):`STATE.verify-checks` 已解析,`.cap/verify/` 下有对应报告。
-   - 若 verify 未跑且改动触及用户可见面 / AI 策略 → 提示"建议先跑 cap-verify",但不阻断 review(review 可独立跑)。
+   - 若 verify 未跑且改动触及用户可见面 / AI 策略 → 提示"建议先跑 cap-test",但不阻断 review(review 可独立跑)。
 4. **能定位状态**:`<target-repo>/.cap/STATE.md` 可读(没有则按 stage=review 新建一份骨架,见 §5)。
 
 > 独立调用也允许:用户直接 `/cap review` 审当前 diff。此时跳过 cap-flow,自己做 §2 的角色解析。
@@ -388,7 +388,7 @@ cap-gate: <见下>         # ★ G1–G6 全过(verdict=PASS)→ 写 `PASS revie
 ## Next action
 -> <PASS: 进验证收尾(§6 引用 verify 证据做最终确认)→ stage=done>
 -> <BLOCKED: 修 CRITICAL / 安全 open 项后重跑 cap-review>
--> <DRIFT: 重跑 cap-map 相关部分刷新 PROFILE>
+-> <DRIFT: 重跑 cap-understand 相关部分刷新 PROFILE>
 ```
 
 ---
@@ -397,7 +397,7 @@ cap-gate: <见下>         # ★ G1–G6 全过(verdict=PASS)→ 写 `PASS revie
 
 review 门控 PASS 后做轻量验证把整个特性收口(不重复 verify 的执行,只做最终确认):
 1. **复核 verify 证据**:`.cap/verify/` 下报告存在且结论为通过(logic 覆盖率达门、journey 旅程 PASS、model
-   分达阈)。缺失或不通过 → 回 cap-verify。
+   分达阈)。缺失或不通过 → 回 cap-test。
 2. **plan-completion 收口**:Step 2 的 plan 项全部 DONE / CHANGED,或剩余 NOT-DONE 已显式落 P1 待办。
 3. 满足 → `stage=done, status=in-progress→done`,**并向 STATE 写入 `cap-gate: PASS reviewed-head=$(git rev-parse HEAD)`**
    (给本地 pre-push hook 放行用),输出收尾摘要;不满足 → 停在 review、写 `cap-gate: BLOCK`、指出缺口。
@@ -424,7 +424,7 @@ next: <一句话下一步>
 
 ## 8. 边界与不做什么
 
-- **不写实现、不写测试、不跑端到端旅程** —— 那是 cap-build / cap-verify 的活;发现实现 bug 标 finding 升级,
+- **不写实现、不写测试、不跑端到端旅程** —— 那是 cap-implement / cap-test 的活;发现实现 bug 标 finding 升级,
   不在 review 里默默改实现逻辑(机械 auto-fix 除外)。
 - **不 commit / 不 push / 不建 PR** —— 那是 cap-release 的事。
 - **不替用户接受安全风险** —— headless 态 open 安全项一律阻断。

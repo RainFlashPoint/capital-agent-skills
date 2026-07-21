@@ -6,7 +6,7 @@ import json
 import os
 import re
 
-from intake import load_leaves, build_tree, SHIPPED, STATUS_ORDER, STAGE_TO_STATUS
+from intake import load_leaves, build_tree, SHIPPED, STATUS_ORDER, STAGE_TO_STATUS, normalize_stage
 
 # ───────────────────────── board 渲染(遵 DESIGN.md) ─────────────────────────
 BOARD_CSS = """
@@ -356,7 +356,7 @@ def _read_state_overlay(req_root):
     leaf, stage = v("source-leaf"), v("stage")
     if not leaf or leaf == "(none)":
         return None
-    to = STAGE_TO_STATUS.get(stage)
+    to = STAGE_TO_STATUS.get(normalize_stage(stage))
     return {"leaf": leaf, "stage": stage, "status": to} if to else None
 
 

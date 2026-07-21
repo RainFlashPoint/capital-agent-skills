@@ -1,7 +1,7 @@
 ---
 title: 源码协作纪律（分支 / 命名 / 提交 / worktree / 并行收敛）
 scope: methodology                # 通用、跨语言、跨目标——不含项目特定值
-applies-to: cap-flow(driver §1.1, 跨阶段) + cap-build §0.2   # driver 在 entry 加载、贯穿 plan→build→review;build 用于提交/波内执行
+applies-to: cap-flow(driver §1.1, 跨阶段) + cap-implement §0.2   # driver 在 entry 加载、贯穿 plan→build→review;build 用于提交/波内执行
 updated: 2026-06-24
 ---
 

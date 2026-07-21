@@ -6,7 +6,7 @@ updated: 2026-06-15
 
 # skill-maintainer — 技能体系维护者视角角色卡
 
-> 一张"看问题的镜片",不是流程。被 cap-shape / cap-build / cap-verify / cap-review / **cap evolve** 在**改动落在技能体系自身**(`skills/**`、`*SKILL.md`、`references/**`、`.claude-plugin/**`)时加载。
+> 一张"看问题的镜片",不是流程。被 cap-define / cap-implement / cap-test / cap-review / **cap evolve** 在**改动落在技能体系自身**(`skills/**`、`*SKILL.md`、`references/**`、`.claude-plugin/**`)时加载。
 > 这是**唯一作用于工具自身**的角色(其它角色都看某个目标项目的某一段)。它管的是:这套可移植、时用时新的技能族,改完之后**还自洽、不臃肿、可移植、可追溯、且没把自己改坏**。
 > 关键背景(自我修改):用 vN 的技能改出 vN+1,**本次运行始终是 vN 在掌舵,vN+1 下趟才生效** → 一个改动的行为只能在下一趟验证,所以当前趟的安全网是 lint + additive 守卫 + 人工过目,而非"现场跑一下"。
 
@@ -28,7 +28,7 @@ updated: 2026-06-15
 - [ ] `[diff]` 本次是否新增了**顶层 skill 目录**或新 `SKILL.md`?→ 几乎总是该改为"扩 references 卡片 + 路由",否则违反反膨胀红线。
 - [ ] `[diff]` 新增的每个 `.md` 是否**被引用**(被某 SKILL.md 读 / 被 role-routing 指)?无人引用 = 孤儿,挂进既有体系或删。
 - [ ] `[diff]` 被改动的卡是否更新了 `distilled-from` 与 `updated`?`grep -L distilled-from` 查漏标。
-- [ ] `[diff]` 新增/改名的角色·模式·语言,是否在 `role-routing.md`(§2 触发 + §3/§4 字典 + §5 自检)、`STATE.md` 模板、`cap-map` Phase C 字典**四处同步**?缺一即不一致。
+- [ ] `[diff]` 新增/改名的角色·模式·语言,是否在 `role-routing.md`(§2 触发 + §3/§4 字典 + §5 自检)、`STATE.md` 模板、`cap-understand` Phase C 字典**四处同步**?缺一即不一致。
 - [ ] `[diff]` 流程 skill 里是否混进了脆弱命令一行流(带 shell 怪癖的 find/grep/awk)?→ 原则化(铁律 #4);稳定契约命令(`git diff --name-only`)与参考卡(languages / cap-release targets)的具体命令除外。
 - [ ] `[diff]` 是否引入了对 AskUserQuestion / Task / 二进制的**硬依赖**(无 text_mode / 无串行降级)?→ 违反可移植铁律。
 - [ ] `[diff]` 是否升了版本 + 写了 CHANGELOG?改动是 patch/minor/major 选对了吗?

@@ -34,9 +34,15 @@ STATUS_ORDER = ["captured", "shaped", "planned", "built", "verified", "shipped"]
 STATUS_SET = set(STATUS_ORDER)
 # stage(cap 阶段) → 该阶段走过后叶应处的 status(供 post-checkout flush / cap-flow reconcile 映射)
 STAGE_TO_STATUS = {
-    "shape": "shaped", "plan": "planned", "build": "built",
-    "verify": "verified", "review": "verified", "release": "shipped",
+    "define": "shaped", "plan": "planned", "implement": "built",
+    "test": "verified", "review": "verified", "release": "shipped",
 }
+LEGACY_STAGE_ALIASES = {"map": "understand", "shape": "define", "build": "implement", "verify": "test"}
+
+
+def normalize_stage(stage):
+    value = str(stage or "").strip().lower()
+    return LEGACY_STAGE_ALIASES.get(value, value)
 RETIRE_ARTIFACTS = ["spec.md", "plan.md", "verify", "review", "STATE.md"]
 
 

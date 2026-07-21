@@ -1,14 +1,14 @@
 ---
-name: cap-shape
+name: cap-define
 description: >
   研发主线的收敛阶段(规格驱动):把一个模糊点子收敛成【获批的、可实现的】规格,产出 <target-repo>/.cap/spec.md。
   最硬的一条纪律 **批准前不写任何代码(HARD-GATE)**;触及 AI/模型/策略时前置 eval 契约,触及 UI/前端时前置设计契约(DESIGN.md)。
-  触发场景:用户说 "写 spec"、"做需求设计"、"这个功能怎么设计"、"把这个点子定下来"、"我要加个功能(走完整流程)"、"cap-shape";
-  cap-flow 判定 stage=shape 时也路由到此。
+  触发场景:用户说 "写 spec"、"做需求设计"、"这个功能怎么设计"、"把这个点子定下来"、"我要加个功能(走完整流程)"、"cap-define";
+  cap-flow 判定 stage=define 时也路由到此。
   本阶段只产出获批的 spec.md,不写实现、不拆任务(cap-plan)、不跑测试。一次一问 / 分节获批 / 双门出口等细节见正文。
 ---
 
-# cap-shape — 收敛阶段：模糊点子 → 获批规格
+# cap-define — 收敛阶段：模糊点子 → 获批规格
 
 把"想做点什么"变成一份**获批的、无歧义、能被 cap-plan 直接吃进去**的规格。
 
@@ -55,7 +55,7 @@ description: >
 
 | 条件 | 要确认的事 |
 |---|---|
-| 有 `<target-repo>/.cap/PROFILE.md`,或确认是 greenfield | 有 PROFILE 即可;brownfield 缺 PROFILE 应先 `cap-map` |
+| 有 `<target-repo>/.cap/PROFILE.md`,或确认是 greenfield | 有 PROFILE 即可;brownfield 缺 PROFILE 应先 `cap-understand` |
 | `STATE.stage` 为 `shape`,或这是一个全新特性的开始 | 读 `.cap/STATE.md`;无 STATE = 新特性,本阶段初始化一份 |
 | 手头有一个待澄清的"点子 / 需求 / 变更意图" | 来自用户原话 |
 
@@ -182,7 +182,7 @@ description: >
   **触发**:命中 architect 角色或动核心数据结构 / 契约时;轻量特性跳过。结论(及被否方案)写进 spec §4。
 
 ### 2.6 Eval 契约（★ 仅当本特性触及 AI / 模型 / 策略）
-见 §5。AI 工作的质量标准**必须在 spec 阶段定死**,由后续 `cap-verify` 的 `model` 验证项执行。非 AI 特性跳过。
+见 §5。AI 工作的质量标准**必须在 spec 阶段定死**,由后续 `cap-test` 的 `model` 验证项执行。非 AI 特性跳过。
 
 ### 2.6b 设计契约（★ 仅当本特性触及 UI / 前端面）
 **与 §2.6 完全对称**——eval 契约管"怎么算 AI 答得好",设计契约管"怎么算 UI 做得好"。
@@ -220,7 +220,7 @@ journey:Web 据它验。
 | 核心数据结构变更、模块拆分合并、API 契约变更 | **ADR** | `docs/adr/`(同时在 spec 里引用) |
 | 用户可感知的功能变更(页面 / 流程 / 交互) | **Spec** | `.cap/spec.md`(主产物) |
 | 局部实现细节、UI 微调 | 更新已有文档 | 找到对应 spec 追加 / 修订 |
-| 纯 bug fix(行为不变) | 不改文档 | —(且更可能该走 cap-build 的调试子循环) |
+| 纯 bug fix(行为不变) | 不改文档 | —(且更可能该走 cap-implement 的调试子循环) |
 
 主产物始终是 `<target-repo>/.cap/spec.md`(统一格式见 §4)。涉及架构变更时**额外**写一份 ADR 并在 spec 里链接。
 
@@ -325,7 +325,7 @@ Don't-Hand-Roll"节**,不另起运行时产物。
 架构 / 组件 / 数据流 / 错误处理 / 测试策略(逐节获批后的最终版)。
 
 ## 6. 怎么算 done(前置验收)
-在改任何代码前就对齐的验收标准 + 验证命令(喂给 cap-plan / cap-verify)。
+在改任何代码前就对齐的验收标准 + 验证命令(喂给 cap-plan / cap-test)。
 
 ## 7. Eval 契约(仅 AI / 模型 / 策略工作;否则写 "N/A")
 见 §5 —— rubric / 数据集 / 阈值 / 测量法 / guardrail-vs-flywheel。
@@ -349,7 +349,7 @@ Don't-Hand-Roll"节**,不另起运行时产物。
 ## 5. ★ Eval 契约前置（AI 工作在 spec 阶段定质量门）
 
 当 §1.0 路由解析出 `model` 验证项(本特性触及 `models/ strategy/ prompt/ ai/ evals/ agents/` 等 AI 面),
-**spec 必须把 AI 的质量标准在动代码前定死**,后续 `cap-verify` 的 `model` 验证项据此执行。
+**spec 必须把 AI 的质量标准在动代码前定死**,后续 `cap-test` 的 `model` 验证项据此执行。
 
 ### 5.1 为什么必须前置
 AI 系统**非确定性**:同样输入不保证同样输出。单测 / 集成测不足以判 AI 工作"够不够好"。质量标准若不在
@@ -375,13 +375,13 @@ spec 阶段定,到 verify 阶段就会临时拍脑袋。
    **guardrail(出错即灾难→在线实时拦截)vs flywheel(不灾难→离线批量驱动迭代)**。
 
 ### 5.3 spec → verify 契约接口
-在 spec 的 Eval 契约节里**显式写明三个位置**,让 `cap-verify` 的 `model` 验证项无歧义读取:
+在 spec 的 Eval 契约节里**显式写明三个位置**,让 `cap-test` 的 `model` 验证项无歧义读取:
 - rubric 定义在哪(spec 本节 / 独立文件路径);
 - reference dataset 在哪(路径);
 - 阈值 / verdict 规则是什么。
 
 > **护城河钩子(F1 proof-of-value)**:reference dataset 与 verdict 规则同时也是"接入中心知识库后模型有没有
-> 变准"的量化基线——`cap-verify` 的 `model` 验证项对接 server 端 eval 打分(如文件预测 F1),把这套 spec
+> 变准"的量化基线——`cap-test` 的 `model` 验证项对接 server 端 eval 打分(如文件预测 F1),把这套 spec
 > 契约变成可回归的证据。所以数据集与阈值要写成**可复跑**的,不是一次性拍脑袋。
 
 > 这就是"标准在 spec 定、执行在 verify 做"的契约——verify 不需要回放讨论历史即可执行评估。
@@ -408,7 +408,7 @@ spec 获批后,输出 `## HANDOFF` block;cap-flow 读取后作为单写者写回
 
 ```markdown
 ## HANDOFF
-stage: shape
+stage: define
 status: in-progress            # 或 gated(未过复核时)
 verify-checks: [logic, journey:Web, model]   # §1.0 预解析的快照(非权威,build 会重算)
 active-roles: [server-dev, qa]

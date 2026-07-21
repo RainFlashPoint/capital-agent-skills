@@ -25,7 +25,7 @@ updated: 2026-07-09
 第一性原理:**headless 只执行已获批的意图,绝不发明意图。** map/shape/plan 是"决定要做什么 + 怎么算对";
 一旦它们产出并经人批准,build→verify→review→release 就是"把已冻结的判断兑现成代码",这段可以无人值守。
 
-- **cap-shape 的 HARD-GATE 在 headless 下一律判 STOP+gated**:遇到"需求需要人确认 / spec 未获批 / 出现二义"→
+- **cap-define 的 HARD-GATE 在 headless 下一律判 STOP+gated**:遇到"需求需要人确认 / spec 未获批 / 出现二义"→
   不猜、不自批,标该叶 `gated`,记 STATE 待晨审,继续下一叶(§3)。**headless 永不代替人过 shape 的批准门。**
 - **ready-queue 的入队前提**:只有 `status >= planned`(spec 已批 + plan 已拆)的叶才允许被 headless 取用。
   `captured` / `shaped` 但未 `planned` 的叶 → 不是 headless 的活,跳过留给白天人跑决策段。
@@ -73,7 +73,7 @@ git switch -c cap/<leaf-id> origin/main      # 从最新主干切;分支名 = ca
 | MISSING 项处置(cap-plan §6.1) | 人选 A/B/C | **不自选**——出现未覆盖需求 = 决策段漏洞 → 标 `gated` 记 STATE,下一叶 |
 | 复杂度定级确认 | 人确认 | 用 plan 里已定级,不重定 |
 | converge 缺口追加任务(build-loop.md §4) | 自动(本就无需人) | 同人跑,自动 |
-| cap-shape HARD-GATE / 二义 | 人拍板 | **STOP+gated**(§0),永不自批 |
+| cap-define HARD-GATE / 二义 | 人拍板 | **STOP+gated**(§0),永不自批 |
 | 三振阻塞(build-loop.md §E5) | 人判 | 标该叶 `gated` 记 STATE,**跳下一叶**(§3) |
 
 **原则**:凡 headless 遇到"本该人拍板"的点,一律**转成 `gated` + 一行 STATE 记录**(现象 + 卡在哪 + 建议),

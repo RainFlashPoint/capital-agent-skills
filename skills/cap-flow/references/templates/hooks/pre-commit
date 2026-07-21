@@ -2,7 +2,7 @@
 # cap-flow pre-commit —— 并发/边界硬门禁。
 # 作用:commit 前由 git 自动跑 cap-guard(skills/cap-flow/scripts/),检测 STATE 与当前 branch/worktree 是否串台。
 #       **由 git 执行,不是模型执行** → 模型绕不过;唯一逃逸 = 人显式 `git commit --no-verify`。
-# 安装:由 cap-map 脚手架自检询问后拷到 .git/hooks/pre-commit 并 chmod +x;
+# 安装:由 cap-understand 脚手架自检询问后拷到 .git/hooks/pre-commit 并 chmod +x;
 #       或手动:cp 本文件 .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 #
 # 找 cap-guard:优先用项目内软链/拷贝的 cap 技能;否则在常见安装位置找。

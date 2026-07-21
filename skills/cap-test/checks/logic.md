@@ -6,7 +6,7 @@ produces: .cap/verify/logic-report.md
 
 # 验证项:logic（正确性底座）
 
-> 职责:把"应该能跑"变成"已用本轮真跑的命令证明能跑"。这是 cap-verify 的**基线验证项**——
+> 职责:把"应该能跑"变成"已用本轮真跑的命令证明能跑"。这是 cap-test 的**基线验证项**——
 > 任何改动都触发它,它绿了再谈旅程 / 质量才有意义。引擎 = 一个能 Read/Edit/Bash/Grep 的模型,
 > 零运行时依赖,Claude / Codex 都能跑。
 
@@ -14,8 +14,8 @@ produces: .cap/verify/logic-report.md
 
 ## 何时触发
 
-- **always**:进入 cap-verify 时 logic 永远在 active checks 里(见 `cap-flow/references/role-routing.md`)。
-- 单独点名:`/cap verify --check=logic`;或 cap-map 拿它做 brownfield 基线健康检查(baseline)。
+- **always**:进入 cap-test 时 logic 永远在 active checks 里(见 `cap-flow/references/role-routing.md`)。
+- 单独点名:`/cap 测试 --check=logic`;或 cap-understand 拿它做 brownfield 基线健康检查(baseline)。
 - 与其它验证项叠加:改用户可见面叠 journey,改 AI / 策略叠 model;logic 永远是底座。
 
 ---
@@ -25,7 +25,7 @@ produces: .cap/verify/logic-report.md
 1. **证据,不是断言**——任何"通过 / 完成 / 修好了"必须挂本轮真跑出来的命令 + 输出 + exit code。
 2. **覆盖到行为,不是覆盖到文件**——测试要打中"它做了什么",不是"它能 import / 能渲染"。
 3. **三态诚实**——每条需求 / 验收点只能是 COVERED / PARTIAL / MISSING,不许把 PARTIAL 说成 COVERED。
-4. **填测试不改实现**——verify 阶段写测试暴露 bug;发现实现 bug **escalate 回 cap-build**,不在这里偷改实现。
+4. **填测试不改实现**——verify 阶段写测试暴露 bug;发现实现 bug **escalate 回 cap-implement**,不在这里偷改实现。
 5. **数字门控**——覆盖率有明确阈值,达不到就 fail,不靠肉眼看百分比。
 
 ---
@@ -35,7 +35,7 @@ produces: .cap/verify/logic-report.md
 ### Step 0 — 发现测试基建（runtime → framework）
 
 先探测语言 / 框架 / 跑测命令。**确定语言后,test / 覆盖率门 / typecheck 的确切命令优先取
-`<repo>/.cap/PROFILE.md` 的 `test-commands`**(cap-map 已登记);缺失再回退下面的通用探测。
+`<repo>/.cap/PROFILE.md` 的 `test-commands`**(cap-understand 已登记);缺失再回退下面的通用探测。
 
 ```bash
 # runtime 探测
@@ -85,7 +85,7 @@ ls -d tests/ test/ __tests__/ spec/ e2e/ 2>/dev/null
 - 顺手把追溯到的相邻边界也测了(null、空数组、边界值)。
 - **铁律:填测试时不许改实现文件。** 若测试暴露实现 bug:
   - 记一条 `⚠ 实现 bug:{现象} / 期望 {x} / 实际 {y} / 文件 {path}`;
-  - **escalate 回 cap-build**(build 内的 TDD↔调试子循环修),logic 这一轮该需求标 PARTIAL;
+  - **escalate 回 cap-implement**(build 内的 TDD↔调试子循环修),logic 这一轮该需求标 PARTIAL;
   - 单条 bug 调试 ≤ 3 次迭代仍无解 → escalate,不死磕。
 
 ### Step 4 — 真跑：单测 → typecheck/build → narrow → manual（验证阶梯）
@@ -149,7 +149,7 @@ ls -d tests/ test/ __tests__/ spec/ e2e/ 2>/dev/null
 - [ ] typecheck / build 真跑 exit 0(linter 过不算)。
 - [ ] 覆盖率门控达标(工具以非零 exit 把关,不靠肉眼)。
 - [ ] 无 COVERED 项是靠"应该过 / 上次过"判定的。
-- [ ] 实现 bug 全部 escalate 回 cap-build,未在 verify 偷改实现。
+- [ ] 实现 bug 全部 escalate 回 cap-implement,未在 verify 偷改实现。
 - [ ] 修过的 bug 有回归测试且单独跑 green。
 
 任一项不过 → 本验证项 result = `GATED` 或 `BLOCKED`,调度层汇总时 STATE.next 指回对应阶段(多为 build)。
@@ -213,7 +213,7 @@ ls -d tests/ test/ __tests__/ spec/ e2e/ 2>/dev/null
 ## 介入哪些阶段
 
 - **verify(主场)**:logic 是基线验证项,每次都跑。
-- **map**:被 cap-map 当 brownfield 基线健康检查调用,产出初始覆盖率 / 绿灯快照写进 PROFILE。
+- **map**:被 cap-understand 当 brownfield 基线健康检查调用,产出初始覆盖率 / 绿灯快照写进 PROFILE。
 - **build(回流)**:暴露的实现 bug escalate 回 build 的 TDD↔调试子循环;修完再回 logic 复跑。
 - **review 之前**:logic 全绿 + 覆盖率达标是进入 review 的前置门。
 
@@ -241,7 +241,7 @@ test-commands: { unit: "pytest", coverage: "pytest --cov=app --cov-fail-under=80
 | <行为2> | PARTIAL | 测试 failing:暴露实现 bug,已 escalate(见下) |
 | <行为3> | MISSING | 无测试,建议路径 tests/y.py |
 
-## Escalated implementation bugs (→ cap-build)
+## Escalated implementation bugs (→ cap-implement)
 - ⚠ <现象> / 期望 <x> / 实际 <y> / 文件 <path> / 调试迭代 <n>/3
 
 ## Regression tests added
@@ -258,7 +258,7 @@ test-commands: { unit: "pytest", coverage: "pytest --cov=app --cov-fail-under=80
 - [x] regressions covered
 
 ## Next action
--> 覆盖率不达标,回 cap-build 补 tests/z.py  (或 -> cap-review)
+-> 覆盖率不达标,回 cap-implement 补 tests/z.py  (或 -> cap-review)
 ```
 
 ---

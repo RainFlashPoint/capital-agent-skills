@@ -25,7 +25,7 @@ triggers:
 
 > **语言细节(陷阱/测试/lint/LSP)不在本卡** —— 按改动扩展名加载 `references/languages/<lang>.md`(前端/移动常见 typescript / kotlin / swift,见 role-routing §7)。本卡只管客户端通用视角(bundle/re-render/offline-first/触控/无障碍)。
 
-> 这是一张**职能视角知识卡**（不是流程）。被 `cap-build` / `cap-verify` / `cap-review`
+> 这是一张**职能视角知识卡**（不是流程）。被 `cap-implement` / `cap-test` / `cap-review`
 > 在 git diff 命中上面 `triggers` 的 glob 时按需加载。它回答的是
 > "**站在客户端开发的专业立场上，这次改动我该盯什么**"。
 >
@@ -153,10 +153,10 @@ triggers:
 
 | 阶段 | client-dev 视角做什么 |
 |---|---|
-| **cap-shape** | 对前端/移动需求把"状态态、a11y、性能预算（CWV/bundle）、离线行为"写进 spec 的验收点；点出跨端差异 |
+| **cap-define** | 对前端/移动需求把"状态态、a11y、性能预算（CWV/bundle）、离线行为"写进 spec 的验收点；点出跨端差异 |
 | **cap-plan** | 提醒任务拆出"状态建模 / 性能 / a11y / 跨端"独立验收项，而非笼统"做个页面" |
-| **cap-build** | diff 命中前端/移动 glob → 加载本卡作为 TDD/实现时的自查镜（按上面清单写测试 + 实现） |
-| **cap-verify** | 触发 **logic**（组件/widget 单测 + 覆盖率）；前端面改动触发 **journey（Web/App）模式**；用本卡判断 journey 旅程该覆盖哪些状态/断点 |
+| **cap-implement** | diff 命中前端/移动 glob → 加载本卡作为 TDD/实现时的自查镜（按上面清单写测试 + 实现） |
+| **cap-test** | 触发 **logic**（组件/widget 单测 + 覆盖率）；前端面改动触发 **journey（Web/App）模式**；用本卡判断 journey 旅程该覆盖哪些状态/断点 |
 | **cap-review** | 命中即并行加载本卡 → 输出 `review/client-dev.md`：按"常见翻车"表逐条核，标 severity+confidence |
 
 > 路由对照（见 `role-routing.md`）：`*.tsx/*.vue/*.css/components/**` → client-dev + design + e2e:Web；

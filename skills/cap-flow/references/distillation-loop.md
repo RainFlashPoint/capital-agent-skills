@@ -133,7 +133,7 @@ roles/<r>.md   ┌───┴───┐
 
 - **角色卡**(`roles/`):某职能视角"在意什么"。无动作 → 检查清单 / 关注点。
 - **stage 逻辑**:内联在对应 `skills/cap-<stage>/SKILL.md`。某一步"我们怎么做" → 进度、门、状态机。
-- **verify check playbook**(`cap-verify/checks/`):某种验证手法。属于 logic / journey / model 三者之一 →
+- **verify check playbook**(`cap-test/checks/`):某种验证手法。属于 logic / journey / model 三者之一 →
   跑法 + 证据 + 阈值。
 - **role-routing.md**:若蒸出的是"什么改动该上什么角色 / check"的映射(新语言 glob、新模态)→ 追加进路由表。
 
@@ -160,7 +160,7 @@ roles/<r>.md   ┌───┴───┐
 ### ⑤ 标记溯源
 
 - **中心 KB 条目**:靠 `operator` + `repo_url` 归因——谁贡献、来自哪个项目。这是复用率统计与 F1
-  proof-of-value 的锚点(见 `cap-verify/checks/model.md`)。
+  proof-of-value 的锚点(见 `cap-test/checks/model.md`)。
 - **本地卡片**:frontmatter 维护 `updated`;来源用稳定标识(外部 repo 用 `owner/repo`,实战洞察用
   `session:<topic>-<date>`),作为审计与防孤儿的锚点。
 
@@ -173,9 +173,9 @@ roles/<r>.md   ┌───┴───┐
 | 可复用经验(护城河主出口) | **中心 KB**(`record_experience`,带 operator + repo_url) | ❌ 让它随会话蒸发 |
 | 职能视角 / 检查清单 | `references/roles/<role>.md`(就近二级出口) | ❌ 新建顶层 skill |
 | 流程步骤 / 阶段门 | 内联进 `skills/cap-<stage>/SKILL.md` | ❌ 散落 md |
-| 验证手法 / 阈值 / 证据 schema | `cap-verify/checks/{logic,journey,model}.md` | ❌ 新建 verify skill(验证永远是 check,不是 skill) |
+| 验证手法 / 阈值 / 证据 schema | `cap-test/checks/{logic,journey,model}.md` | ❌ 新建 verify skill(验证永远是 check,不是 skill) |
 | 改动代码 → 角色 / check 的映射 | `references/role-routing.md` | — |
-| 项目级架构事实(surface map) | 目标 repo 的 `.cap/PROFILE.md`(由 cap-map 维护) | ❌ references/ |
+| 项目级架构事实(surface map) | 目标 repo 的 `.cap/PROFILE.md`(由 cap-understand 维护) | ❌ references/ |
 
 **反膨胀红线**:蒸馏**永远不新增顶层 skill**。家族边界恒为 **1 driver(cap-flow)+ 7 stage + harvest**。
 所有增长发生在中心 KB 与 `references/` 既有卡片里。验证类 pattern 一律进 verify check(数据),不 graduate 成 skill。

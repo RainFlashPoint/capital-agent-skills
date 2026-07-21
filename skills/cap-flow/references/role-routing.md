@@ -16,7 +16,7 @@
   ```
 
   - `git-diff`：每轮都变，临时输入，现算。
-  - `PROFILE.surface-map`：项目级 surface map（模块 → glob → 默认角色/check），由 `cap-map` 写入 `<repo>/.cap/PROFILE.md`。**优先级高于本表**——项目特化覆盖通用兜底。
+  - `PROFILE.surface-map`：项目级 surface map（模块 → glob → 默认角色/check），由 `cap-understand` 写入 `<repo>/.cap/PROFILE.md`。**优先级高于本表**——项目特化覆盖通用兜底。
   - 本表：PROFILE 没覆盖某条路径、或项目还没 map 过时的**通用兜底**。
 
 - 解析结果（active roles + verify checks）**快照进 `STATE.md`**（`verify-checks:` 与 `## Active roles`），只作 handoff/审计留痕，**不是持久事实**——下轮 diff 一变就过期。
@@ -51,7 +51,7 @@
 
 6. 漂移检测（surface-map 是 tracker）：
      若"未归类"集合非空，或某 path 命中本表但 PROFILE.surface-map 查无此 surface
-     → 告警 "architecture drifted — refresh PROFILE?"，建议重跑 cap-map 相关部分。
+     → 告警 "architecture drifted — refresh PROFILE?"，建议重跑 cap-understand 相关部分。
 
 7. 写回 STATE.md：verify-checks / Active roles / Changed-files snapshot。
 ```
@@ -109,9 +109,9 @@
 
 | check | playbook | 何时进 |
 |---|---|---|
-| `logic` | `cap-verify/checks/logic.md` | **总是**（兜底 B1） |
-| `journey` (Web / OpenAPI / App) | `cap-verify/checks/journey.md` | 用户可见面/接口/移动面变更（R1/R2/R3/R6） |
-| `model` | `cap-verify/checks/model.md` | **AI/模型/策略/prompt/评估变更**（R4），或数据质量(R5 条件) |
+| `logic` | `cap-test/checks/logic.md` | **总是**（兜底 B1） |
+| `journey` (Web / OpenAPI / App) | `cap-test/checks/journey.md` | 用户可见面/接口/移动面变更（R1/R2/R3/R6） |
+| `model` | `cap-test/checks/model.md` | **AI/模型/策略/prompt/评估变更**（R4），或数据质量(R5 条件) |
 
 子模态选择：`journey` 的 Web/OpenAPI/App 由命中行决定（R1→Web, R3→OpenAPI, R2→App, R6→沿用被测面对应子模态）。
 
@@ -141,7 +141,7 @@
 - 加语言/框架：写一份 `references/languages/<lang>.md` 语言包（见 §7），不再往角色卡塞大段 pitfall。
 - 加角色/check：先扩 §3 / §4 取值字典，再在 §2 引用，避免路由产出"野值"。
 - 项目特化：优先写进该 repo 的 `PROFILE.md` surface-map（覆盖本表），不污染通用规则。
-- App 模态工具定型后，更新 §2 R2 的降级说明与 `cap-verify/checks/journey.md` 的 App 子模态。
+- App 模态工具定型后，更新 §2 R2 的降级说明与 `cap-test/checks/journey.md` 的 App 子模态。
 
 ---
 
