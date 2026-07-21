@@ -8,7 +8,7 @@
 
 两条能力叠在一起：
 
-1. **cap 流程主线**——纯文件 + git 的结构化研发流程：`1 driver（cap-flow，含 intake 需求树）+ 7 流程 skill`（map/shape/plan/build/verify/review/release）+ 角色卡 + verify 三 checks（logic/journey/model）+ 语言包 + Codex adapter。不依赖任何运行时，Claude/Codex 都能跑。详见 [DESIGN.md](DESIGN.md) 与各 skill 的 `SKILL.md`。
+1. **cap 流程主线**——研发只记一个 `$cap`（Claude Code 为 `/cap`），直接描述“实现 / 修复 / 测试 / 评审 / 发布”即可。系统内部自动完成项目了解、需求确认、开发计划、编码实现、测试验证、代码评审和发布上线；内部状态 ID 继续兼容旧版本。不依赖特定运行时，Claude/Codex 都能跑。
 
 2. **经验闭环 `harvest-experience`**（本项目核心）——骑在 CLI 上的 `注入 → 编码 → 沉淀`。依赖一个 MCP server `capital-agent`（连中心知识库），会话首尾各调一次 `enrich_context` / `record_experience`。接入方式见 [skills/harvest-experience/references/setup-mcp.md](skills/harvest-experience/references/setup-mcp.md)。
 3. **统一 Task 无感闭环**——MCP 支持时，Skills 自动创建/绑定平台 Task，回写 Commit、文件路径、测试与 Review，并在代码已推送且自治门禁通过后请求 Docker 复验。代码正文始终通过 Git 交付，不上传知识平台。
@@ -36,7 +36,7 @@ git clone https://github.com/RainFlashPoint/capital-agent-skills.git
 # Codex: 把 skills/* 链接到 ~/.agents/skills/
 ```
 
-**开始研发**：正常描述“实现需求 / 修改代码 / 修 bug”即可自动进入 Task 与经验闭环。Codex 的 `$cap` / Claude Code 的 `/cap` 作为需要完整显式流程时的高级入口保留。
+**开始研发**：正常描述“实现需求 / 修改代码 / 修 bug”即可自动进入 Task 与经验闭环；想显式启动时只需使用 Codex 的 `$cap` 或 Claude Code 的 `/cap`。也可以说 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布`，不需要记 `cap-shape`、`cap-build` 等内部名字。
 
 **开经验闭环**：先按 [setup-mcp.md](skills/harvest-experience/references/setup-mcp.md) 注册 `capital-agent` MCP server，之后 `harvest-experience` 会在编码会话首尾自动注入/沉淀。
 

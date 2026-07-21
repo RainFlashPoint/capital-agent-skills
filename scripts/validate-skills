@@ -38,6 +38,15 @@ for mf in "$ROOT"/cap-verify/checks/*.md; do
 done
 ok "verify checks 交叉引用检查完成($(ls "$ROOT"/cap-verify/checks/*.md | wc -l | tr -d ' ') 个)"
 
+echo "== 4.1 public entry vocabulary =="
+grep -q '唯一公开入口' "$ROOT/cap/SKILL.md" || err "cap 未声明为唯一公开入口"
+for word in 项目了解 需求确认 开发计划 编码实现 测试验证 代码评审 发布上线; do
+  grep -q "$word" "$ROOT/cap/SKILL.md" || err "cap 缺少公开阶段名: $word"
+  grep -q "$word" "$ROOT/cap-flow/SKILL.md" || err "cap-flow 缺少公开阶段名: $word"
+done
+grep -q '不得要求用户调用内部技能名' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 缺少内部名称隐藏纪律"
+ok "公开入口与直白动作词检查完成"
+
 echo "== 5. 可移植自检:流程 skill 不得硬依赖 Claude 专属工具 =="
 for f in "$ROOT"/*/SKILL.md; do
   # 允许出现在"降级/不依赖"语境;这里只粗查是否完全没提降级却硬用 AskUserQuestion
