@@ -2,6 +2,26 @@
 
 遵循语义化版本。格式参考 Keep a Changelog。
 
+## [0.2.0] — 2026-07-21
+
+### Added
+- 新增 L1–L4 研发复杂度路由：小改动使用精简流程，中高风险与生产发布保留完整 map、shape、plan、build、verify、review、release 门禁。
+- `PROFILE.md` 新增 `Verification environment` 项目验证环境画像，记录运行时、执行区域、依赖仓库、Secret 引用、可组合服务、企业服务、确认缺口和权威验证阶段；禁止记录密钥明文。
+- `cap-verify` 新增 `PASS / CODE_FAILED / ENV_BLOCKED / INCONCLUSIVE` 四类验证归因，环境与依赖问题不再伪装成代码失败。
+- Skills 交付证据新增当前 Commit、UTC 执行时间、实际命令与 exit code、质量资产 ID 和脱敏环境指纹，供平台判断证据新鲜度与可信度。
+- 新增复杂度路由与 Git Hook 回归测试。
+
+### Changed
+- 提交包含业务代码时，`.cap/STATE.md`、spec、plan、verify、review 等当前研发产物必须一并暂存；本地 exclude 或 ignore 隐藏 `.cap` 会阻止提交。
+- Commit Hook 继续自动追加 `Task:` / `Session:` trailer，并明确区分“本地已提交”和“已推送、平台可见”。
+- 平台只应采用与最新 Commit 匹配的验证证据，旧 Commit 的 PASS 不得替新提交放行。
+- `cap-map` 会从 Dockerfile、CI、toolchain、依赖配置和测试文档建立初始环境画像，未知依赖显式记录为 `unknown`，不由 Agent 猜测。
+
+### Fixed
+- 修复 `.cap` 研发产物可能因只加入本地 `.git/info/exclude` 而未进入交付提交的问题。
+- 修复 Skills 已生成 Task/Session 元数据，但提交说明缺少可靠关联 trailer 的交付断链风险。
+- 修复复杂任务与小改动共用同一套重型阶段、导致流程成本过高的问题。
+
 ## [0.1.2] — 2026-07-19
 
 ### Added

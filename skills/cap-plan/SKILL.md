@@ -125,6 +125,8 @@ git -C <target-repo> status --porcelain
 
 ## 3. 复杂度分级 → 粒度自适应（L1–L4）
 
+流程路径由 `cap-flow/references/complexity-routing.md` 决定；本节的等级同时决定计划产物的详细程度。L1/L2 不得因为模板存在就强制生成完整七阶段计划。
+
 > **同样的流程不适用所有项目**:先定级,再定拆多细。反过度规划:**只规划到能做出判断的程度**,不填充未来细节。
 
 读 spec + PROFILE,按下表给本次特性定级(一句话写进 plan 头部 + STATE Decisions log):

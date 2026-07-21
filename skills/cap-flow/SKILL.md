@@ -31,6 +31,17 @@ Claude、Codex 或其它 CLI 上都能跑。
 > **一条硬规矩**:看到该写 spec 就转 `cap-shape`,该实现就转 `cap-build`,你不代劳其中任何一步。
 > 你只回答三个问题:去哪个阶段、带哪些上下文、把进度记到哪。
 
+## 复杂度路由（L1–L4）
+
+进入主线时先读取 `references/complexity-routing.md`。七个阶段仍然存在，但不是每个任务都必须完整经过七阶段：
+
+- L1：`intake → build → verify`
+- L2：`shape-lite → build → verify → review-lite`
+- L3：`map → shape → plan → build → verify → review`
+- L4：`map → shape → plan → build → verify → review → release`
+
+路由只能缩短文档和决策步骤，不能降低禁止越权、外部契约证据、编译/测试、Commit 和人工升级等硬门。
+
 ---
 
 ## 可移植约定（每次入口先确认，一次性）
@@ -69,7 +80,7 @@ Claude、Codex 或其它 CLI 上都能跑。
 
 目标仓 = 当前工作目录(或用户指定的 `<target-repo>`)。所有状态都落在 `<target-repo>/.cap/`:
 
-进入 Git 仓库后先静默确保 Capital Agent 项目 Hook 已安装（复用 package 根 `scripts/install-git-governance.mjs`）；幂等失败不阻断流程，也不要求用户执行额外命令。
+进入 Git 仓库后先静默确保 Capital Agent 项目 Hook 已安装（复用 package 根 `scripts/install-git-governance.mjs`）；幂等失败不阻断流程，也不要求用户执行额外命令。Hook 会自动追加 Task/Session trailer；当提交包含代码时，还会阻止遗漏或本地 exclude 的 `.cap` 研发产物进入交付盲区。
 
 | 文件 | 是什么 | 谁写 |
 |---|---|---|

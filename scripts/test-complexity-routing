@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -u
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROUTING="$ROOT/skills/cap-flow/references/complexity-routing.md"
+fail=0
+check(){ grep -Fq "$2" "$1" || { echo "FAIL: $1 missing: $2"; fail=$((fail+1)); }; }
+[ -f "$ROUTING" ] || { echo "FAIL: missing $ROUTING"; exit 1; }
+check "$ROUTING" 'L1'
+check "$ROUTING" 'L2'
+check "$ROUTING" 'L3'
+check "$ROUTING" 'L4'
+check "$ROUTING" 'intake → build → verify'
+check "$ROUTING" 'shape-lite → build → verify → review-lite'
+check "$ROUTING" 'map → shape → plan → build → verify → review'
+check "$ROUTING" '不得猜测外部契约'
+check "$ROUTING" '验证失败不得标记完成'
+if [ "$fail" -eq 0 ]; then echo 'complexity-routing: PASS'; exit 0; fi
+exit 1

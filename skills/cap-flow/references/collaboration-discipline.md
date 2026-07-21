@@ -40,6 +40,9 @@ updated: 2026-06-24
 ## 3. 提交信息
 
 - Conventional Commits:`<type>(<scope>): <subject>`;中文 subject 允许。
+- **研发产物与代码同交付**：提交包含业务代码时，当前特性的 `.cap/STATE.md`、spec、plan、verify、review 等新增或修改产物必须一并暂存提交；不得用 `.git/info/exclude` 或仓库 `.gitignore` 隐藏 `.cap/`。本地 runtime、日志、缓存和密钥继续按 `.cap/.gitignore` 排除。
+- Capital Agent Hook 自动从 `.cap/STATE.md` 追加 `Task:` / `Session:` trailer。提交完成后以 `git show -s --format='%B' HEAD` 为准确认，不能只在聊天里声称已关联。
+- 本地 commit 只代表本机完成；只有 push 后 GitLab Webhook/轮询才能触发平台 Review/Test/钉钉闭环。交接必须明确区分“已提交未推送”和“已推送平台可见”。
 - 有外部消费者的制品用 SemVer(版本/制品规范见 `deployment-patterns`)。
 
 ## 4. worktree —— 按需,不是默认

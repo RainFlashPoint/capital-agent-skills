@@ -33,6 +33,20 @@ tech-stack: [<填写，例如：next.js, fastapi, postgres>]
 test-commands: { unit: "<例如 pytest>", coverage: "<例如 pytest --cov=<pkg> --cov-fail-under=80>", e2e: "<例如 playwright test>", typecheck: "<例如 tsc --noEmit>", build: "<例如 pnpm build>" }
 <!-- 某槽位无对应套件/工具时，显式写 "none — <原因>"，不要留空；coverage 用具体包名替换 <pkg>、阈值替换默认 80/分支 70。 -->
 
+## Verification environment
+
+<!-- 测试环境画像只记录能力与 Secret 引用，不记录密钥值。cap-map 建初始画像；真实 ENV_BLOCKED 再补 confirmed-gaps。 -->
+
+- runtime: <jdk8-maven3 | node20 | python3.11 | unknown>
+- execution-zone: <local | docker | enterprise-runner | ci | unknown>
+- package-registry: <public | corporate | none | unknown>
+- credential-refs: [<引用名；无则 none>]
+- network-endpoints: [<名称/用途；不写 Token>]
+- composable-services: [<例如 mysql:8, redis:7；无则 none>]
+- enterprise-services: [<例如 nacos-test、payment-sandbox；无则 none>]
+- confirmed-gaps: [<真实执行确认的缺口；未知写 unknown>]
+- authoritative-stage: <local-skills | docker | enterprise-runner | ci>
+
 
 ## Tech stack
 

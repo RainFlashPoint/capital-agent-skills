@@ -34,9 +34,19 @@ git rev-parse HEAD
 git rev-parse HEAD^
 git branch --show-current
 git diff-tree --no-commit-id --name-only -r HEAD
+date -u +%Y-%m-%dT%H:%M:%SZ
 ```
 
-先补登记尚未上报的 Artifact 元数据，再调用 `record_task_delivery`，同时传本项目实际执行成功的 `verification_commands`；只上传 Commit、文件路径、验证和 Review 结构化结论，不上传代码正文。
+先补登记尚未上报的 Artifact 元数据，再调用 `record_task_delivery`，同时传本项目实际执行成功的 `verification_commands`。验证对象至少包含：
+
+- `passed` 与 `status`；
+- `outcome`: `PASS | CODE_FAILED | ENV_BLOCKED | INCONCLUSIVE`；
+- `executed_at`: 本轮命令结束的 UTC 时间；
+- `environment_fingerprint`: 只包含运行时版本与依赖锁摘要，例如 `os=darwin;node=22;jdk=8;lock=sha256:...`，不含用户名、绝对路径、Host、Token；
+- `commands`: 实际执行命令及 exit code；
+- `quality_asset_ids`: 若命中平台质量资产则传对应 ID。
+
+只上传 Commit、文件路径、验证和 Review 结构化结论，不上传代码正文。平台只把与当前 Commit 匹配的证据用于 Gate；旧 Commit 的通过证据不得替新提交放行。
 
 只有同时满足以下条件才调用 `request_docker_verification`：
 

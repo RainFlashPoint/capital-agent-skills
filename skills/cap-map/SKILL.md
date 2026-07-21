@@ -106,6 +106,7 @@ Phase A 采证(纯 bash) → Phase B 类型+入口识别 → Phase C 自建 surf
 3. **定入口**:找出"系统怎么启动"的最小文件集——启动文件、路由表、CLI 命令、配置入口、迁移命令。
 4. **提测试命令抽象**:从 Phase A 的 scripts / pyproject 线索归纳出 `{ unit, coverage, e2e, typecheck, build }`
    (语言无关命令,cap-verify 的 logic 检查据此发现并运行套件)。
+5. **建立验证环境初始画像**:只读探测 Dockerfile、CI、toolchain、Maven/npm 配置、Compose 与测试文档，填写 PROFILE 的 `## Verification environment`。凭据只写引用名或 `unknown`，禁止读取/复制密钥；未经真实执行确认的依赖必须标 `unknown`，不能臆测为已具备。
 
 > 三级解释纪律:先一句话定位 → 五分钟高层(任务 / 输入 / 输出 / 关键文件)→ 深入(代码流 / 边界)。把这三级
 > 沉淀进 PROFILE 的对应小节,不另出报告。
@@ -147,6 +148,7 @@ Phase A 采证(纯 bash) → Phase B 类型+入口识别 → Phase C 自建 surf
 1. 把模板 `cap-flow/references/templates/PROFILE.md` 复制到 `<target-repo>/.cap/PROFILE.md`(目录不存在先建)。
 2. 删掉模板的注释块与所有占位,按 Phase A-C 的实测结果填:
    - 顶部 `tech-stack` + `test-commands`(Phase B 的命令抽象)。
+   - `## Verification environment`：运行时、执行区域、依赖仓库、Secret 引用、可组合服务、企业服务、已确认缺口与权威验证阶段。
    - `## Tech stack`(带"原因"列:每个技术为何选它)。
    - `## Surface map`(Phase C 产物,用模板的 `面: globs[...] roles[...] checks[...]` 行格式)。
    - `## Conventions`(Phase A conventions 视角 + 禁止事项)。
@@ -191,7 +193,7 @@ Phase A 采证(纯 bash) → Phase B 类型+入口识别 → Phase C 自建 surf
 | `cap-flow/references/templates/PROFILE.md` | 读 | PROFILE 模板 |
 | `cap-flow/references/templates/hooks/{pre-commit,pre-push,post-checkout}` | 读 | 三个硬门模板,用户同意后拷贝 |
 | `cap-flow/references/role-routing.md` | 读 | 规则表 + 取值字典 |
-| package 根 `scripts/install-git-governance.mjs` | **执行(git 仓)** | 幂等安装 `prepare-commit-msg`,自动追加 Task/Session trailer |
+| package 根 `scripts/install-git-governance.mjs` | **执行(git 仓)** | 幂等安装 `prepare-commit-msg`,自动追加 Task/Session trailer，并防止代码提交遗漏 `.cap` 研发产物 |
 | `<repo>/.git/hooks/prepare-commit-msg` | **写(git 仓)** | 任务关联 Hook;保留并先执行项目原 Hook |
 | `<repo>/.git/hooks/{pre-commit,pre-push,post-checkout}` | **写(仅用户同意 + git 仓)** | 纯 shell 硬门;装完即与流程解耦 |
 | `<repo>/.cap/map-notes/<focus>.md` | 临时写 / 读(可选) | 并行采证的中转笔记,聚合后删除 |
@@ -207,6 +209,7 @@ PROFILE.md 视为合格、可交回 cap-flow,需**全部**通过:
 - [ ] `tech-stack` + `test-commands` 已据实填。规则:**有套件就必须抓到对应命令**;**没有套件不是阻断,但必须显式
   标 `none`**(如 `unit: "none — 项目无测试套件"`),并在 `## Known risks` 记一条覆盖率缺口。绝不留空白——brownfield
   真项目常零测试,这恰恰最需要建 baseline,不能卡在门口。
+- [ ] `## Verification environment` 已填写；未知项显式为 `unknown`，密钥只出现引用名，不出现任何明文值。
 - [ ] `## Surface map` 通过 Phase C 三条自检(覆盖全、取值合法、无歧义)。
 - [ ] 每个 surface 的角色 / 验证项落在 role-routing 字典内。
 - [ ] `## Entry points` 至少给出一个可执行的启动线索。
