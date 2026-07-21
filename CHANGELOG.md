@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 — 2026-07-21
+
+- 经验生命周期明确为 `candidate → validated → promoted → deprecated`；promoted 要求至少两个不同 Task 证据和管理员批准，deprecated 支持原因与替代关系且不再注入。
+- Review finding 蒸馏改为至少 3 个不同 Task/Run，同一轮多个 finding 不重复计数。
+- 同一问题与解法使用稳定 fingerprint 去重并累计证据；外部 Skill 必须记录 URL、版本、License 和 fixture/验证引用。
+- 指标语义纠正：旧 `reuse_rate` 仅作曝光率兼容，明确新增曝光率、采纳率和误导率。
+
 ## 0.3.3 — 2026-07-21
 
 - `record_experience` 改为提交结构化问题、解法、适用条件、反例、证据引用和结果，不再把文件路径摘要等同于经验。

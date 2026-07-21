@@ -73,6 +73,10 @@ git diff --name-only HEAD    # 未提交改动
 
 发布纪律：`experience.problem/solution/evidence_refs` 完整，且 `verify_verdict` 或 `review_verdict` 有明确 PASS，才可成为 `validated/published` 项目经验。旧客户端或证据不足的调用只能进入 `candidate/draft`，不得注入后续 Agent。
 
+经验生命周期统一为 `candidate → validated → promoted → deprecated`：candidate 只保存不注入；validated 只在当前项目注入；promoted 至少需要两个不同 Task 的独立证据和管理员批准，才可跨项目注入；deprecated 必须记录原因及可选替代文档 ID，且永不再注入。
+
+外部 Skill 蒸馏必须在 `experience.provenance` 提供 `source_type=external_skill`、`source_url`、`source_version`、`license`，并在 `evidence_refs` 引用 fixture/验证证据；缺任一项只能进入 candidate。
+
 **前向兼容**：以上可选字段 server 端**不认识就忽略、不报错**——skills 可安全吐全集,server 侧收字段 + 落库算 F1
 属另一阶段的工作(不阻塞本 skill)。
 
@@ -92,10 +96,10 @@ git diff --name-only HEAD    # 未提交改动
 
 - **意图质量优先**：intent 太短或是 "fix"/"update"/"修改" 这类空话时，服务端会自动跳过；请尽量给一句有信息量的意图总结。
 - **只传引用和路径，不传代码内容**：经验必须包含问题、解法、条件和证据引用；文件路径只是证据的一部分，不再等同于经验本身。
-- **repo_url 首尾一致（repoTail 不变量）**：注入和沉淀用同一个 repo_url，复用率统计才准确。服务端从 repo_url 派生 `projectKey` 做归因；**大小写 / 尾部差异会让 projectKey 不匹配、闭环归因静默断裂**——注入与沉淀务必逐字符同源。
+- **repo_url 首尾一致（repoTail 不变量）**：注入和沉淀用同一个 repo_url，曝光、采纳和误导统计才准确。服务端从 repo_url 派生 `projectKey` 做归因；**大小写 / 尾部差异会让 projectKey 不匹配、闭环归因静默断裂**——注入与沉淀务必逐字符同源。
 - **owner ≠ runner**：owner 记"这需求归谁",runner 记"这轮谁跑的"。夜间自治跑务必把 runner 标成 `night-factory`,别混进人的账。
 - **不确定就跳过沉淀**：如果本次会话没有真正的代码改动（纯问答、纯调研），不要调用 `record_experience`。
-- 沉淀结果与量化指标（沉淀量、复用率）可在平台 `/experience` 页面查看。
+- 沉淀结果与量化指标可在平台 `/experience` 页面查看：`exposure_rate` 是被检索展示的曝光率，`adoption_rate` 是有结果反馈的采纳率，`misleading_rate` 是明确标记 `knowledge_misled` 的误导率。旧 `reuse_rate` 仅作兼容，语义等同曝光率。
 
 ## 三处统一出口
 

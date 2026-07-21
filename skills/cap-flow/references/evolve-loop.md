@@ -104,6 +104,10 @@ git restore . ; git switch main ; git branch -D evolve/<topic>
 **repoTail 不变量**:注入与沉淀必须锚在同一 `repo_url` 派生的 projectKey 上,否则归因静默断裂——
 别让"注入用 remote URL、沉淀用本地路径"这类不一致把闭环切断。整个 loop 固定用一种 repo_url 表达。
 
+**晋级不是 evolve 自动完成**：经验先按证据进入 candidate 或 validated。只有至少两个不同 Task 独立验证且管理员批准，才能调用 `promote_experience` 进入团队池。若后续证明错误或被替代，管理员调用 `deprecate_experience`，附原因与可选 replacement document ID；deprecated 永不注入。
+
+**外部 Skill 来源门**：必须记录 URL、版本、License 与本地 fixture/验证证据。缺来源或许可证不明时只保存 candidate。
+
 **密钥**:全程不读不写任何密钥;沉淀走已配置的 `capital-agent` MCP,凭据由 MCP 层管理,不进本 playbook。
 
 > **无 `capital-agent` MCP 的环境**:`enrich_context` / `record_experience` 不可用时,不假装已沉淀。
