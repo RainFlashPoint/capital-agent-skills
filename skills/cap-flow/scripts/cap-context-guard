@@ -27,7 +27,7 @@ section_has_path() {
 
 [ -f "$context" ] || fail "缺少 .cap/task-context.md；先按 task-reconnaissance.md 调查当前代码"
 
-for heading in "## Entry points" "## Call chain and data flow" "## Similar implementations" "## Tests and environment" "## Impact surface" "## Profile drift"; do
+for heading in "## Entry points" "## Call chain and data flow" "## Similar implementations" "## Tests and environment" "## Evidence sources" "## External operation boundary" "## Impact surface" "## Profile drift"; do
   grep -qF "$heading" "$context" || fail "task-context 缺少必填段：$heading"
 done
 
@@ -48,6 +48,10 @@ fi
 
 section_has_path "## Entry points" || fail "Entry points 没有真实代码路径"
 section_has_path "## Tests and environment" || fail "Tests and environment 没有测试或配置路径"
+section_has_path "## Evidence sources" || fail "Evidence sources 没有仓库路径或知识引用"
+for key in environment authorization minimum-impact recovery invalidates-on; do
+  grep -qE "^- ${key}:[[:space:]]*[^[:space:]]" "$context" || fail "External operation boundary 缺少 ${key}"
+done
 grep -qE '^- (modify|inspect-only|out-of-scope): `[^`]+`' "$context" || fail "Impact surface 没有带路径的范围证据"
 
 case "$stage" in

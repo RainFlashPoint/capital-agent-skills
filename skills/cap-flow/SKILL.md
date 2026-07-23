@@ -366,6 +366,12 @@ worktree: <路径或 (none)>
 work-type: feature | remediation | hotfix
 source-leaf: <需求树叶 id 或 (none)>
 
+## External operation authorization
+- environment: <环境或 not-applicable>
+- scope: <授权动作与最小影响范围摘要>
+- granted-by: <授权来源，不含敏感身份资料>
+- invalidates-on: <授权失效条件>
+
 ## Gates passed
 - [x] spec approved
 - [ ] tests written (red)

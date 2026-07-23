@@ -56,6 +56,16 @@
 ## Tests and environment
 - `<path or command>` — <现状与缺口>
 
+## Evidence sources
+- `<repo-relative path / knowledge id>` — <找到的测试资产或结论；只记引用与脱敏摘要>
+
+## External operation boundary
+- environment: <local/test/staging/production/unknown>
+- authorization: <none/not-needed/已授权动作摘要；不含敏感数据>
+- minimum-impact: <最小必要影响范围或 not-applicable>
+- recovery: <回滚/清理/补偿路径或 unavailable>
+- invalidates-on: <环境、范围或不可逆性变化时失效；无外部操作填 not-applicable>
+
 ## Impact surface
 - modify: `<path/glob>` — <原因>
 - inspect-only: `<path/glob>` — <原因>
@@ -76,4 +86,4 @@
 bash <cap-flow>/scripts/cap-context-guard --stage <stage> [--intent "<当前任务原文>"] <repo>
 ```
 
-门禁检查文件存在、必填段、intent、branch、HEAD、PROFILE 的 `index-only` 声明，以及入口/测试/影响范围中的真实路径。失败时先刷新 `task-context.md`，不得口头解释后绕过。
+门禁检查文件存在、必填段、intent、branch、HEAD、PROFILE 的 `index-only` 声明，以及入口/测试/影响范围、证据来源和外部操作边界。失败时先刷新 `task-context.md`，不得口头解释后绕过。

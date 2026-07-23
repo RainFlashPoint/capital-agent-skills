@@ -68,6 +68,9 @@ grep -q 'cap-context-guard' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未执行
 grep -q 'cap-status.mjs' "$ROOT/cap/SKILL.md" || err "cap 未执行客户端握手与下一动作判定"
 grep -q '禁止静默降级' "$ROOT/cap/SKILL.md" || err "cap 未声明平台失败禁止静默降级"
 grep -q '同一会话立即执行下一动作' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 仍可能停在 Artifact/STATE"
+grep -q '不得停在口头承诺' "$REF/progress-protocol.md" || err "进度协议未强制真实执行"
+grep -q 'External operation boundary' "$REF/task-reconnaissance.md" || err "task-context 未记录外部操作边界"
+grep -q 'External operation authorization' "$REF/templates/STATE.md" || err "STATE 未跨会话保存授权边界"
 ok "进度与代码侦察协议检查完成"
 
 echo "== 5. 可移植自检:流程 skill 不得硬依赖 Claude 专属工具 =="

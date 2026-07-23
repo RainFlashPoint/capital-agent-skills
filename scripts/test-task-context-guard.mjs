@@ -53,6 +53,16 @@ function writeContext(repo, { includeTests = true } = {}) {
 ## Tests and environment
 ${includeTests ? '- `test/payment.test.js` — 支付测试入口' : '- 尚未定位测试'}
 
+## Evidence sources
+- \`test/payment.test.js\` — 测试资产引用，不记录敏感正文
+
+## External operation boundary
+- environment: test
+- authorization: 已授权当前测试动作
+- minimum-impact: 单次测试范围
+- recovery: 测试数据清理
+- invalidates-on: 环境或执行范围变化
+
 ## Impact surface
 - modify: \`src/payment-service.js\` — 新渠道实现
 - inspect-only: \`src/payment-controller.js\` — 保持入口兼容
@@ -92,4 +102,14 @@ test('missing test evidence blocks the workflow', () => {
   const result = run(repo, '--stage', 'plan')
   assert.equal(result.status, 1)
   assert.match(result.stderr, /没有测试或配置路径/)
+})
+
+test('missing external operation boundary blocks handoff', () => {
+  const repo = fixture(); writeContext(repo)
+  const context = join(repo, '.cap/task-context.md')
+  const content = execFileSync('sed', ['/^- recovery:/d', context], { encoding: 'utf8' })
+  writeFileSync(context, content)
+  const result = run(repo, '--stage', 'test')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /缺少 recovery/)
 })
