@@ -15,6 +15,7 @@ description: >
 # cap-test — 验证中枢（调度层）
 
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+> 涉及测试账号、外部参数或外部状态写入时，遵守任务侦察协议的“先取证，再询问”：先复用仓库与知识库已有测试资产；授权与影响边界已经明确时直接推进，只有真实缺口或风险才设置人工门禁。
 
 你是验证阶段的**调度员**。verify 是夹在 **build(实现)** 与 **review(评审)** 之间的独立阶段,职责是:把
 "应该能用"变成"已验证能用"的硬证据。
