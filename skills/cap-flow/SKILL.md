@@ -429,10 +429,11 @@ source-leaf: <需求树叶 id 或 (none)>
 
 ## 一次完整入口的动作清单
 
-1. [ ] `ls .cap/` 读 PROFILE.md + STATE.md
-2. [ ] 边界自检(cap-guard),再判定入口,用编号文本报告并让用户确认 / 改向
-3. [ ] 若进改动阶段(build/verify/review):`git diff` → 解析角色+验证项 → 漂移检测
-4. [ ] 装载活跃角色卡 + 选定验证项
-5. [ ] 路由到对应 `cap-*` 阶段(自己不执行其内容)
-6. [ ] 阶段返回后:写回 `STATE.md`(单写者),快照活跃角色 / 验证项 / 改动文件
-7. [ ] 向用户报告当前 stage / status / next action
+1. [ ] 运行 package 根 `scripts/cap-status.mjs <target-repo> --json`，完成客户端/Git/STATE 预检
+2. [ ] 调用 `create_or_attach_task` 创建或复用平台 Task；失败时明确报告本地降级，不得静默跳过
+3. [ ] 重跑 `cap-status.mjs` 并输出平台、仓库、分支、Task、当前阶段、下一动作的握手快报
+4. [ ] 边界自检(cap-guard),再判定入口；只有真实分歧或人工门禁才要求确认
+5. [ ] 若进改动阶段(implement/test/review):`git diff` → 解析角色+验证项 → 漂移检测
+6. [ ] 装载活跃角色卡 + 选定验证项，路由到对应内部阶段
+7. [ ] 阶段返回后写回 `STATE.md`、登记 Artifact，并再次运行 `cap-status.mjs`
+8. [ ] `status=in-progress` 时同一会话立即执行下一动作；`gated/blocked` 才停下报告解除条件
