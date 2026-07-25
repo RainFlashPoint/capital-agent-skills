@@ -27,10 +27,11 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 
 1. 先运行 package 根的 `scripts/cap-status.mjs <target-repo> --json`，获得 Git、平台配置、Task 和确定性下一动作。
 2. 若 MCP 提供 `create_or_attach_task`，立即创建/复用 Task 并写回 `.cap/STATE.md`；随后重跑 `cap-status.mjs`。若工具缺失或调用失败，必须明确报告 `仅本地执行 + 原因 + 影响 + 修复命令`，禁止静默降级。
-3. 用统一“客户端握手快报”告诉用户平台连接、仓库、分支、Task、当前阶段和下一步；不得先写规格或代码再补报。
-4. 调用中心知识层注入与本需求相关的历史经验。
-5. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
-6. 会话结束时沉淀意图与改动文件路径，并维护统一 Task/Skills Session。
+3. 若状态包含 `git_delivery_reconciliation_needed`，立即扫描 `delivery-head..HEAD`；对 IDEA、人工或其它 Agent 产生的 Commit 幂等补调用 `record_task_delivery`。平台没有 Delivery 查询工具时也要重报当前 HEAD，由平台幂等去重，不能依赖原编码会话仍然存在。
+4. 用统一“客户端握手快报”告诉用户平台连接、仓库、分支、Task、当前阶段和下一步；不得先写规格或代码再补报。
+5. 调用中心知识层注入与本需求相关的历史经验。
+6. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
+7. 会话结束时沉淀意图与改动文件路径，并维护统一 Task/Skills Session。
 
 握手成功示例：
 

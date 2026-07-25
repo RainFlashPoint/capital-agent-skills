@@ -176,7 +176,7 @@ Phase A 采证(纯 bash) → Phase B 类型+入口识别 → Phase C 自建 surf
    ```
    要装这三个硬门吗?(git 自动跑,模型绕不过)
      · pre-commit:边界守卫 —— commit 前查 STATE 与当前 branch/worktree 是否串台
-     · pre-push:流程检查 —— push 前核对 verify + review 已过(读 cap-gate 行)
+     · pre-push:分层流程检查 —— 开发/测试分支允许 CODE_DELIVERED；受保护分支核对 verify + review 已过
      · post-checkout:叶状态 flush —— 切分支时把在飞特性源叶 status 固化落盘(无需求树则空跑)
      1) 都装(推荐)  2) 只装 pre-commit  3) 只装 pre-push  4) 只装 post-checkout  5) 跳过
    ```

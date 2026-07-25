@@ -4,10 +4,11 @@
 
 ## 开始
 
-1. 读取 `git remote get-url origin`、当前 branch、`git rev-parse HEAD` 和仓库根目录。
-2. 调用 `create_or_attach_task`，传需求原文、repo、branch、base commit、leaf、worktree 和稳定幂等键。
-3. 把返回的 `task_id`、`session_id`、Skill/知识快照 ID 写入 `.cap/STATE.md` 顶层元数据。
-4. 后续 `enrich_context`、`record_skill_event`、`record_experience` 始终复用同一 repo URL 和 session ID。
+1. 读取 `git remote get-url origin`、当前 branch、`git rev-parse HEAD`、upstream HEAD 和仓库根目录。
+2. 运行 `cap-status.mjs <repo> --json` 对账当前本地 HEAD、upstream/远端跟踪 HEAD 与 STATE 的 `delivery-head`，再通过 MCP 确认平台最近 Delivery。若本地或远端存在未登记 Commit（包括 IDEA、人工或其它 Agent 提交），按提交顺序收集 Commit SHA 与改动路径并补调用 `record_task_delivery`；不得要求原 Codex 会话仍然存活。平台没有 Delivery 查询工具时，幂等重报当前 HEAD，由服务端去重。
+3. 调用 `create_or_attach_task`，传需求原文、repo、branch、base commit、leaf、worktree 和稳定幂等键。
+4. 把返回的 `task_id`、`session_id`、Skill/知识快照 ID 写入 `.cap/STATE.md` 顶层元数据。
+5. 后续 `enrich_context`、`record_skill_event`、`record_experience` 始终复用同一 repo URL 和 session ID。
 
 ## Artifact 元数据
 
@@ -26,6 +27,12 @@
 只传 `task_id`、`kind`、仓库相对 `path`、文件 SHA-256 `hash`、当前 `git_ref`、`stage`、`status` 和一句 `summary`。禁止上传正文、本机绝对路径、平台地址或凭据。同一路径同一 hash 不重复上报；工具不存在、无 task-id 或调用失败时静默降级。
 
 ## 交付
+
+代码交付与环境验证是两道独立门：
+
+- `CODE_DELIVERED`：本地可执行验证已完成且 Commit 已形成，可推送开发/测试分支供部署联调。
+- `ENV_PENDING` / `ENV_BLOCKED`：外部环境验证尚未完成或环境受阻；不阻止开发/测试分支推送，但阻止生产晋级和 Task 完成。
+- `ENV_VERIFIED`：权威环境验证完成。只有 verify、review 与所需环境门都通过后，Task 才可完成或进入生产发布。
 
 当代码已形成且存在有效 Commit 时，自动收集：
 
@@ -47,6 +54,7 @@ date -u +%Y-%m-%dT%H:%M:%SZ
 - `quality_asset_ids`: 若命中平台质量资产则传对应 ID。
 
 只上传 Commit、文件路径、验证和 Review 结构化结论，不上传代码正文。平台只把与当前 Commit 匹配的证据用于 Gate；旧 Commit 的通过证据不得替新提交放行。
+`record_task_delivery` 成功后把该 Commit 写入 STATE 的 `delivery-head`；下次入口发现 HEAD/upstream 与之不同时必须补对账。平台查询能力可用时，以平台最近 Delivery 为准并修正本地缓存；STATE 不是最终真值。
 
 只有同时满足以下条件才调用 `request_docker_verification`：
 

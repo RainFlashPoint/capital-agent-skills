@@ -67,7 +67,7 @@ deploy / promote / rollback **一律串行 inline**,一次只推一处。
 | **知道往哪发** | 能从 `PROFILE.Deploy` 或目标仓读到部署目标类型 | 走 §2 探测;探不到 → 编号文本问用户 |
 
 > **`cap-gate` 与 HEAD 不符**(评审后又改了码)→ **停**,回 review 重审。发布的必须是被评审过的那个 sha。
-> 这正是 pre-push hook 卡的那行:reviewed-head 对不上当前 HEAD,push 就不放行。
+> 这正是 pre-push hook 对受保护分支核对的那行：reviewed-head 对不上当前 HEAD 时禁止生产晋级；开发/测试分支可先交付代码完成环境验证。
 
 ---
 

@@ -39,6 +39,8 @@ updated: <时间戳，由调用方传入，例如 2026-06-04T15:30>
 task-context: .cap/task-context.md @ <调查时 HEAD 或 working-tree>   # 意图/分支/HEAD 变化时刷新
 verify-checks: [logic, journey, model]   # 本次运行从 diff 动态解析；未进入 verify 前可留 []
 cap-gate: <未设置>   # cap-review 全过(verdict=PASS)时写 `PASS reviewed-head=<HEAD的sha>`，否则写 `BLOCK`。本地 pre-push hook(若装)只认这一行来决定放不放行 push。
+delivery-status: NOT_DELIVERED | CODE_DELIVERED | ENV_PENDING | ENV_VERIFIED | ENV_BLOCKED
+delivery-head: <最近一次已通过 record_task_delivery 登记的完整 Git SHA；尚未登记则留空>
 
 ## External operation authorization
 

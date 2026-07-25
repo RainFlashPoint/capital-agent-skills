@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { inspectCapStatus, resolveNextAction } from './cap-status.mjs'
+import { inspectCapStatus, reconcileRepositoryState, resolveNextAction } from './cap-status.mjs'
 
 async function fixture() {
   const repo = await mkdtemp(join(tmpdir(), 'cap-status-'))
@@ -61,4 +61,20 @@ test('failed direct probe waits for MCP confirmation instead of falsely claiming
   const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async () => ({ ok: false }) })
   assert.equal(result.mode, 'platform_unverified')
   assert.ok(result.reasons.includes('platform_probe_failed_needs_mcp_confirmation'))
+})
+
+test('IDEA or manual commit after the last delivery is detected for platform reconciliation', () => {
+  const result = reconcileRepositoryState({
+    head: 'bbbbbbbb', upstreamHead: 'bbbbbbbb', deliveredHead: 'aaaaaaaa',
+    commits: ['bbbbbbbb\tIDEA commit'],
+  })
+  assert.equal(result.needsDeliveryReconciliation, true)
+  assert.equal(result.localUnrecorded, true)
+  assert.equal(result.remoteUnrecorded, true)
+  assert.deepEqual(result.unrecordedCommits, ['bbbbbbbb\tIDEA commit'])
+})
+
+test('matching local remote and delivered heads require no reconciliation', () => {
+  const result = reconcileRepositoryState({ head: 'aaaaaaaa', upstreamHead: 'aaaaaaaa', deliveredHead: 'aaaaaaaa' })
+  assert.equal(result.needsDeliveryReconciliation, false)
 })

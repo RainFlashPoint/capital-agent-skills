@@ -29,6 +29,22 @@ function nextFromState(markdown = '') {
 }
 async function exists(path = '') { try { return (await stat(path)).isFile() } catch { return false } }
 function git(repo, args) { try { return text(execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })) } catch { return '' } }
+function gitSucceeds(repo, args) { try { execFileSync('git', args, { cwd: repo, stdio: 'ignore' }); return true } catch { return false } }
+
+export function reconcileRepositoryState({ head = '', upstreamHead = '', deliveredHead = '', stateHead = '', commits = [] } = {}) {
+  const recordedHead = deliveredHead || stateHead
+  const localUnrecorded = Boolean(head && recordedHead && head !== recordedHead)
+  const remoteUnrecorded = Boolean(upstreamHead && recordedHead && upstreamHead !== recordedHead)
+  const initialDeliveryNeeded = Boolean(head && !recordedHead)
+  return {
+    recordedHead,
+    initialDeliveryNeeded,
+    localUnrecorded,
+    remoteUnrecorded,
+    needsDeliveryReconciliation: initialDeliveryNeeded || localUnrecorded || remoteUnrecorded,
+    unrecordedCommits: localUnrecorded || initialDeliveryNeeded ? commits : [],
+  }
+}
 
 export function resolveNextAction({ stateText = '', artifacts = {}, dirty = false } = {}) {
   if (!stateText) {
@@ -79,6 +95,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const gitRoot = git(repo, ['rev-parse', '--show-toplevel'])
   const branch = git(repo, ['branch', '--show-current'])
   const head = git(repo, ['rev-parse', 'HEAD'])
+  const upstream = git(repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+  const upstreamHead = upstream ? git(repo, ['rev-parse', upstream]) : ''
   const remote = git(repo, ['remote', 'get-url', 'origin'])
   const dirty = Boolean(git(repo, ['status', '--porcelain']))
   const statePath = join(repo, '.cap/STATE.md')
@@ -92,12 +110,20 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const next = resolveNextAction({ stateText, artifacts, dirty })
   const taskId = field(stateText, 'task-id')
   const sessionId = field(stateText, 'session-id')
+  const deliveredHead = field(stateText, 'delivery-head')
+  const stateHead = field(stateText, 'head') || field(stateText, 'task-context').match(/@\s*([0-9a-f]{7,40})/i)?.[1] || ''
+  const compareBase = deliveredHead || stateHead
+  const commits = compareBase && gitSucceeds(repo, ['cat-file', '-e', `${compareBase}^{commit}`])
+    ? git(repo, ['log', '--format=%H%x09%s', `${compareBase}..${head}`]).split(/\r?\n/).filter(Boolean)
+    : head ? [git(repo, ['log', '-1', '--format=%H%x09%s', head])].filter(Boolean) : []
+  const reconciliation = reconcileRepositoryState({ head, upstreamHead, deliveredHead, stateHead, commits })
   const reasons = []
   if (!gitRoot) reasons.push('not_git_repository')
   if (!serverUrl) reasons.push('missing_server_url')
   if (!userKey) reasons.push('missing_user_key')
   if (!offline && serverUrl && userKey && platform === false) reasons.push('platform_probe_failed_needs_mcp_confirmation')
   if (!taskId) reasons.push('task_not_attached')
+  if (reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
   return {
     mode: !gitRoot || !serverUrl || !userKey
       ? 'local_degraded'
@@ -105,8 +131,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
     platform: { configured: Boolean(serverUrl && userKey), connected: platform, serverUrl: serverUrl || '' },
-    repository: { root: gitRoot || repo, remote, branch, head, dirty },
+    repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty },
     task: { id: taskId, sessionId },
+    reconciliation,
     workflow: { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
     reasons,
   }
@@ -125,6 +152,7 @@ function render(result) {
     `当前：${stageLabel(result.workflow.currentStage || result.workflow.stage)}`,
     `下一步：${result.workflow.action}`,
     `原因：${result.workflow.reason}`,
+    result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
     result.reasons.length ? `降级原因：${result.reasons.join(', ')}` : '',
   ].filter(Boolean).join('\n')
 }

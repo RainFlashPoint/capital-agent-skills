@@ -1,6 +1,6 @@
 #!/bin/sh
 # cap-flow pre-push 检查
-# 作用：代码离开本机(push)前，确保该跑的 cap 检查(verify + review)都过了。
+# 作用：开发/测试分支允许先交付代码供环境验证；受保护分支仍要求 verify + review 全过。
 # 纯 shell —— 不调用任何 AI、不需要任何密钥(评审由你在本地用 /cap 跑到 review 阶段，
 #            它会把结论写进 .cap/STATE.md；本 hook 只核对那行结论)。
 # 绕过(明知故犯)：git push --no-verify
@@ -11,6 +11,40 @@
 STATE=".cap/STATE.md"
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null)
 SHORT=$(git rev-parse --short HEAD 2>/dev/null)
+PROTECTED_BRANCHES=${CAPITAL_AGENT_PROTECTED_BRANCHES:-main,master,release,prod,production}
+
+is_protected_branch() {
+  branch=$1
+  old_ifs=$IFS
+  IFS=,
+  for protected in $PROTECTED_BRANCHES; do
+    case "$branch" in
+      "$protected"|"$protected"/*) IFS=$old_ifs; return 0 ;;
+    esac
+  done
+  IFS=$old_ifs
+  return 1
+}
+
+# pre-push stdin: <local ref> <local sha> <remote ref> <remote sha>。
+# 删除 ref(local sha 全 0)不需要流程门；任一目标为受保护分支时才启用完整发布门。
+PROTECTED_TARGET=""
+while read local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in 0000000000000000000000000000000000000000) continue ;; esac
+  branch=${remote_ref#refs/heads/}
+  if is_protected_branch "$branch"; then PROTECTED_TARGET=$branch; break; fi
+done
+
+if [ -z "$PROTECTED_TARGET" ]; then
+  if [ -f "$STATE" ]; then
+    TASK=$(grep -iE '^task-id:' "$STATE" | tail -1 | sed 's/^[^:]*:[[:space:]]*//')
+    echo "✓ cap: 开发/测试分支代码交付放行 (HEAD ${SHORT}, task ${TASK:-unattached})"
+    echo "  环境验证可保持 ENV_PENDING/ENV_BLOCKED；生产晋级与 Task 完成仍需完整 gate。"
+  else
+    echo "✓ cap: 非受保护分支代码交付放行 (HEAD ${SHORT}); 下次 /cap 将执行 Git/平台对账。"
+  fi
+  exit 0
+fi
 
 if [ ! -f "$STATE" ]; then
   # 无 STATE 有两种情形:① 特性已退场(retire 清栈,工件归档到 .cap/archive/)= 合法收尾
@@ -33,8 +67,8 @@ GATE_LINE=$(grep -iE '^cap-gate:' "$STATE" | tail -1)
 case "$GATE_LINE" in
   *"PASS"*) ;;  # 继续核对 head
   *)
-    echo "✗ cap: STATE 里没有 'cap-gate: PASS' —— verify / review 还没全过。"
-    echo "  跑 /cap(会进 verify)走到 review。绕过：git push --no-verify"
+    echo "✗ cap: 目标 ${PROTECTED_TARGET} 是受保护分支，STATE 里没有 'cap-gate: PASS'。"
+    echo "  开发/测试分支可先推送做环境验证；生产晋级仍需 /cap 完成 verify + review。"
     exit 1 ;;
 esac
 
