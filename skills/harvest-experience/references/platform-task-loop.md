@@ -28,6 +28,18 @@
 
 ## 交付
 
+### Task、Commit 与延期验收
+
+- Task 表示一项可独立验收的研发结果，不等于单个 Commit，也不应承载无法收敛的长期大计划。
+- 同一 Task 可以累积多次 Commit/Delivery；每次入口按 `delivery-head..HEAD` 补登记人工、IDE 或其它 Agent 的提交。
+- 新 Commit 只增加 Delivery 并重新校验最新提交，不创建新 Task。
+- 核心验收通过、剩余项仅受外部时间或样本约束且可独立验收时，调用 `split_deferred_acceptance`：为每个延期项创建
+  关联 follow-up Task，原 Task 在 Commit/Review/Quality/Safety 门通过后完成。
+- 代码失败、安全问题、数据一致性风险或核心行为未通过不得延期，必须保持当前 Task gated/blocked。
+
+调用 `split_deferred_acceptance` 时传 `task_id`、当前 `commit_sha`/branch、结构化延期项，以及当前核心范围的
+verification/review PASS。成功后将返回的 follow-up Task ID 写入 STATE；失败时保留延期项并明确报告平台未拆分。
+
 代码交付与环境验证是两道独立门：
 
 - `CODE_DELIVERED`：本地可执行验证已完成且 Commit 已形成，可推送开发/测试分支供部署联调。

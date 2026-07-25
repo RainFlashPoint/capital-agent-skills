@@ -31,6 +31,12 @@ test('gated workflow never skips directly to the declared next stage', () => {
   assert.equal(result.stage, 'test'); assert.equal(result.gated, true)
 })
 
+test('deferred-only acceptance advances core task instead of leaving it permanently gated', () => {
+  const result = resolveNextAction({ stateText: 'stage: test\nstatus: gated\ndeferred-only: true\n## Next action\n-> cap-review\n' })
+  assert.equal(result.stage, 'review')
+  assert.equal(result.deferredOnly, true)
+})
+
 test('legacy verify state normalizes to test and follows explicit next action', () => {
   const result = resolveNextAction({ stateText: 'stage: verify\nstatus: in-progress\n## Next action\n-> cap-review\n' })
   assert.equal(result.stage, 'review')

@@ -41,6 +41,13 @@ verify-checks: [logic, journey, model]   # 本次运行从 diff 动态解析；�
 cap-gate: <未设置>   # cap-review 全过(verdict=PASS)时写 `PASS reviewed-head=<HEAD的sha>`，否则写 `BLOCK`。本地 pre-push hook(若装)只认这一行来决定放不放行 push。
 delivery-status: NOT_DELIVERED | CODE_DELIVERED | ENV_PENDING | ENV_VERIFIED | ENV_BLOCKED
 delivery-head: <最近一次已通过 record_task_delivery 登记的完整 Git SHA；尚未登记则留空>
+deferred-only: false   # true 表示核心验收已通过，下面只剩可独立拆分的延期项；不得再用 gated 阻塞当前 Task
+follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
+
+## Deferred acceptance
+
+<!-- 每项必须可独立验收；核心失败、安全/一致性风险不得放这里。无延期项填 none。 -->
+- none
 
 ## External operation authorization
 

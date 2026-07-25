@@ -351,6 +351,12 @@ gates-passed:
 decisions:
 - <date> <decision>
 next-action: -> cap-<stage>
+deferred-only: true | false
+deferred-acceptance:
+- id: <stable-id>
+  title: <后续独立验收项>
+  reason: <延期原因>
+  done-when: <完成标准>
 ```
 
 `STATE.md` schema(时间戳由 caller 传入,不要自造时钟):
@@ -395,6 +401,12 @@ source-leaf: <需求树叶 id 或 (none)>
 - `in-progress` → 提示可以继续下一阶段(或本会话直接续)。
 - `gated` → 停在门口,等用户确认(编号文本列出待批项)。
 - `blocked` → 报告阻塞原因,不前进。
+
+`deferred-only: true` 不等于 gated：它表示当前 Task 的核心验收已经通过，剩余项可独立交付。继续完成 review；
+Review 通过且已有有效 Commit 时，若 MCP 提供 `split_deferred_acceptance`，传当前 `task-id`、最新 Commit、
+延期项、核心 verification PASS 与 review PASS。平台创建关联 follow-up Task 后，把返回 ID 写入
+`follow-up-task-ids`，当前 STATE 推进 `stage: done`。工具不可用时明确记录“后续 Task 未创建”，不得静默把
+延期项丢失，也不得因此把核心 Task 永久留在 gated。
 
 若 capital-agent MCP 提供 `record_skill_event`，每次 HANDOFF 写完 STATE 后追加一条同 `session_id` 事件：阶段进入用 `stage_entered`，门通过用 `gate_passed`，阻塞用 `stage_blocked`；verify/review 阶段分别用对应完成事件。artifact_refs 只传已登记的 Artifact ID 或路径，不传文件正文。
 

@@ -55,10 +55,12 @@ export function resolveNextAction({ stateText = '', artifacts = {}, dirty = fals
 
   const stage = canonicalStage(field(stateText, 'stage')) || 'understand'
   const status = field(stateText, 'status').toLowerCase() || 'in-progress'
+  const deferredOnly = field(stateText, 'deferred-only').toLowerCase() === 'true'
   const declared = nextFromState(stateText)
-  if (status === 'blocked' || status === 'gated') {
+  if ((status === 'blocked' || status === 'gated') && !deferredOnly) {
     return { stage, action: '解除当前门禁', reason: `${stage} 状态为 ${status}`, gated: true, declaredNext: declared }
   }
+  if (deferredOnly && declared && declared !== stage) return { stage: declared, action: stageLabel(declared), reason: '核心验收已通过，延期项将拆成 follow-up Task', deferredOnly: true }
   if (declared && declared !== stage) return { stage: declared, action: stageLabel(declared), reason: '采用 STATE 中已声明的下一动作' }
 
   switch (stage) {

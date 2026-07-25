@@ -168,6 +168,9 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
    - `INCONCLUSIVE`:证据不足;保留日志并转企业 Runner、CI 或人工复验。
 3. **阶段总判定**:
    - 全部验证项 PASS → verify 阶段 = **PASS**,可进 review。
+   - 核心验收全部 PASS，只有可独立、无安全风险且受外部时间/样本约束的验收项尚未执行 → 不得把整个 Task 留在
+     `gated`。把这些项写入 `deferred-acceptance`，设置 `deferred-only: true`，当前阶段按 PASS 进入 review；Review
+     通过后由 cap-flow 调用 `split_deferred_acceptance` 创建关联 follow-up Task，再完成当前 Task。
    - 任一验证项 GATED(覆盖率不达标 / 旅程失败已 escalate / eval 未达阈值)→ 阶段 = **gated**,STATE.next
      指回缺口对应阶段(多为 `cap-implement`)。
    - 任一验证项 BLOCKED(测试基建起不来 / eval 装置坏 / 缺评估契约且无法回退)→ 阶段 = **blocked**,在
@@ -175,6 +178,10 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 4. 写一份**阶段汇总**(可放 `.cap/verify/summary.md` 或直接体现在 STATE),列每个验证项的结果、归因分类与去向。
 5. **输出 `## HANDOFF` → 回写 STATE.md**(经 cap-flow / 单写者,见 §6):更新 stage / status / gates /
    verify-checks / next。
+
+延期只允许用于“当前核心结果已可独立验收”的项目，例如等待次日账单、厂商脱敏样本或独立兼容性矩阵。代码失败、
+安全问题、数据一致性风险、当前需求的核心行为未通过，均不得标记延期。每个延期项必须包含稳定 ID、标题、原因和
+后续验证标准，禁止只写“以后再测”。
 
 ---
 
@@ -234,6 +241,12 @@ active-roles: [server-dev, qa]           # Step 1 解析出的角色,与 checks 
 changed-files:
 - <Step 1 的 git diff 路径清单>
 verification-outcome: PASS | CODE_FAILED | ENV_BLOCKED | INCONCLUSIVE
+deferred-only: true | false
+deferred-acceptance:
+- id: <稳定 id>
+  title: <可独立验收的后续事项>
+  reason: <当前不能验收的外部条件>
+  done-when: <后续 Task 的完成标准>
 executed-at: <UTC ISO-8601>
 environment-fingerprint: <仅运行时版本 + lockfile hash，不含用户/路径/Host/密钥>
 gates-passed:
