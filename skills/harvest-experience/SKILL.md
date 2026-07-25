@@ -85,6 +85,8 @@ git diff --name-only HEAD    # 未提交改动
 
 若已有有效 Git Commit 且 MCP 提供 `record_task_delivery`，按 `references/platform-task-loop.md` 自动回写 Commit、改动文件路径、verify/review。HEAD 已推送且门禁满足时，再调用 `request_docker_verification`；不得上传未提交工作区或代码正文。
 
+回写 Delivery 时，若 Task 绑定过知识快照，必须基于本轮真实使用情况填写 `knowledge_outcome`：直接照用为 `direct_adopted`，经过实质修正后使用为 `modified_adopted`，看过但未使用为 `not_used`，确认不适用或产生误导为 `rejected`。不得因为“检索到了知识”就默认声称采用；误导时在 `knowledge_reasons` 中加入 `knowledge_misled`，并用 `knowledge_note` 写一句脱敏原因。
+
 阶段流转时由 cap-flow 在 HANDOFF 后记录 `stage_entered` / `gate_passed` / `stage_blocked` / `verify_completed` / `review_completed`。
 
 ## 规则

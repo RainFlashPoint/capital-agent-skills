@@ -76,3 +76,13 @@ export async function checkPlatformConnection(serverUrl, userKey, fetchImpl = fe
     return response.ok
   } catch { return false }
 }
+
+export async function checkPlatformHandshake(serverUrl, userKey, fetchImpl = fetch) {
+  if (!serverUrl || !userKey) return { ok: false, reason: 'missing_config' }
+  try {
+    const response = await fetchImpl(`${serverUrl}/api/auth/handshake`, { method: 'PUT', headers: { 'x-user-key': userKey } })
+    const body = await response.json().catch(() => ({}))
+    const data = body.data || {}
+    return { ok: response.ok && data.capabilities?.taskWrite === true && data.capabilities?.commitReconcile === true, status: response.status, ...data }
+  } catch { return { ok: false, reason: 'network_error' } }
+}

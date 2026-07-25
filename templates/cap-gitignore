@@ -6,3 +6,5 @@ secrets/
 local-state/
 *.local
 *.token
+pending-deliveries.jsonl
+pending-deliveries.jsonl.tmp

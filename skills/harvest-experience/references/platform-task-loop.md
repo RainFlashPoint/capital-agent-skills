@@ -68,6 +68,8 @@ date -u +%Y-%m-%dT%H:%M:%SZ
 只上传 Commit、文件路径、验证和 Review 结构化结论，不上传代码正文。平台只把与当前 Commit 匹配的证据用于 Gate；旧 Commit 的通过证据不得替新提交放行。
 `record_task_delivery` 成功后把该 Commit 写入 STATE 的 `delivery-head`；下次入口发现 HEAD/upstream 与之不同时必须补对账。平台查询能力可用时，以平台最近 Delivery 为准并修正本地缓存；STATE 不是最终真值。
 
+IDE、人工或其它 Agent 直接 Commit 时，由项目 `post-commit` Hook 调用同一幂等 Delivery 协议。Hook 不阻塞 Commit；网络失败写入 `.cap/pending-deliveries.jsonl`，下次 `$cap` / `cap-status` 自动重试。知识快照存在时，最终验证回写还应携带 `knowledge_outcome`（直接采用、修改采用、未采用、拒绝）及可选原因，平台据此计算真实采纳与误导率。
+
 只有同时满足以下条件才调用 `request_docker_verification`：
 
 - 工作区干净；

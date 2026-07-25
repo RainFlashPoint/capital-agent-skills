@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readlink, symlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { checkPlatformConnection, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { checkPlatformConnection, checkPlatformHandshake, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -50,4 +50,10 @@ test('doctor probes an authenticated API route behind the public gateway', async
   assert.equal(request.url,'https://example.test/api/auth/heartbeat')
   assert.equal(request.options.method,'PUT')
   assert.equal(request.options.headers['x-user-key'],'user-key')
+})
+test('doctor handshake verifies write and commit reconcile capabilities', async () => {
+  let request
+  const result = await checkPlatformHandshake('https://example.test','user-key',async (url, options) => { request = { url, options }; return { ok: true, status: 200, json: async () => ({ data: { protocolVersion: 1, capabilities: { taskWrite: true, commitReconcile: true } } }) } })
+  assert.equal(result.ok,true)
+  assert.equal(request.url,'https://example.test/api/auth/handshake')
 })

@@ -5,7 +5,8 @@ import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { checkPlatformConnection, normalizeServerUrl } from './setup-lib.mjs'
+import { checkPlatformHandshake, normalizeServerUrl } from './setup-lib.mjs'
+import { flushPendingDeliveries } from './client-delivery.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
@@ -108,7 +109,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     spec: await exists(join(repo, '.cap/spec.md')),
     plan: await exists(join(repo, '.cap/plan.md')),
   }
-  const platform = offline ? null : Boolean(serverUrl && userKey && await checkPlatformConnection(serverUrl, userKey, fetchImpl))
+  const handshake = offline ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
+  const platform = offline ? null : Boolean(handshake?.ok)
+  const pendingDeliveries = gitRoot && !offline ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
   const next = resolveNextAction({ stateText, artifacts, dirty })
   const taskId = field(stateText, 'task-id')
   const sessionId = field(stateText, 'session-id')
@@ -132,7 +135,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       : platform === true
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
-    platform: { configured: Boolean(serverUrl && userKey), connected: platform, serverUrl: serverUrl || '' },
+    platform: { configured: Boolean(serverUrl && userKey), connected: platform, serverUrl: serverUrl || '', handshake, pendingDeliveries },
     repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty },
     task: { id: taskId, sessionId },
     reconciliation,
@@ -155,6 +158,7 @@ function render(result) {
     `下一步：${result.workflow.action}`,
     `原因：${result.workflow.reason}`,
     result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
+    result.platform.pendingDeliveries?.total ? `待发送补报：本次发送 ${result.platform.pendingDeliveries.sent}，剩余 ${result.platform.pendingDeliveries.pending}` : '',
     result.reasons.length ? `降级原因：${result.reasons.join(', ')}` : '',
   ].filter(Boolean).join('\n')
 }

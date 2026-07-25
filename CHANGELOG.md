@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 客户端 Doctor 升级为能力握手，验证身份、Task 写入、Commit 对账与 MCP 注册状态。
+- 项目治理新增兼容原 Hook 的 `post-commit` 自动补报；网络失败写入本地待发送队列，并在下一次 `$cap` 状态检查时自动重试。
+- Delivery 协议支持知识直接采用、修改采用、未采用与误导反馈，供平台计算真实采纳率。
+
+## Unreleased
+
 - 拆分代码交付与环境验证门禁：开发/测试分支允许在 `ENV_PENDING/ENV_BLOCKED` 时推送，受保护分支仍要求完整 verify/review gate。
 - `cap-status` 增加本地 HEAD、upstream HEAD 与 `delivery-head` 对账，自动暴露 IDEA、人工或其它 Agent 产生的未登记 Commit。
 - 已选择安装的 Capital Agent `pre-push` Hook 会在治理安装器运行时自动升级到最新门禁语义；非 Capital Agent Hook 不会被覆盖。

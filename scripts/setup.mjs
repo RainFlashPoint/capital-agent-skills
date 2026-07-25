@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
-import { checkPlatformConnection, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
+import { checkPlatformHandshake, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -22,9 +22,11 @@ function openBrowser(url) {
 }
 
 if (args.doctor) {
-  const health = await checkPlatformConnection(serverUrl,userKey)
-  process.stdout.write(`平台身份连接: ${health?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\nCodex CLI: ${commandExists('codex')?'PASS':'未安装'}\nClaude CLI: ${commandExists('claude')?'PASS':'未安装'}\n`)
-  if (!health) process.exitCode=1
+  const health = await checkPlatformHandshake(serverUrl,userKey)
+  const codexMcp = commandExists('codex') ? (() => { try { return /capital-agent/.test(execFileSync('codex',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
+  const claudeMcp = commandExists('claude') ? (() => { try { return /capital-agent/.test(execFileSync('claude',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
+  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nCodex MCP: ${codexMcp?'PASS':'未注册'}\nClaude MCP: ${claudeMcp?'PASS':'未注册'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n`)
+  if (!health.ok || (!codexMcp && !claudeMcp)) process.exitCode=1
   process.exit()
 }
 

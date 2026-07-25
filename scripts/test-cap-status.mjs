@@ -51,11 +51,11 @@ test('offline handshake exposes missing platform and task instead of silently su
   assert.ok(result.reasons.includes('task_not_attached'))
 })
 
-test('configured client without task reports platform ready after heartbeat', async () => {
+test('configured client without task reports platform ready after capability handshake', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-ready-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true })
   await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
-  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async () => ({ ok: true }) })
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ data: { protocolVersion: 1, capabilities: { taskWrite: true, commitReconcile: true } } }) }) })
   assert.equal(result.mode, 'platform_ready')
   assert.equal(result.platform.connected, true)
 })
