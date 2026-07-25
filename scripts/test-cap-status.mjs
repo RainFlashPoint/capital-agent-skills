@@ -69,6 +69,19 @@ test('failed direct probe waits for MCP confirmation instead of falsely claiming
   assert.ok(result.reasons.includes('platform_probe_failed_needs_mcp_confirmation'))
 })
 
+test('completed platform task overrides stale local test stage', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-done-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_1\nsession-id: session_1\nstage: test\nstatus: in-progress\n')
+  const fetchImpl = async url => url.endsWith('/api/auth/handshake')
+    ? { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    : { ok: true, status: 200, json: async () => ({ data: { id: 'task_1', status: 'done', currentStage: 'done', gates: { ready: true }, nextAction: { kind: 'complete' } } }) }
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl })
+  assert.equal(result.task.remoteStatus, 'done')
+  assert.equal(result.workflow.stage, 'done')
+})
+
 test('IDEA or manual commit after the last delivery is detected for platform reconciliation', () => {
   const result = reconcileRepositoryState({
     head: 'bbbbbbbb', upstreamHead: 'bbbbbbbb', deliveredHead: 'aaaaaaaa',

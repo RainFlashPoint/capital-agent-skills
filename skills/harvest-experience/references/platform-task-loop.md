@@ -70,6 +70,8 @@ date -u +%Y-%m-%dT%H:%M:%SZ
 
 IDE、人工或其它 Agent 直接 Commit 时，由项目 `post-commit` Hook 调用同一幂等 Delivery 协议。Hook 不阻塞 Commit；网络失败写入 `.cap/pending-deliveries.jsonl`，下次 `$cap` / `cap-status` 自动重试。知识快照存在时，最终验证回写还应携带 `knowledge_outcome`（直接采用、修改采用、未采用、拒绝）及可选原因，平台据此计算真实采纳与误导率。
 
+经验沉淀必须携带 `task_id + commit_sha`。权威 PASS 来自 Server 对同一 Task、同一 Commit 的 Gate 校验；Task 一旦达到 `done`，Server 同步把关联的活动 Skills Session 收口到 `done/finished`。本地 STATE 若仍停在测试或评审阶段，`cap-status` 以平台 Task 为权威提示退场，不再让用户误以为流程卡住。
+
 只有同时满足以下条件才调用 `request_docker_verification`：
 
 - 工作区干净；

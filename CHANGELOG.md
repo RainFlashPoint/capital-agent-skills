@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 经验沉淀携带 Task/Commit，由 Server 根据同 Commit Gate 自动生成可信验证判定；`cap-status` 读取平台 Task，避免本地 STATE 陈旧时仍显示“测试验证”。
 - 客户端 Doctor 升级为能力握手，验证身份、Task 写入、Commit 对账与 MCP 注册状态。
 - 项目治理新增兼容原 Hook 的 `post-commit` 自动补报；网络失败写入本地待发送队列，并在下一次 `$cap` 状态检查时自动重试。
 - Delivery 协议支持知识直接采用、修改采用、未采用与误导反馈，供平台计算真实采纳率。

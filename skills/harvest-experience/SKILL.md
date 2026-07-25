@@ -39,6 +39,8 @@ git diff --name-only HEAD    # 未提交改动
 
 然后调用 MCP 工具 `record_experience`：
 
+若当前 `.cap/STATE.md` 有 `task-id`，同时传 `task_id` 和本轮 `commit_sha`。Server 会核验该 Task 是否由同一 Commit 的测试、Review、安全与交付 Gate 收口，并据此生成可信的 `verify_verdict/review_verdict`；客户端不得脱离 Task 证据自行伪造 PASS。只有旧 Server 不支持这两个字段时，才退回显式 verdict。
+
 **核心字段(必填)**：
 - `intent`: 本次会话的意图/需求。**优先用你对本次会话的总结**（比 commit message 信息量大）；若要用 commit message，先确认它不是 "fix bug" 这类空话，否则用总结。
 - `changed_files`: 上一步 `git diff --name-only` 得到的文件路径数组（**只传路径，绝不传代码内容**）

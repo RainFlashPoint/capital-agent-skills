@@ -31,6 +31,15 @@ function nextFromState(markdown = '') {
 async function exists(path = '') { try { return (await stat(path)).isFile() } catch { return false } }
 function git(repo, args) { try { return text(execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })) } catch { return '' } }
 function gitSucceeds(repo, args) { try { execFileSync('git', args, { cwd: repo, stdio: 'ignore' }); return true } catch { return false } }
+async function fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) {
+  if (!serverUrl || !userKey || !taskId) return null
+  try {
+    const response = await fetchImpl(`${serverUrl}/api/tasks/${encodeURIComponent(taskId)}`, { headers: { 'x-user-key': userKey } })
+    if (!response.ok) return null
+    const body = await response.json()
+    return body.data || null
+  } catch { return null }
+}
 
 export function reconcileRepositoryState({ head = '', upstreamHead = '', deliveredHead = '', stateHead = '', commits = [] } = {}) {
   const recordedHead = deliveredHead || stateHead
@@ -104,6 +113,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const dirty = Boolean(git(repo, ['status', '--porcelain']))
   const statePath = join(repo, '.cap/STATE.md')
   const stateText = await readFile(statePath, 'utf8').catch(() => '')
+  const taskId = field(stateText, 'task-id')
+  const sessionId = field(stateText, 'session-id')
   const artifacts = {
     profile: await exists(join(repo, '.cap/PROFILE.md')),
     spec: await exists(join(repo, '.cap/spec.md')),
@@ -111,10 +122,12 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   }
   const handshake = offline ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
   const platform = offline ? null : Boolean(handshake?.ok)
+  const remoteTask = platform ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
   const pendingDeliveries = gitRoot && !offline ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
-  const next = resolveNextAction({ stateText, artifacts, dirty })
-  const taskId = field(stateText, 'task-id')
-  const sessionId = field(stateText, 'session-id')
+  const localNext = resolveNextAction({ stateText, artifacts, dirty })
+  const next = remoteTask?.status === 'done'
+    ? { stage: 'done', action: '归档并沉淀经验', reason: '平台 Task 的同 Commit 交付门禁已全部通过' }
+    : localNext
   const deliveredHead = field(stateText, 'delivery-head')
   const stateHead = field(stateText, 'head') || field(stateText, 'task-context').match(/@\s*([0-9a-f]{7,40})/i)?.[1] || ''
   const compareBase = deliveredHead || stateHead
@@ -137,7 +150,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
     platform: { configured: Boolean(serverUrl && userKey), connected: platform, serverUrl: serverUrl || '', handshake, pendingDeliveries },
     repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty },
-    task: { id: taskId, sessionId },
+    task: { id: taskId, sessionId, remoteStatus: remoteTask?.status || '', remoteStage: remoteTask?.currentStage || '', gatesReady: remoteTask?.gates?.ready === true, nextAction: remoteTask?.nextAction || null },
     reconciliation,
     workflow: { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
     reasons,
@@ -154,6 +167,7 @@ function render(result) {
     `仓库：${result.repository.remote || result.repository.root}`,
     `分支：${result.repository.branch || '-'}`,
     `Task：${task}`,
+    result.task.remoteStatus ? `平台 Task：${result.task.remoteStatus}${result.task.gatesReady ? ' · Gate 已通过' : ''}` : '',
     `当前：${stageLabel(result.workflow.currentStage || result.workflow.stage)}`,
     `下一步：${result.workflow.action}`,
     `原因：${result.workflow.reason}`,
