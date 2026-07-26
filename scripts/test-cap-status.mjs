@@ -82,6 +82,37 @@ test('completed platform task overrides stale local test stage', async () => {
   assert.equal(result.workflow.stage, 'done')
 })
 
+test('completed parent task hands a new session to its active follow-up task', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-follow-up-'))
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_parent\nsession-id: session_parent\nstage: test\nstatus: gated\n')
+  const fetchImpl = async url => {
+    if (url.endsWith('/api/auth/handshake')) return { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    if (url.endsWith('/api/tasks/task_parent')) return { ok: true, status: 200, json: async () => ({ data: {
+      id: 'task_parent', status: 'done', currentStage: 'done', gates: { ready: true },
+      nextAction: { kind: 'follow_up', taskId: 'task_bill' },
+      relatedTasks: [{ id: 'task_bill', status: 'active', relationType: 'follow_up' }],
+    } }) }
+    if (url.endsWith('/api/tasks/task_bill')) return { ok: true, status: 200, json: async () => ({ data: {
+      id: 'task_bill', status: 'active', currentStage: 'define', gates: { ready: false }, baseCommit: head,
+      nextAction: { kind: 'gate', gate: 'quality', label: '完成质量验证' },
+      executionMode: 'verify_only', verificationCommands: ['verify bill'],
+    } }) }
+    throw new Error(`unexpected url: ${url}`)
+  }
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl })
+  assert.equal(result.task.id, 'task_bill')
+  assert.equal(result.task.previousId, 'task_parent')
+  assert.equal(result.task.sessionId, '')
+  assert.equal(result.task.requiresNewSession, true)
+  assert.equal(result.task.remoteStatus, 'active')
+  assert.equal(result.workflow.stage, 'test')
+  assert.equal(result.workflow.action, '完成质量验证')
+  assert.equal(result.reconciliation.needsDeliveryReconciliation, false)
+})
+
 test('IDEA or manual commit after the last delivery is detected for platform reconciliation', () => {
   const result = reconcileRepositoryState({
     head: 'bbbbbbbb', upstreamHead: 'bbbbbbbb', deliveredHead: 'aaaaaaaa',

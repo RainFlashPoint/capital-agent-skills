@@ -41,6 +41,28 @@ async function fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) {
   } catch { return null }
 }
 
+function activeFollowUpId(task = {}) {
+  if (task?.status !== 'done') return ''
+  const nextId = text(task?.nextAction?.taskId)
+  if (nextId) return nextId
+  const related = Array.isArray(task?.relatedTasks) ? task.relatedTasks : []
+  return text(related.find(item => item?.relationType === 'follow_up' && item?.status !== 'done')?.id)
+}
+
+function nextFromPlatformTask(task = {}, fallback = {}) {
+  const action = task?.nextAction || {}
+  const executionMode = text(task?.executionMode || task?.taskContract?.executionMode)
+  const stage = executionMode === 'verify_only' ? 'test' : canonicalStage(task?.currentStage) || fallback.stage || 'test'
+  if (action.kind === 'action' && action.actionId) {
+    const actionStage = action.actionType === 'review' ? 'review' : action.actionType === 'verify' ? 'test' : stage
+    return { stage: actionStage, action: text(action.label) || '认领平台待执行动作', reason: `平台 Action ${text(action.actionStatus) || 'ready'}`, platformAction: action }
+  }
+  if (action.kind === 'gate' && action.label) {
+    return { stage, action: text(action.label), reason: `平台 follow-up Task 等待 ${text(action.gate) || '下一门禁'}` }
+  }
+  return fallback
+}
+
 export function reconcileRepositoryState({ head = '', upstreamHead = '', deliveredHead = '', stateHead = '', commits = [] } = {}) {
   const recordedHead = deliveredHead || stateHead
   const localUnrecorded = Boolean(head && recordedHead && head !== recordedHead)
@@ -122,13 +144,20 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   }
   const handshake = offline ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
   const platform = offline ? null : Boolean(handshake?.ok)
-  const remoteTask = platform ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
+  const stateTask = platform ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
+  const followUpTaskId = activeFollowUpId(stateTask)
+  const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
+  const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
+  const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
   const pendingDeliveries = gitRoot && !offline ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
   const localNext = resolveNextAction({ stateText, artifacts, dirty })
-  const next = remoteTask?.status === 'done'
+  const next = switchingTask
+    ? nextFromPlatformTask(remoteTask, localNext)
+    : remoteTask?.status === 'done'
     ? { stage: 'done', action: '归档并沉淀经验', reason: '平台 Task 的同 Commit 交付门禁已全部通过' }
-    : localNext
-  const deliveredHead = field(stateText, 'delivery-head')
+    : nextFromPlatformTask(remoteTask, localNext)
+  const followUpBaseCommit = switchingTask ? text(remoteTask?.baseCommit || remoteTask?.taskContract?.baseCommit) : ''
+  const deliveredHead = followUpBaseCommit || field(stateText, 'delivery-head')
   const stateHead = field(stateText, 'head') || field(stateText, 'task-context').match(/@\s*([0-9a-f]{7,40})/i)?.[1] || ''
   const compareBase = deliveredHead || stateHead
   const commits = compareBase && gitSucceeds(repo, ['cat-file', '-e', `${compareBase}^{commit}`])
@@ -150,7 +179,19 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
     platform: { configured: Boolean(serverUrl && userKey), connected: platform, serverUrl: serverUrl || '', handshake, pendingDeliveries },
     repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty },
-    task: { id: taskId, sessionId, remoteStatus: remoteTask?.status || '', remoteStage: remoteTask?.currentStage || '', gatesReady: remoteTask?.gates?.ready === true, nextAction: remoteTask?.nextAction || null },
+    task: {
+      id: remoteTask?.id || taskId,
+      previousId: switchingTask ? taskId : '',
+      sessionId: switchingTask ? '' : sessionId,
+      previousSessionId: switchingTask ? sessionId : '',
+      requiresNewSession: switchingTask,
+      remoteStatus: remoteTask?.status || '',
+      remoteStage: remoteTask?.currentStage || '',
+      gatesReady: remoteTask?.gates?.ready === true,
+      nextAction: remoteTask?.nextAction || null,
+      executionMode: remoteTask?.executionMode || remoteTask?.taskContract?.executionMode || '',
+      verificationCommands: remoteTask?.verificationCommands || remoteTask?.taskContract?.verificationCommands || [],
+    },
     reconciliation,
     workflow: { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
     reasons,
@@ -167,6 +208,7 @@ function render(result) {
     `仓库：${result.repository.remote || result.repository.root}`,
     `分支：${result.repository.branch || '-'}`,
     `Task：${task}`,
+    result.task.requiresNewSession ? `任务接续：${result.task.previousId} → ${result.task.id}（必须新建 Session）` : '',
     result.task.remoteStatus ? `平台 Task：${result.task.remoteStatus}${result.task.gatesReady ? ' · Gate 已通过' : ''}` : '',
     `当前：${stageLabel(result.workflow.currentStage || result.workflow.stage)}`,
     `下一步：${result.workflow.action}`,

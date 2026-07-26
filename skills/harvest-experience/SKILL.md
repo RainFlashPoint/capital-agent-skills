@@ -16,7 +16,7 @@ allowed-tools:
 
 若当前目录属于 Git 仓库，开始实质工作前静默运行仓库自带的 `scripts/install-git-governance.mjs`（从本 skill 所属 package 根定位）。它幂等安装 `prepare-commit-msg`，保留并先执行项目原 Hook，把 `.cap/STATE.md` 中有效的 Task/Session 自动追加到 Commit，并在代码提交时检查 `.cap` 研发产物没有被遗漏或本地 exclude；安装失败时降级，不阻塞编码。不要要求用户手工安装或理解 Hook。
 
-若 MCP 提供 `create_or_attach_task`，优先按 `references/platform-task-loop.md` 创建/复用统一 Task；把返回的 `task_id`、`session_id` 写入 `.cap/STATE.md`。仅当该工具不存在时才退回 `start_skill_session`。工具不可用时降级为原有流程，不阻塞编码。
+若 MCP 提供 `create_or_attach_task`，优先按 `references/platform-task-loop.md` 创建/复用统一 Task；把返回的 `task_id`、`session_id` 写入 `.cap/STATE.md`。当 `cap-status` 已解析出活动 follow-up Task 时，必须切换到该 Task 并新建 Session，不能沿用已结束父 Task 的 session_id。仅当该工具不存在时才退回 `start_skill_session`。工具不可用时降级为原有流程，不阻塞编码。
 
 在开始实质编码前，用本次任务的意图调用一次 MCP 工具 `enrich_context`：
 

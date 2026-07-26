@@ -6,9 +6,19 @@
 
 1. 读取 `git remote get-url origin`、当前 branch、`git rev-parse HEAD`、upstream HEAD 和仓库根目录。
 2. 运行 `cap-status.mjs <repo> --json` 对账当前本地 HEAD、upstream/远端跟踪 HEAD 与 STATE 的 `delivery-head`，再通过 MCP 确认平台最近 Delivery。若本地或远端存在未登记 Commit（包括 IDEA、人工或其它 Agent 提交），按提交顺序收集 Commit SHA 与改动路径并补调用 `record_task_delivery`；不得要求原 Codex 会话仍然存活。平台没有 Delivery 查询工具时，幂等重报当前 HEAD，由服务端去重。
-3. 调用 `create_or_attach_task`，传需求原文、repo、branch、base commit、leaf、worktree 和稳定幂等键。
-4. 把返回的 `task_id`、`session_id`、Skill/知识快照 ID 写入 `.cap/STATE.md` 顶层元数据。
-5. 后续 `enrich_context`、`record_skill_event`、`record_experience` 始终复用同一 repo URL 和 session ID。
+3. 若 `cap-status.task.requiresNewSession=true`，说明 STATE 指向的父 Task 已完成、平台已给出活动 follow-up Task：调用 `create_or_attach_task` 时显式传 `task_id=cap-status.task.id`，省略旧 `session_id`，并用本轮意图生成新的稳定幂等键。否则按常规创建/复用 Task。两种情况都传需求原文、repo、branch、base commit、leaf、worktree。
+4. follow-up 必须重新计算并传入本轮 `verification_commands`；禁止照搬父 Task 的接口、测试或发布命令。平台返回新 Session 后，旧 session-id 仅作历史记录，不得继续写事件。
+5. 把返回的 `task_id`、`session_id`、Skill/知识快照 ID 写入 `.cap/STATE.md` 顶层元数据，覆盖父 Task/Session 指针。
+6. 后续 `enrich_context`、`record_skill_event`、`record_experience` 始终复用同一 repo URL 和新 session ID。
+
+## 平台 Action 接力
+
+Task 绑定完成后，如果 MCP 暴露 `claim_task_action`，立即用同一 `repo_url`、当前 branch 和本地 runner 标识查询。返回 `claimed=false` 才走普通 STATE；返回 Action 时不得让用户重新描述需求：
+
+- `review`：针对 Action 的 `commitSha` 执行代码评审，完成后调用 `complete_task_action`，回写 `review.verdict` 与 findings 摘要。
+- `verify`：执行 Task 约定的验证命令/质量资产，完成后回写顶层 `verification.status`，可附带各子检查。
+- Action 失败必须回写 `ok=false + note`，平台保留失败状态并请求人工处理；不得静默丢单。
+- `complete_task_action` 的返回值是下一步权威源。若 Server 自动生成下一 Action，同一会话继续认领；若 Task `done`，再执行经验沉淀与退场。
 
 ## Artifact 元数据
 

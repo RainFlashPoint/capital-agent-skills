@@ -4,6 +4,8 @@ import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
+import { randomUUID } from 'crypto'
+import { hostname } from 'os'
 import { checkPlatformHandshake, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
@@ -12,6 +14,8 @@ const existing = await readFile(configFile, 'utf8').catch(() => '')
 const config = Object.fromEntries(existing.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1],match[2]]))
 let serverUrl = normalizeServerUrl(args.server || process.env.CAPITAL_AGENT_SERVER_URL || config.CAPITAL_AGENT_SERVER_URL || '')
 let userKey = String(process.env.CAPITAL_AGENT_USER_KEY || config.CAPITAL_AGENT_USER_KEY || '').trim()
+let clientId = String(process.env.CAPITAL_AGENT_CLIENT_ID || config.CAPITAL_AGENT_CLIENT_ID || '').trim()
+if (!clientId) clientId = `client_${randomUUID()}`
 
 function commandExists(command) { try { execFileSync(command,['--version'],{stdio:'ignore'}); return true } catch { return false } }
 function run(command, values, options={}) { return execFileSync(command,values,{stdio:'inherit',...options}) }
@@ -22,7 +26,7 @@ function openBrowser(url) {
 }
 
 if (args.doctor) {
-  const health = await checkPlatformHandshake(serverUrl,userKey)
+  const health = await checkPlatformHandshake(serverUrl,userKey,fetch,{clientId,clientName:hostname(),clientVersion:'setup',mcpReachable:true,capabilities:{doctor:true}})
   const codexMcp = commandExists('codex') ? (() => { try { return /capital-agent/.test(execFileSync('codex',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
   const claudeMcp = commandExists('claude') ? (() => { try { return /capital-agent/.test(execFileSync('claude',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
   process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nCodex MCP: ${codexMcp?'PASS':'未注册'}\nClaude MCP: ${claudeMcp?'PASS':'未注册'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n`)
@@ -39,7 +43,7 @@ if (!userKey) {
   userKey = await pollDeviceAuthorization(serverUrl,data.deviceSecret,{expiresIn:data.expiresIn,interval:data.interval})
 }
 if (/\r|\n/.test(serverUrl) || /\r|\n/.test(userKey)) throw new Error('平台配置不能包含换行符')
-await mkdir(configDir,{recursive:true,mode:0o700}); await writeFile(configFile,`CAPITAL_AGENT_SERVER_URL=${serverUrl}\nCAPITAL_AGENT_USER_KEY=${userKey}\n`,{mode:0o600}); await chmod(configFile,0o600)
+await mkdir(configDir,{recursive:true,mode:0o700}); await writeFile(configFile,`CAPITAL_AGENT_SERVER_URL=${serverUrl}\nCAPITAL_AGENT_USER_KEY=${userKey}\nCAPITAL_AGENT_CLIENT_ID=${clientId}\n`,{mode:0o600}); await chmod(configFile,0o600)
 
 const installed = []
 const targets = skillTargets(homedir())

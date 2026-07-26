@@ -26,12 +26,14 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 用户显式调用 `$cap` 后：
 
 1. 先运行 package 根的 `scripts/cap-status.mjs <target-repo> --json`，获得 Git、平台配置、Task 和确定性下一动作。
-2. 若 MCP 提供 `create_or_attach_task`，立即创建/复用 Task 并写回 `.cap/STATE.md`；随后重跑 `cap-status.mjs`。若工具缺失或调用失败，必须明确报告 `仅本地执行 + 原因 + 影响 + 修复命令`，禁止静默降级。
-3. 若状态包含 `git_delivery_reconciliation_needed`，立即扫描 `delivery-head..HEAD`；对 IDEA、人工或其它 Agent 产生的 Commit 幂等补调用 `record_task_delivery`。平台没有 Delivery 查询工具时也要重报当前 HEAD，由平台幂等去重，不能依赖原编码会话仍然存在。
-4. 用统一“客户端握手快报”告诉用户平台连接、仓库、分支、Task、当前阶段和下一步；不得先写规格或代码再补报。
-5. 调用中心知识层注入与本需求相关的历史经验。
-6. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
-7. 会话结束时沉淀意图与改动文件路径，并维护统一 Task/Skills Session。
+2. 若 MCP 提供 `create_or_attach_task`，立即创建/复用 Task 并写回 `.cap/STATE.md`；随后重跑 `cap-status.mjs`。若 `cap-status` 返回 `task.requiresNewSession=true`，说明已完成父 Task 存在活动 follow-up：必须把 `task.id` 作为显式 `task_id` 绑定，**不得传旧 session_id**，让平台为 follow-up 创建新 Skills Session；同时按本轮需求重新传 `verification_commands`，不得继承父 Task 的验证命令。若工具缺失或调用失败，必须明确报告 `仅本地执行 + 原因 + 影响 + 修复命令`，禁止静默降级。
+3. 若 MCP 提供 `claim_task_action`，在创建/绑定 Task 后立即按当前 `repo_url + branch` 查询并认领平台 Action。命中后以返回的 `task_id/action_id/commit_sha` 为本轮权威上下文，不重复询问需求：`review→代码评审`、`verify→测试验证`、`implement→编码实现`。没有 Action 才继续 STATE 的常规路由。
+4. 若状态包含 `git_delivery_reconciliation_needed`，立即扫描 `delivery-head..HEAD`；对 IDEA、人工或其它 Agent 产生的 Commit 幂等补调用 `record_task_delivery`。平台没有 Delivery 查询工具时也要重报当前 HEAD，由平台幂等去重，不能依赖原编码会话仍然存在。
+5. 用统一“客户端握手快报”告诉用户平台连接、仓库、分支、Task、当前阶段、已认领 Action 和下一步；不得先写规格或代码再补报。
+6. 调用中心知识层注入与本需求相关的历史经验。
+7. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
+8. Action 阶段完成后必须调用 `complete_task_action` 回写结构化结果：Review 至少传 `review.verdict=pass|needs_changes|reject`；验证至少传 `verification.status=PASS|FAILED`。不得只写本地报告。Server 返回下一 Action 时在同一会话继续；返回 Task `done` 才进入经验沉淀。
+9. 会话结束时沉淀意图与改动文件路径，并维护统一 Task/Skills Session。
 
 握手成功示例：
 

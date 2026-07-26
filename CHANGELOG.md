@@ -1,5 +1,8 @@
 # Changelog
 
+- 修复已完成父 Task 的后续任务接续：`cap-status` 自动解析活动 follow-up Task，强制新建 Skills Session、按本轮刷新验证命令，并避免把父 Task 的最后 Commit 误补报到 follow-up。
+- `$cap` 握手新增平台 Action 接力：按仓库/分支自动认领 Review 或验证工作项，完成后回写统一证据并由 Server 自动重算 Gate，不再停在“等待 Review”。
+
 ## Unreleased
 
 - 经验沉淀携带 Task/Commit，由 Server 根据同 Commit Gate 自动生成可信验证判定；`cap-status` 读取平台 Task，避免本地 STATE 陈旧时仍显示“测试验证”。

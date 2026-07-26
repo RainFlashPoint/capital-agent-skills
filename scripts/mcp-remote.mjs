@@ -13,11 +13,19 @@ function localConfig() {
 const config = localConfig()
 const serverUrl = String(process.env.CAPITAL_AGENT_SERVER_URL || config.CAPITAL_AGENT_SERVER_URL || '').trim().replace(/\/+$/, '')
 const userKey = String(process.env.CAPITAL_AGENT_USER_KEY || config.CAPITAL_AGENT_USER_KEY || '').trim()
+const clientId = String(process.env.CAPITAL_AGENT_CLIENT_ID || config.CAPITAL_AGENT_CLIENT_ID || '').trim()
 
 if (!serverUrl || !userKey) {
   process.stderr.write('缺少 CAPITAL_AGENT_SERVER_URL 或 CAPITAL_AGENT_USER_KEY。请只在研发本机环境变量中配置，不要写入项目仓库。\n')
   process.exit(1)
 }
+
+await fetch(`${serverUrl}/api/auth/handshake`, {
+  method: 'PUT',
+  headers: { 'x-user-key': userKey, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ clientId, clientName: 'mcp-remote', clientVersion: '1', mcpReachable: true, capabilities: { transport: 'stdio-remote' } }),
+  signal: AbortSignal.timeout(5000),
+}).catch(() => null)
 
 const command = process.platform === 'win32' ? 'npx.cmd' : 'npx'
 const child = spawn(command, ['-y', 'mcp-remote', `${serverUrl}/api/mcp/message`, '--header', `x-user-key:${userKey}`], { stdio: 'inherit', env: process.env })

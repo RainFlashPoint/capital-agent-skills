@@ -77,10 +77,10 @@ export async function checkPlatformConnection(serverUrl, userKey, fetchImpl = fe
   } catch { return false }
 }
 
-export async function checkPlatformHandshake(serverUrl, userKey, fetchImpl = fetch) {
+export async function checkPlatformHandshake(serverUrl, userKey, fetchImpl = fetch, client = {}) {
   if (!serverUrl || !userKey) return { ok: false, reason: 'missing_config' }
   try {
-    const response = await fetchImpl(`${serverUrl}/api/auth/handshake`, { method: 'PUT', headers: { 'x-user-key': userKey } })
+    const response = await fetchImpl(`${serverUrl}/api/auth/handshake`, { method: 'PUT', headers: { 'x-user-key': userKey, 'Content-Type': 'application/json' }, body: JSON.stringify(client && typeof client === 'object' ? client : {}) })
     const body = await response.json().catch(() => ({}))
     const data = body.data || {}
     return { ok: response.ok && data.capabilities?.taskWrite === true && data.capabilities?.commitReconcile === true, status: response.status, ...data }
