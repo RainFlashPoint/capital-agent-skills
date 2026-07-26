@@ -99,7 +99,7 @@ description: >
    - 每个改动 path:先查 PROFILE.surface-map,命中则并入其 roles + checks;未命中则按 routing 表匹配,
      可命中多行取并集。
    - **兜底**:任意 diff → 必加 `qa`(baseline);触及敏感面(auth / 支付 / 密钥 / 用户数据 / 外部输入 /
-     原始 SQL / 文件系统)→ 叠加 **security 视角**(由 server-dev / qa 卡的 security 子节 + 本阶段 §Step 5
+     原始 SQL / 文件系统 / 外部系统与环境配置)→ 叠加 **security 视角**(由 server-dev / qa 卡的 security 子节 + 本阶段 §Step 5
      安全 10 域承载)。
 3. 去重 → 得到 **active roles**(本次要加载哪些 `roles/*.md`)。
 4. **漂移检测**:若有改动 path 既不命中 PROFILE 也不命中路由表,或命中路由但 PROFILE 查无此 surface →
@@ -237,6 +237,8 @@ findings。并行或串行见 §0.2。每个角色把自己的 findings 写进 `
 8. **CSRF / 状态变更**(状态变更端点的防护)
 9. **速率限制 / 滥用**(端点限流 / 防爆破)
 10. **依赖 / 配置**(已知漏洞依赖 / 不安全默认配置 / 调试开关)
+
+若改动能够调用外部系统或决定其目标环境，同时逐条执行 `cap-flow/references/roles/server-dev.md § External Integration Safety Invariants`；任一项不满足都属于 open 安全项，不得以“只是测试环境”为由放行。
 
 **5b. verify-mitigation-exists(非盲扫)**:若 `.cap/spec.md` 或 plan 里有威胁模型 / 缓解声明,**逐条验缓解是否
 真在代码里**(grep 缓解模式于其声明文件),而不是从头瞎扫新漏洞。

@@ -73,6 +73,18 @@ grep -q 'External operation boundary' "$REF/task-reconnaissance.md" || err "task
 grep -q 'External operation authorization' "$REF/templates/STATE.md" || err "STATE 未跨会话保存授权边界"
 ok "进度与代码侦察协议检查完成"
 
+echo "== 4.4 external integration safety invariants =="
+SERVER_ROLE="$REF/roles/server-dev.md"
+for invariant in '环境选择 fail-closed' '配置值保持真实作用域' '真实外部调用必须显式启用' '新配置默认不产生业务流量'; do
+  grep -q "$invariant" "$SERVER_ROLE" || err "server-dev 缺少外部集成不变量: $invariant"
+done
+grep -q 'External Integration Safety Invariants' "$ROOT/cap-implement/SKILL.md" || err "cap-implement 未加载外部集成安全不变量"
+grep -q 'External Integration Safety Invariants' "$ROOT/cap-review/SKILL.md" || err "cap-review 未加载外部集成安全不变量"
+for project_term in pay_channel_account PayApproach Descriptor bizTp '002/016' 汇付 中金; do
+  if grep -q "$project_term" "$SERVER_ROLE"; then err "通用 server-dev 混入项目特有字段: $project_term"; fi
+done
+ok "外部集成安全不变量与分层检查完成"
+
 echo "== 5. 可移植自检:流程 skill 不得硬依赖 Claude 专属工具 =="
 for f in "$ROOT"/*/SKILL.md; do
   # 允许出现在"降级/不依赖"语境;这里只粗查是否完全没提降级却硬用 AskUserQuestion

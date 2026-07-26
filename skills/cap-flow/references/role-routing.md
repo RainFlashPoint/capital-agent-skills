@@ -45,7 +45,7 @@
        ≥2 类 或 全链路 journey → 并入 architect 视角（看接缝：全链路数据结构对齐 /
        跨边界契约 / 单一事实源 / blast-radius）。
      - B1：任意 diff → 并入 qa（baseline）+ logic。
-     - B2：触及敏感面（auth/支付/密钥/用户数据/外部输入/SQL/文件系统）→ 并入 security 视角。
+     - B2：触及敏感面（auth/支付/密钥/用户数据/外部输入/SQL/文件系统/外部系统与环境配置）→ 并入 security 视角。
 
 5. 去重 roles、去重 checks。journey 的子模态（Web/OpenAPI/App）分别保留。
 
@@ -82,7 +82,7 @@
 | **R9** | `CLAUDE.md` · `AGENTS.md` · `.claude/**` · `justfile` · `Makefile` · `tsconfig.json` · `.github/**`（AI-上下文 / 构建工具配置） | **+ ai-readiness** | logic | 动了"代码库对 agent 的友好度"相关文件 → 加载 ai-readiness 视角（别把级联 CLAUDE.md/scoped 命令改坏）。注：map 体检与"遗留改造 feature"也加载本卡（非 diff 驱动） |
 | **R10（meta：改技能体系自身）** | `skills/**` · `**/SKILL.md` · `skills/cap-flow/references/**` · `.claude-plugin/**`（改动落在 **cap-* 技能族自身**，而非某目标项目的业务代码） | **+ skill-maintainer** | logic（= `bash scripts/validate-skills`） | 编辑这套技能族自己时加载维护者透镜：防臃肿（不新增顶层 skill）/ additive 合并 / 防孤儿 / 溯源 / 可移植 / semver / 自我修改安全。**小改走 `/cap evolve`（append-only），结构性大改走完整 `/cap`**（见 `evolve-loop.md` §1 的 guard）。本规则只在被改仓即 capital-agent-skills 时成立 |
 | **兜底 B1** | 任意 diff（每次都加） | **qa（baseline）** | **logic** | 永远至少跑逻辑正确性 + QA 基线视角 |
-| **兜底 B2** | 触及敏感面：`**/auth/**` · `**/*login*` · `**/*payment*` · `**/*billing*` · `**/secrets/**` · `**/*credential*` · 含原始 SQL 拼接 · 文件系统/外部输入处理 | **+ security 视角**（由 server-dev/qa 卡的 security 子节承载，v1 不单列 security 角色卡） | logic | 安全敏感面叠加 security 检查清单（见 cap-review 安全 10 域） |
+| **兜底 B2** | 触及敏感面：`**/auth/**` · `**/*login*` · `**/*payment*` · `**/*billing*` · `**/secrets/**` · `**/*credential*` · 外部系统客户端/端点/环境选择配置 · 含原始 SQL 拼接 · 文件系统/外部输入处理 | **+ security 视角**（由 server-dev/qa 卡的 security 子节承载，v1 不单列 security 角色卡） | logic | 安全敏感面叠加 security 检查清单；外部集成同时应用 server-dev 的四条安全不变量 |
 
 ---
 

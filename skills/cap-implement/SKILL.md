@@ -124,7 +124,7 @@ git -C <repo> status --porcelain           # 含 untracked
 通用规则;③ 取并集。基线始终叠加:
 
 - 任意 diff → `qa`(baseline 角色) + `logic`(baseline 验证项)。
-- 触及敏感面(auth / 支付 / 密钥 / 用户数据 / 原始 SQL / 文件系统 / 外部输入)→ 追加 `security` 视角。
+- 触及敏感面(auth / 支付 / 密钥 / 用户数据 / 原始 SQL / 文件系统 / 外部输入 / 外部系统与环境配置)→ 追加 `security` 视角；涉及外部集成时必须应用 `server-dev.md § External Integration Safety Invariants`。
 - 触及 AI / 模型 / 策略 / prompt / evals → 标记 `model` 验证项(本阶段不跑,留给 verify;但实现时按 eval 视角写)。
 
 ### 2.3 装载角色卡为"实现视角"
