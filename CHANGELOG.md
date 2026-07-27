@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5
+
+- 新增 Cursor 一键适配：安装唯一 `cap` Skill、注册固定 MCP Runtime，并写入 always-on 研发规则；真实 Git 研发请求自动创建或绑定 Task，纯问答不上传。
+- Cursor MCP 配置采用幂等 JSON 合并，只维护 `capital-agent` 条目，保留已有顶层字段和其它 MCP Server；配置损坏时 fail-closed，不覆盖原文件。
+- Doctor 增加 `Cursor MCP` 与 `Cursor 自动进入 Cap` 真实配置检查。
+
 ## Unreleased
 
 - Codex MCP 注册改为幂等维护 `~/.codex/config.toml` 受管理区块，不再要求 Codex Desktop 用户额外安装或暴露 `codex` CLI；保留其它 MCP 与个人配置。

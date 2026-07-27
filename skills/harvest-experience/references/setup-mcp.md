@@ -12,7 +12,7 @@
 node /path/to/capital-agent-skills/scripts/setup.mjs --server "https://your-capital-agent-server"
 ```
 
-安装器会打开平台登录授权页，将凭证保存到研发机的 `~/.config/capital-agent/env`（0600），并自动安装 Codex/Claude Skills、注册 MCP。下面的环境变量方式保留给 CI 与无浏览器环境。
+安装器会打开平台登录授权页，将凭证保存到研发机的 `~/.config/capital-agent/env`（0600），并自动安装 Codex、Claude Code、Cursor Skills 与 MCP。下面的环境变量方式保留给 CI 与无浏览器环境。
 
 只在研发本机设置，不要写入业务仓库：
 
@@ -37,7 +37,9 @@ claude mcp add capital-agent -- node /path/to/capital-agent-skills/scripts/mcp-r
 
 启动器在运行时读取 `CAPITAL_AGENT_SERVER_URL` 和 `CAPITAL_AGENT_USER_KEY`。开源仓库、MCP 配置和业务代码均不包含真实平台地址或身份。
 
-也可以运行一次 `scripts/setup.mjs` 自动保存为 `~/.config/capital-agent/env`（权限 `0600`）并注册 Codex/Claude。该文件只在研发本机，不属于任何 Git 仓库。
+也可以运行一次 `scripts/setup.mjs` 自动保存为 `~/.config/capital-agent/env`（权限 `0600`）并注册 Codex、Claude Code 与 Cursor。该文件只在研发本机，不属于任何 Git 仓库。
+
+Cursor 使用 `~/.cursor/mcp.json` 的 `mcpServers.capital-agent` 条目，并通过 `~/.cursor/rules/capital-agent.mdc` 自动识别真实 Git 研发请求。安装器只幂等维护自己的 MCP 条目和规则文件，不覆盖其它 Cursor MCP Server 或个人规则；安装或升级后需完全退出并重新打开 Cursor。
 
 ## 方式 B：直接配置远程 HTTP
 

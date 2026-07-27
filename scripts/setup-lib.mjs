@@ -1,5 +1,5 @@
 import { chmod, copyFile, lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'fs/promises'
-import { basename, join } from 'path'
+import { basename, dirname, join } from 'path'
 
 export const publicSkillNames = ['cap']
 export const legacySkillNames = ['cap-map', 'cap-shape', 'cap-build', 'cap-verify']
@@ -9,9 +9,10 @@ export function parseSetupArgs(argv = []) {
   return { server: value('--server'), project: argv.includes('--project'), doctor: argv.includes('--doctor'), upgrade: argv.includes('--upgrade'), configOnly: argv.includes('--config-only'), codexOnly: argv.includes('--codex-only'), claudeOnly: argv.includes('--claude-only') }
 }
 
-export const skillTargets = home => ({ codex: join(home, '.agents/skills'), claude: join(home, '.claude/skills') })
-export const activationRuleTargets = home => ({ codex: join(home, '.codex', 'AGENTS.md'), claude: join(home, '.claude', 'CLAUDE.md') })
+export const skillTargets = home => ({ codex: join(home, '.agents/skills'), claude: join(home, '.claude/skills'), cursor: join(home, '.cursor/skills') })
+export const activationRuleTargets = home => ({ codex: join(home, '.codex', 'AGENTS.md'), claude: join(home, '.claude', 'CLAUDE.md'), cursor: join(home, '.cursor', 'rules', 'capital-agent.mdc') })
 export const codexConfigPath = home => join(home, '.codex', 'config.toml')
+export const cursorMcpConfigPath = home => join(home, '.cursor', 'mcp.json')
 
 const ACTIVATION_START = '<!-- capital-agent:auto-activation:start -->'
 const ACTIVATION_END = '<!-- capital-agent:auto-activation:end -->'
@@ -23,8 +24,10 @@ export const activationRuleBlock = `${ACTIVATION_START}
 纯问答、概念讨论、调研、翻译、状态查询，以及明确不需要代码或仓库变更的请求，不创建平台 Task。无法连接平台时必须明确报告本地降级及影响，不得宣称已经同步。用户的显式指令始终优先。
 ${ACTIVATION_END}`
 
+export const cursorActivationRuleBlock = activationRuleBlock
+
 export async function installActivationRule(filePath, block = activationRuleBlock) {
-  await mkdir(join(filePath, '..'), { recursive: true, mode: 0o700 }).catch(async () => mkdir(filePath.replace(/\/[^/]+$/, ''), { recursive: true, mode: 0o700 }))
+  await mkdir(dirname(filePath), { recursive: true, mode: 0o700 })
   const existing = await readFile(filePath, 'utf8').catch(() => '')
   const start = existing.indexOf(ACTIVATION_START)
   const end = existing.indexOf(ACTIVATION_END)
@@ -41,6 +44,15 @@ export async function installActivationRule(filePath, block = activationRuleBloc
 export async function hasActivationRule(filePath) {
   const content = await readFile(filePath, 'utf8').catch(() => '')
   return content.includes(ACTIVATION_START) && content.includes(ACTIVATION_END)
+}
+
+export async function installCursorActivationRule(filePath) {
+  const result = await installActivationRule(filePath, cursorActivationRuleBlock)
+  const content = await readFile(filePath, 'utf8')
+  if (/^---\r?\n[\s\S]*?\r?\n---\r?\n/.test(content)) return result
+  const next = `---\ndescription: Automatically use Capital Agent for real development work\nalwaysApply: true\n---\n\n${content}`
+  await writeFile(filePath, next, { mode: 0o600 })
+  return { filePath, changed: true }
 }
 
 const CODEX_MCP_START = '# capital-agent:mcp:start'
@@ -69,6 +81,29 @@ export async function installCodexMcpConfig(filePath, nodePath, wrapperPath) {
 export async function hasCodexMcpConfig(filePath, wrapperPath = '') {
   const content = await readFile(filePath, 'utf8').catch(() => '')
   return content.includes('[mcp_servers.capital-agent]') && (!wrapperPath || content.includes(JSON.stringify(wrapperPath)))
+}
+
+export async function installCursorMcpConfig(filePath, nodePath, wrapperPath) {
+  await mkdir(dirname(filePath), { recursive: true, mode: 0o700 })
+  const existing = await readFile(filePath, 'utf8').catch(() => '')
+  let config = {}
+  if (existing.trim()) {
+    try { config = JSON.parse(existing) } catch { throw new Error(`Cursor MCP 配置不是有效 JSON，未覆盖：${filePath}`) }
+  }
+  if (!config || Array.isArray(config) || typeof config !== 'object') throw new Error(`Cursor MCP 配置必须是 JSON 对象，未覆盖：${filePath}`)
+  const mcpServers = config.mcpServers && !Array.isArray(config.mcpServers) && typeof config.mcpServers === 'object' ? config.mcpServers : {}
+  const nextConfig = { ...config, mcpServers: { ...mcpServers, 'capital-agent': { command: nodePath, args: [wrapperPath] } } }
+  const next = `${JSON.stringify(nextConfig, null, 2)}\n`
+  await writeFile(filePath, next, { mode: 0o600 })
+  return { filePath, changed: next !== existing }
+}
+
+export async function hasCursorMcpConfig(filePath, wrapperPath = '') {
+  try {
+    const config = JSON.parse(await readFile(filePath, 'utf8'))
+    const entry = config?.mcpServers?.['capital-agent']
+    return Boolean(entry?.command && Array.isArray(entry.args) && (!wrapperPath || entry.args.includes(wrapperPath)))
+  } catch { return false }
 }
 
 export async function installSkillLinks(sourceDir, targetDir, skillNames = publicSkillNames) {

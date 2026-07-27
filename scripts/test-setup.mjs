@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, hasActivationRule, hasCodexMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installLocalTestProvider, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -14,6 +14,9 @@ test('uses the current Codex user skill discovery directory', () => {
   assert.equal(skillTargets('/home/dev').codex, '/home/dev/.agents/skills')
   assert.equal(activationRuleTargets('/home/dev').codex, '/home/dev/.codex/AGENTS.md')
   assert.equal(codexConfigPath('/home/dev'), '/home/dev/.codex/config.toml')
+  assert.equal(skillTargets('/home/dev').cursor, '/home/dev/.cursor/skills')
+  assert.equal(activationRuleTargets('/home/dev').cursor, '/home/dev/.cursor/rules/capital-agent.mdc')
+  assert.equal(cursorMcpConfigPath('/home/dev'), '/home/dev/.cursor/mcp.json')
 })
 test('installs Codex MCP config without requiring the codex CLI or replacing other config', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-codex-config-'))
@@ -30,6 +33,24 @@ test('installs Codex MCP config without requiring the codex CLI or replacing oth
   assert.equal(content.split('args = ["/repo/mcp-remote.mjs"]').length-1,1)
   assert.equal(await hasCodexMcpConfig(target,'/repo/mcp-remote.mjs'),true)
 })
+test('installs Cursor MCP config idempotently without replacing other servers or fields', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-cursor-config-'))
+  const target = cursorMcpConfigPath(home); await mkdir(join(home,'.cursor'),{recursive:true})
+  await writeFile(target,JSON.stringify({version:1,mcpServers:{other:{command:'other'},'capital-agent':{command:'old',args:['old']}}},null,2))
+  await installCursorMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs')
+  await installCursorMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs')
+  const config=JSON.parse(await readFile(target,'utf8'))
+  assert.equal(config.version,1)
+  assert.equal(config.mcpServers.other.command,'other')
+  assert.deepEqual(config.mcpServers['capital-agent'],{command:'/opt/node',args:['/repo/mcp-remote.mjs']})
+  assert.equal(await hasCursorMcpConfig(target,'/repo/mcp-remote.mjs'),true)
+})
+test('refuses to overwrite invalid Cursor MCP JSON', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-cursor-invalid-'))
+  const target = cursorMcpConfigPath(home); await mkdir(join(home,'.cursor'),{recursive:true}); await writeFile(target,'{ invalid')
+  await assert.rejects(installCursorMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs'),/不是有效 JSON/)
+  assert.equal(await readFile(target,'utf8'),'{ invalid')
+})
 test('installs one managed activation block without overwriting user instructions', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-activation-'))
   const target = join(home,'.codex','AGENTS.md')
@@ -43,6 +64,18 @@ test('installs one managed activation block without overwriting user instruction
   assert.equal(content.split('capital-agent:auto-activation:start').length - 1,1)
   assert.equal(await hasActivationRule(target),true)
   assert.match(activationRuleBlock,/纯问答.*不创建平台 Task/)
+})
+test('installs an idempotent Cursor always-on rule without replacing other rules', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-cursor-rule-'))
+  const target = activationRuleTargets(home).cursor
+  await installCursorActivationRule(target)
+  await installCursorActivationRule(target)
+  const content = await readFile(target,'utf8')
+  assert.match(content,/alwaysApply: true/)
+  assert.match(content,/当前目录位于 Git 仓库/)
+  assert.match(content,/纯问答.*不创建平台 Task/)
+  assert.equal(content.split('capital-agent:auto-activation:start').length - 1,1)
+  assert.equal(content.split('alwaysApply: true').length - 1,1)
 })
 test('installs only the cap public entry without replacing an existing directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cap-setup-')); const source = join(root,'source'); const target = join(root,'target')
