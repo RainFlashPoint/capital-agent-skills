@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- setup 以幂等受管理区块安装 Codex/Claude 全局自动激活规则：Git 仓库中的真实研发请求无需显式 `$cap` 即创建/绑定 Task，纯问答与讨论不上传；用户原有全局指令保持不变。
 - 本地 Test Provider 在长测试期间每分钟续租一次，每次仅延长 5 分钟且总生命周期最多 10 小时；连续三次续租失败主动终止测试，避免失联进程无限运行。
 - `setup --upgrade` 自动安装并注册按需启动的本地 Test Provider，凭证仅以 `0600` 保存于研发机，不再要求研发理解 Runner ID 或 Token。
 - 本地 Provider 只领取当前用户显式指定的 Test Action，在独立 worktree 执行后物理清理；Server 强制 test-only，拒绝无 Action ID、跨用户和 Patch 认领。

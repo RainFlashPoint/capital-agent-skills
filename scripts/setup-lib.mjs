@@ -10,6 +10,37 @@ export function parseSetupArgs(argv = []) {
 }
 
 export const skillTargets = home => ({ codex: join(home, '.agents/skills'), claude: join(home, '.claude/skills') })
+export const activationRuleTargets = home => ({ codex: join(home, '.codex', 'AGENTS.md'), claude: join(home, '.claude', 'CLAUDE.md') })
+
+const ACTIVATION_START = '<!-- capital-agent:auto-activation:start -->'
+const ACTIVATION_END = '<!-- capital-agent:auto-activation:end -->'
+export const activationRuleBlock = `${ACTIVATION_START}
+## Capital Agent 自动研发入口
+
+当当前目录位于 Git 仓库中，且用户意图是实现功能、修复问题、重构、补测试、代码评审或发布交付时，必须在实质分析或修改前加载已安装的 \`cap\` Skill，并按其要求完成平台握手、创建或绑定统一 Task、代码侦察、实现和证据回写。不要等待用户显式输入 \`$cap\` 或 \`/cap\`。
+
+纯问答、概念讨论、调研、翻译、状态查询，以及明确不需要代码或仓库变更的请求，不创建平台 Task。无法连接平台时必须明确报告本地降级及影响，不得宣称已经同步。用户的显式指令始终优先。
+${ACTIVATION_END}`
+
+export async function installActivationRule(filePath, block = activationRuleBlock) {
+  await mkdir(join(filePath, '..'), { recursive: true, mode: 0o700 }).catch(async () => mkdir(filePath.replace(/\/[^/]+$/, ''), { recursive: true, mode: 0o700 }))
+  const existing = await readFile(filePath, 'utf8').catch(() => '')
+  const start = existing.indexOf(ACTIVATION_START)
+  const end = existing.indexOf(ACTIVATION_END)
+  let next
+  if (start >= 0 && end >= start) {
+    next = `${existing.slice(0, start)}${block}${existing.slice(end + ACTIVATION_END.length)}`
+  } else {
+    next = `${existing.trimEnd()}${existing.trim() ? '\n\n' : ''}${block}\n`
+  }
+  await writeFile(filePath, next, { mode: 0o600 })
+  return { filePath, changed: next !== existing }
+}
+
+export async function hasActivationRule(filePath) {
+  const content = await readFile(filePath, 'utf8').catch(() => '')
+  return content.includes(ACTIVATION_START) && content.includes(ACTIVATION_END)
+}
 
 export async function installSkillLinks(sourceDir, targetDir, skillNames = publicSkillNames) {
   const { readdir } = await import('fs/promises')

@@ -23,7 +23,7 @@ node /path/to/capital-agent-skills/scripts/setup.mjs --server "https://your-serv
 
 升级与诊断：`setup.mjs --server "https://your-server" --upgrade`、`setup.mjs --server "https://your-server" --doctor`。安装器同时注册一个按需启动的本地 Test Provider：仅领取当前用户明确指定的 Test Action，在独立 Git worktree 中执行并自动清理；Runner ID 与一次性签发的凭证只保存在研发机 `~/.capital-agent/runner/config.json`（`0600`），无需人工复制，也不会启用代码修改或常驻 daemon。运行中每分钟进行一次受限续租，每次只延长 5 分钟，总生命周期硬上限 10 小时；连续三次续租失败会停止测试进程。环境变量仍作为服务器/CI 的非交互兼容方式。
 
-Skills 与 MCP 只需在研发机器安装一次。之后正常使用 Codex/Claude 描述编码需求即可，不强制输入 `$cap`；首次进入 Git 项目时，Skill 会静默安装兼容现有 Hook 的关联器，正常 `git commit` 自动附加 Task/Session。研发不需要手工安装 Hook、填写 Task ID 或配置 GitLab CI。
+Skills 与 MCP 只需在研发机器安装一次。安装器会以可识别的受管理区块更新 Codex/Claude 全局指令：Git 仓库中的实现、修复、重构、测试、评审和发布请求自动进入 Cap，不强制输入 `$cap`；纯问答、讨论和调研不创建平台 Task。已有个人指令不会被覆盖。首次进入 Git 项目时，Skill 会静默安装兼容现有 Hook 的关联器，正常 `git commit` 自动附加 Task/Session。研发不需要手工安装 Hook、填写 Task ID 或配置 GitLab CI。
 
 **为什么两条要在一起**：流程定义了任务边界，边界产出干净的经验原子（spec 决策 / review findings / 蒸馏 pattern）；经验闭环把这些原子汇入中心知识库、下次跨人复用。流程是产出口，知识库是积累池。
 

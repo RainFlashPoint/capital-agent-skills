@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, inspectLocalTestProvider, installLocalTestProvider, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, hasActivationRule, inspectLocalTestProvider, installActivationRule, installLocalTestProvider, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -12,6 +12,21 @@ test('parses setup modes and validates server URL', () => {
 })
 test('uses the current Codex user skill discovery directory', () => {
   assert.equal(skillTargets('/home/dev').codex, '/home/dev/.agents/skills')
+  assert.equal(activationRuleTargets('/home/dev').codex, '/home/dev/.codex/AGENTS.md')
+})
+test('installs one managed activation block without overwriting user instructions', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-activation-'))
+  const target = join(home,'.codex','AGENTS.md')
+  await mkdir(join(home,'.codex'),{recursive:true})
+  await writeFile(target,'# My rules\n\nKeep this.\n')
+  await installActivationRule(target)
+  await installActivationRule(target)
+  const content = await readFile(target,'utf8')
+  assert.match(content,/# My rules/)
+  assert.match(content,/Keep this\./)
+  assert.equal(content.split('capital-agent:auto-activation:start').length - 1,1)
+  assert.equal(await hasActivationRule(target),true)
+  assert.match(activationRuleBlock,/纯问答.*不创建平台 Task/)
 })
 test('installs only the cap public entry without replacing an existing directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cap-setup-')); const source = join(root,'source'); const target = join(root,'target')
