@@ -12,6 +12,10 @@
 
 下一动作不是提示语。若 `status=in-progress` 且没有人工门禁，当前会话必须立即路由并执行该动作；只有 `gated/blocked`、不可逆操作或用户明确要求暂停时才能停下。Artifact 登记和 STATE 更新只是证据，不构成阶段完成。
 
+精确 Commit 尚未推送是一个独立、可解释的人工门禁，不得混成“执行前检查未通过”：提示必须包含远程名、分支和短 Commit，并只询问一次是否允许推送。用户同意后，该授权在当前 Task 的同仓库、同分支、同 Commit 范围内连续覆盖 Push、Delivery 元数据回写和 Test/Review Action 创建；任一身份边界变化即重新授权。Push 成功后必须自动续跑，不让用户再次输入“继续”。
+
+Server/MCP 返回预检失败时，优先展示结构化 `reason/preflight.code/detail/remediation`。至少区分 `source_commit_not_remote`、`repo_auth_failed`、`repo_branch_missing`、`provider_not_healthy/provider_at_capacity`、`verification_commands_missing`；不得统一翻译成“环境问题”或“执行失败”。
+
 “准备执行”“接下来调用”或一份执行计划不算执行证据。外部操作预检通过后，必须在当前会话真实调用可用工具并取得可观察结果，再以脱敏的命令/请求标识、状态码、终态或错误归因更新验证产物与 STATE；工具不可用或调用失败则据实标为 `ENV_BLOCKED` / `INCONCLUSIVE`，不得停在口头承诺或伪报完成。
 
 ## 阶段进入

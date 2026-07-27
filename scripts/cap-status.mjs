@@ -66,11 +66,15 @@ function nextFromPlatformTask(task = {}, fallback = {}) {
 
 export function reconcileRepositoryState({ head = '', upstreamHead = '', deliveredHead = '', stateHead = '', commits = [] } = {}) {
   const recordedHead = deliveredHead || stateHead
+  const headPushed = Boolean(head && upstreamHead && head === upstreamHead)
+  const pushRequired = Boolean(head && (!upstreamHead || head !== upstreamHead))
   const localUnrecorded = Boolean(head && recordedHead && head !== recordedHead)
   const remoteUnrecorded = Boolean(upstreamHead && recordedHead && upstreamHead !== recordedHead)
   const initialDeliveryNeeded = Boolean(head && !recordedHead)
   return {
     recordedHead,
+    headPushed,
+    pushRequired,
     initialDeliveryNeeded,
     localUnrecorded,
     remoteUnrecorded,
@@ -216,6 +220,7 @@ function render(result) {
     `下一步：${result.workflow.action}`,
     `原因：${result.workflow.reason}`,
     result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
+    result.reconciliation.pushRequired ? `远程验证门禁：当前 HEAD ${result.repository.head.slice(0, 12)} 尚未与上游分支对齐；创建 Test/Review Action 前需要明确授权并推送当前分支` : '远程验证门禁：当前 HEAD 已在上游分支可见',
     result.platform.pendingDeliveries?.total ? `待发送补报：本次发送 ${result.platform.pendingDeliveries.sent}，剩余 ${result.platform.pendingDeliveries.pending}` : '',
     result.platform.outbox?.pending ? `离线待同步：${result.platform.outbox.pending} 条（可重放 ${result.platform.outbox.ready}，阻塞 ${result.platform.outbox.blocked}）${result.platform.outbox.next ? `；下一条 ${result.platform.outbox.next.type}` : ''}` : '',
     result.reasons.length ? `降级原因：${result.reasons.join(', ')}` : '',

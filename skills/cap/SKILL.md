@@ -30,11 +30,13 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
    平台暂时不可用时，把原本应调用 MCP 的结构化元数据写入目标仓 `.cap/outbox.jsonl`，使用 package 根 `scripts/cap-outbox.mjs enqueue`。恢复后先读取 `replay-plan`。属于**当前用户明确发起的本轮 Task** 的事件可按依赖顺序调用原 MCP 工具；成功后 `ack`，失败则 `fail` 保留事件。属于已完成 Task、旧 Session 或之前会话的**历史事件**，不得因用户本轮调用 `$cap` 就推定已获授权：先说明目的地、事件数量和将发送的元数据种类（路径、分支、Commit、Task/Session ID），取得明确同意后再逐条重放。用户未授权或暂未回答时保留 Outbox，并继续当前需求，不能让历史补报阻塞编码。不得把本地 PASS 重放成 Server Gate PASS，也不得上传代码正文。
 3. 创建/绑定 Task 后先读取 STATE 中已有的 Harness Action 引用；Test/Review/Patch 使用 `get_task_action / wait_task_action` 续接。编码实现由当前 Skills Session 或受控执行 Provider 完成，结果通过 Artifact、Delivery 和 Commit 回写，不再认领另一套旧 Task Action。
 4. 若状态包含 `git_delivery_reconciliation_needed`，立即扫描 `delivery-head..HEAD`；对 IDEA、人工或其它 Agent 产生的 Commit 幂等补调用 `record_task_delivery`。平台没有 Delivery 查询工具时也要重报当前 HEAD，由平台幂等去重，不能依赖原编码会话仍然存在。
+   进入独立测试或评审前必须检查 `cap-status.repository.head/upstreamHead` 与 `reconciliation.pushRequired`。当前精确 Commit 尚未在上游分支可见时，进入明确的 **Push 门禁**：用一句话说明“将把当前分支的精确 Commit 推送到哪个远程”，请求一次授权；不得先创建 Action，也不得把 Server 的仓库预检失败解释为 Provider 故障。授权后同一 Task 内依次完成 Push → 当前 Delivery 补报 → Test Action，不再要求用户重复说“继续”。授权只覆盖当前 Task、当前仓库、当前分支和当前 Commit；分支、Commit、仓库或目标环境变化后失效。
 5. 用统一“客户端握手快报”告诉用户平台连接、仓库、分支、Task、当前阶段、已认领 Action 和下一步；不得先写规格或代码再补报。
    快报必须同时显示 Outbox 待同步数、可重放数、阻塞数与下一事件类型；存在待同步事件时不得只说“平台已连接”。
    若待同步项属于历史 Task，快报必须标记“等待历史元数据补报授权”，不能直接执行，也不能含糊描述成普通连接恢复。
 6. 调用中心知识层注入与本需求相关的历史经验。
 7. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
+   当前 Delivery 成功后，只要精确 Commit 已在远端可见且没有人工门禁，必须在同一会话自动创建并有界等待 Test Action；Test 成功后由 Server 自动创建 Review Action，客户端继续读取/等待新的 Action，直到成功、明确阻塞或达到等待上限。历史 Outbox 永远不能打断这条当前 Task 主线。
 8. 按阶段使用唯一 Action 协议，禁止双写：
    - 编码实现：由当前 Skills Session 或受控执行 Provider 完成；通过 Artifact + Delivery 回写真实 Commit，不创建阶段 Action，不写 Test/Review PASS。
    - 测试验证：强制 `create_task_action(action_type=test) → wait_task_action/get_task_action`；Server 决定 Gate，客户端不得自行写验证 PASS。

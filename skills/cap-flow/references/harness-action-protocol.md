@@ -17,11 +17,12 @@ Skills 是 Harness Client，不是可信 Gate 内核。STATE 是游标，不是 
 
 当本轮已有精确 Commit 且 MCP 暴露 `create_task_action` 时，测试验证阶段必须：
 
-1. 用 `task_id + commit_sha + required_checks` 创建 `action_type=test`；默认由 Server Test Provider 异步执行。
+1. 先确认精确 Commit 已在 Task 指定远程分支可见。若 `cap-status.reconciliation.pushRequired=true`，先进入 Push 门禁；得到当前 Task 范围授权后执行 Push 和当前 Delivery 补报，再用 `task_id + commit_sha + required_checks` 创建 `action_type=test`。默认由 Server Test Provider 异步执行。
 2. 把返回的 `action_id/run_id` 写入 STATE 的 `Harness actions`，状态记为 `ready/running`，不得提前勾选质量 Gate。
 3. 用 `wait_task_action` 做有界等待；超时后保存当前状态并允许新会话用 `get_task_action` 续接，禁止无限轮询。
 4. 只有 Action 返回 `status=succeeded` 且 machine validation 绑定同一 Commit，才把“独立验证已通过”写进交接。`blocked/needs_human` 按 Server 原因回到实现或人工处理。
 5. 本地命令和 `.cap/verify/*` 是 Provider 输入与诊断资产，不是高风险任务的最终通行证。低风险兼容是否可放行也由 Server Gate Policy 决定，Skills 不自行判断。
+6. Test Action 成功后，Server 应为同一 Commit 幂等创建只读 Review Action；客户端从 Test 结果中的 `reviewActionId` 或 Task Action 列表继续等待。没有人工门禁时不得停下来要求用户再次触发评审。
 
 Action API 不可用时，明确报告“仅完成本地验证，缺少独立 Provider Gate”；不得把本地 `PASS` 改写成平台已验证。
 

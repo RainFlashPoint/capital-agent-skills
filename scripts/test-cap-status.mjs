@@ -131,10 +131,20 @@ test('IDEA or manual commit after the last delivery is detected for platform rec
   assert.equal(result.needsDeliveryReconciliation, true)
   assert.equal(result.localUnrecorded, true)
   assert.equal(result.remoteUnrecorded, true)
+  assert.equal(result.headPushed, true)
+  assert.equal(result.pushRequired, false)
   assert.deepEqual(result.unrecordedCommits, ['bbbbbbbb\tIDEA commit'])
+})
+
+test('local head ahead of upstream is exposed as an explicit push gate', () => {
+  const result = reconcileRepositoryState({ head: 'bbbbbbbb', upstreamHead: 'aaaaaaaa', deliveredHead: 'aaaaaaaa' })
+  assert.equal(result.headPushed, false)
+  assert.equal(result.pushRequired, true)
 })
 
 test('matching local remote and delivered heads require no reconciliation', () => {
   const result = reconcileRepositoryState({ head: 'aaaaaaaa', upstreamHead: 'aaaaaaaa', deliveredHead: 'aaaaaaaa' })
   assert.equal(result.needsDeliveryReconciliation, false)
+  assert.equal(result.headPushed, true)
+  assert.equal(result.pushRequired, false)
 })
