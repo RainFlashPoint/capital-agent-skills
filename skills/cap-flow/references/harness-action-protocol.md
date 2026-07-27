@@ -19,10 +19,11 @@ Skills 是 Harness Client，不是可信 Gate 内核。STATE 是游标，不是 
 
 1. 先确认精确 Commit 已在 Task 指定远程分支可见。若 `cap-status.reconciliation.pushRequired=true`，先进入 Push 门禁；得到当前 Task 范围授权后执行 Push 和当前 Delivery 补报，再用 `task_id + commit_sha + required_checks` 创建 `action_type=test`。默认由 Server Test Provider 异步执行。
 2. 把返回的 `action_id/run_id` 写入 STATE 的 `Harness actions`，状态记为 `ready/running`，不得提前勾选质量 Gate。
-3. 用 `wait_task_action` 做有界等待；超时后保存当前状态并允许新会话用 `get_task_action` 续接，禁止无限轮询。
-4. 只有 Action 返回 `status=succeeded` 且 machine validation 绑定同一 Commit，才把“独立验证已通过”写进交接。`blocked/needs_human` 按 Server 原因回到实现或人工处理。
-5. 本地命令和 `.cap/verify/*` 是 Provider 输入与诊断资产，不是高风险任务的最终通行证。低风险兼容是否可放行也由 Server Gate Policy 决定，Skills 不自行判断。
-6. Test Action 成功后，Server 应为同一 Commit 幂等创建只读 Review Action；客户端从 Test 结果中的 `reviewActionId` 或 Task Action 列表继续等待。没有人工门禁时不得停下来要求用户再次触发评审。
+3. Action 进入 `ready` 后，若目标仓本机存在已注册的 Capital Agent Runner，立即执行 package 根 `scripts/cap-local-test-provider.mjs <target-repo> <action-id>` 唤醒一次本地独立 Test Provider。必须传本次 Action ID，Provider 只能领取这一条，不能领取同仓库其他工作。该 Provider 继承研发机的 Maven/npm/SDK 配置，在隔离 worktree 验证精确 Commit；它只领取 Harness Action，不得顺带领取编码任务。未安装、未授权当前仓库或认证失败时，明确报告 `local_provider_unavailable`，不得回退到 Server 猜测本地依赖环境。
+4. 用 `wait_task_action` 做有界等待；超时后保存当前状态并允许新会话用 `get_task_action` 续接，禁止无限轮询。
+5. 只有 Action 返回 `status=succeeded` 且 machine validation 绑定同一 Commit，才把“独立验证已通过”写进交接。`blocked/needs_human` 按 Server 原因回到实现或人工处理。
+6. 本地命令和 `.cap/verify/*` 是 Provider 输入与诊断资产，不是高风险任务的最终通行证。低风险兼容是否可放行也由 Server Gate Policy 决定，Skills 不自行判断。
+7. Test Action 成功后，Server 应为同一 Commit 幂等创建只读 Review Action；客户端从 Test 结果中的 `reviewActionId` 或 Task Action 列表继续等待。没有人工门禁时不得停下来要求用户再次触发评审。
 
 ### Action 终态的本地证据同步
 

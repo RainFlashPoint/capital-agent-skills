@@ -99,6 +99,8 @@ grep -q '编码实现不创建或认领 Task Action' "$ROOT/harvest-experience/r
 grep -q 'Action 终态的本地证据同步' "$REF/harness-action-protocol.md" || err "Harness 协议未同步 STATE 与阶段报告"
 grep -q '必须替换报告中已经失效的文字' "$REF/harness-action-protocol.md" || err "Harness 协议未禁止保留过期阶段报告"
 grep -q 'ENV_BLOCKED.*绝不能改写为代码失败或 PASS' "$REF/harness-action-protocol.md" || err "Harness 协议未保持环境阻塞分类"
+[ -f scripts/cap-local-test-provider.mjs ] || err "缺少本地 Test Provider 唤醒脚本"
+grep -q 'cap-local-test-provider.mjs' "$ROOT/cap/SKILL.md" || err "cap 未唤醒本地 Test Provider"
 ok "Harness Action 与独立 Gate 边界检查完成"
 
 echo "== 4.4 external integration safety invariants =="

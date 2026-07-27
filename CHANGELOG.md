@@ -4,6 +4,7 @@
 
 - Harness Action 进入终态后强制同步刷新 STATE 与 Test/Review 阶段报告，旧的“等待 Commit、Action 未创建”描述必须被替换。
 - 本地证据统一记录 Action、源 Commit、Provider 终态、Server Gate、机器分类和解除条件；`ENV_BLOCKED` 不得被写成代码失败或 PASS。
+- Test Action ready 后自动唤醒本机已注册 Runner，只领取 Harness Action 并继承本机 Maven/npm/SDK 环境；本地 Provider 不可用时不再回退到 Server 猜测研发环境。
 
 ## 0.3.8 — 2026-07-27
 

@@ -40,6 +40,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 8. 按阶段使用唯一 Action 协议，禁止双写：
    - 编码实现：由当前 Skills Session 或受控执行 Provider 完成；通过 Artifact + Delivery 回写真实 Commit，不创建阶段 Action，不写 Test/Review PASS。
    - 测试验证：强制 `create_task_action(action_type=test) → wait_task_action/get_task_action`；Server 决定 Gate，客户端不得自行写验证 PASS。
+     Action ready 后优先运行 package 根 `scripts/cap-local-test-provider.mjs <target-repo> <action-id>` 唤醒已注册的本地独立 Test Provider；必须限定本次 Action ID。本地 Provider 不可用时明确阻塞，不得让 Server 猜测研发机 Maven/npm/SDK 环境。
    - 代码评审：强制 `create_task_action(action_type=review) → wait_task_action/get_task_action`；Review 只读，客户端不得自行写 Review PASS。
    - 代码修复：只续接 Server Review 生成的 Harness Patch Action；由受控 Patch Provider 回写新 Commit 与 Patch Evidence，Skills 不自行伪造完成结果。
    Server 返回新 Commit 的 Test/Review Action 时在同一会话继续；统一 Task `done` 后才进入 Delivery 与经验沉淀。
