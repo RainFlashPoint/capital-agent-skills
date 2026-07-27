@@ -5,7 +5,7 @@ description: >
   (1) scope-drift / plan-completion 审计——只做了该做的吗?该做的都做了吗?
   (2) 按改动代码动态加载的多角色专家透镜并行(或串行降级)评审,统一 severity + confidence;
   (3) 安全 10 域门控(verify-mitigation-exists + disposition + open=0 硬门);
-  (4) fix-first 处置 + 对抗 pass,把每条 finding 写进 `.cap/review/<role>.md`,把门控结果写回 STATE。
+  (4) 只读处置 + 对抗 pass,把每条 finding 写进 `.cap/review/<role>.md`;可修问题生成独立 Patch Action，把门控结果写回 STATE。
   触发场景:用户说 "review 这次改动"、"评审一下代码"、"pre-landing review"、"check my diff"、
   "走 cap review"、"准备合并 / 落地前检查"、"cap-review"、"代码评审 + 收尾";
   cap-flow 判定 stage=review 时也路由进来,或在 verify 通过后主动建议。
@@ -16,6 +16,8 @@ description: >
 # cap-review — 多角色评审 + 验证收尾
 
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+
+同时读取 `../cap-flow/references/harness-action-protocol.md`。Review Run 默认只读源码：只产 Findings 和 Review Evidence；任何修复都必须进入独立 Patch Action，新 Commit 再走新的 Test/Review，禁止“边审边改再给自己 PASS”。
 
 你正在执行研发主线的**评审阶段**。目标:在改动落地前,从**改动代码自动选出的多个专业角色视角**审一遍,
 做完整性 / 范围审计与安全门控,把每条问题分类处置,产出可审计的 findings,并把门控结论写回 `STATE.md`。
@@ -55,7 +57,7 @@ description: >
 当本阶段被子代理、workflow、CI 或 headless 调起(无人应答):
 - **不发任何编号提问**。所有需要用户裁决的点,改为:按"安全默认"处置 + 把待决项写进 finding 的
   `disposition: needs-human`。
-- 安全默认 = **不自动改高风险代码**(只 auto-fix 机械类),**不替用户接受安全风险**(open 安全项 → 阻断,
+- 安全默认 = **Review 不修改被审源码**，机械问题也生成 Patch Action；**不替用户接受安全风险**(open 安全项 → 阻断,
   不放行)。
 - 全部 findings 落 `review/<role>.md`,门控结论落 STATE,正文最后输出机器可读的 `## REVIEW SUMMARY`(§7)。
 
@@ -186,7 +188,7 @@ findings。并行或串行见 §0.2。每个角色把自己的 findings 写进 `
 [<SEVERITY>] (confidence: N/10) <file>:<line> — <一句话问题>
   role: <产出角色>   verify-mode: <DIFF-VERIFIABLE/...>
   fix: <具体修法,能给代码片段就给>
-  disposition: <auto-fix / ask / needs-human / accept>   # 见 Step 6
+  disposition: <patch-action / ask / needs-human / accept>   # 见 Step 6
 ```
 
 **统一 severity 模型**:
@@ -251,24 +253,25 @@ findings。并行或串行见 §0.2。每个角色把自己的 findings 写进 `
   **headless 态:不替用户接受风险 → 保持阻断**,写进 SUMMARY。
 - `threats_open == 0` → 安全门 PASS。
 
-### Step 6 — Fix-First 处置
+### Step 6 — 只读处置与 Patch Action
+
+若当前 Task 已有精确 Commit 且 `create_task_action` 可用，先创建 `action_type=review`（scopes=`code_review,security_review`）并有界等待 Server Review Provider。只有返回 `succeeded` 且 Commit 一致才能通过 Review Gate；`blocked` 使用 Server 返回的 `patchActionId` 续接，`needs_human` 则停在人工裁决，禁止用本地报告覆盖 Server 结论。
 
 **每条 finding 都给动作,不只是 CRITICAL。** 按 `disposition` 分流:
 
-- **auto-fix**:机械、低风险、明确的修复(空 catch、漏 import、`==`→`===`、加 null 判等)→ 直接改,逐条
-  输出 `[AUTO-FIXED] file:line 问题 → 改了什么`。
-- **ask**:有判断成分 / 触及行为 / CRITICAL / HIGH → 交互态用一次编号文本批量征询(每条:A 按建议修 /
-  B 跳过 / C 误报);**headless 态**:不自动改,标 `needs-human`,写进 SUMMARY。
+- **patch-action**：机械、低风险且明确可修的问题，也只生成结构化 Patch Action；`finding_refs` 指向稳定 Finding ID，约束写明允许修改范围与必须重跑的验证。Review Run 不直接改源码。
+- **ask**:有判断成分 / 触及行为 / CRITICAL / HIGH → 交互态用一次编号文本批量征询(每条:A 批准创建受控 Patch Action /
+  B 接受风险并记录理由 / C 误报);**headless 态**:不自动改,标 `needs-human`,写进 SUMMARY。
 - **needs-human**:无法自动验证或需要领域判断。
 - **accept**:用户 / 规则明确接受(记入 finding)。
 
 **处置铁律**:
 - **修每条 finding 前守 `cap-flow/references/receiving-feedback.md` 纪律**:先核实该 finding **真成立、对本仓
-  正确**(看着对 ≠ 真的对),再 auto-fix;**一次一项、各自验证、验无回归**;意见错了就技术反驳(标误报),
+  正确**(看着对 ≠ 真的对),再决定 patch-action;意见错了就技术反驳(标误报),
   别盲目照单全收;别顺手加没要求的(YAGNI grep)。治"被指出就乱改"。
-- review 阶段**只改代码,不 commit / 不 push / 不建 PR**(那是 release 的事)。
+- review 阶段**只读代码，不修改 / 不 commit / 不 push / 不建 PR**；修复由独立 Patch Provider 形成新 Commit。
 - **不改测试去迁就实现**;发现实现 bug → 标 finding 升级,不在 review 里默默改实现逻辑(除非是上面的机械
-  auto-fix)。
+  patch-action)。
 - 跨评审去重:本分支上一轮被用户 `skipped` 且相关文件未再变的 finding → 抑制(只抑制 skipped,绝不抑制
   fixed)。
 
@@ -280,7 +283,7 @@ findings。并行或串行见 §0.2。每个角色把自己的 findings 写进 `
 - **无并行能力**:自己换视角再过一遍 diff。
 - **可选外脑 codex**:仅当**本阶段不是在 Codex 下运行**时,可调 `codex` 做跨模型对抗(在 Codex 下跑时调
   codex 是自指 / 冗余 → 跳过)。
-对抗 pass 的 FIXABLE finding 走同一 Fix-First 流;INVESTIGATE 类作信息性列出。
+对抗 pass 的 FIXABLE finding 走同一 Patch Action 流；INVESTIGATE 类作信息性列出。
 
 > **护城河沉淀钩子**:对抗 pass 与多角色评审里**复发**的 finding(同类问题跨特性反复出现)——通过
 > harvest-experience 的 `record_experience` 沉淀成规则 / 卡片推进**中心知识库**,带 operator 归因,让"评审
@@ -429,7 +432,7 @@ next: <一句话下一步>
 ## 8. 边界与不做什么
 
 - **不写实现、不写测试、不跑端到端旅程** —— 那是 cap-implement / cap-test 的活;发现实现 bug 标 finding 升级,
-  不在 review 里默默改实现逻辑(机械 auto-fix 除外)。
+  不在 review 里修改实现逻辑；所有修复进入独立 Patch Action。
 - **不 commit / 不 push / 不建 PR** —— 那是 cap-release 的事。
 - **不替用户接受安全风险** —— headless 态 open 安全项一律阻断。
 - **不并发写 STATE.md** —— 单写者;并行角色只写各自 `review/<role>.md`。

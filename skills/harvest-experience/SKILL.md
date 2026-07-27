@@ -10,7 +10,7 @@ allowed-tools:
 这个 skill 让本地 CLI 会话和 capital-agent 知识层形成闭环：**登记会话 → 注入 → 编码 → 沉淀 → 结束**。
 它不改变正常编码方式，只补充轻量元数据事件；绝不上传代码正文。
 
-前置：MCP server `capital-agent` 已在本 CLI 注册（提供 `enrich_context`、`record_experience`、`search_knowledge` 等工具）。若这些工具不可用，跳过本 skill，正常编码即可。
+前置：MCP server `capital-agent` 已在本 CLI 注册（提供 `enrich_context`、`record_experience`、`search_knowledge` 等工具）。若工具临时不可用，正常编码继续，但本轮已经形成的 Task/Artifact/Delivery/Experience/Skill Event 元数据必须进入 `.cap/outbox.jsonl`，不能静默丢失。
 
 ## 1. 会话开始 —— 登记 + 注入
 
@@ -78,6 +78,8 @@ git diff --name-only HEAD    # 未提交改动
 属另一阶段的工作(不阻塞本 skill)。
 
 沉淀成功后工具会返回经验摘要与文档 ID。
+
+若调用失败，使用 `scripts/cap-outbox.mjs enqueue <repo> '<event-json>'` 写入 `experience.record` 事件。payload 只保留本节允许的结构化字段与文件路径；幂等键至少绑定 `repo_url + task_id + commit_sha + intent 摘要`。服务恢复后由 `$cap` 按 replay-plan 调用原 `record_experience`，成功后 ack；Outbox 自身不是“已沉淀”的证明。
 
 随后若 MCP 提供 `record_skill_event`：
 - 记录 `experience_recorded`，artifact_refs 只放知识文档 ID。

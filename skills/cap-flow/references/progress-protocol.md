@@ -6,6 +6,8 @@
 
 先运行 package 根的 `scripts/cap-status.mjs <target-repo> --json`。结合 `create_or_attach_task` 的真实结果，第一条状态必须包含：平台连接、仓库、分支、Task ID、当前阶段、下一动作。MCP/身份/平台失败时不得静默降级；明确说明本次仅本地执行、缺失的能力和修复命令。
 
+同时读取 `platform.outbox`。有待同步事件时必须展示：总数、可重放数、阻塞数和下一事件类型。平台恢复后，先按 `scripts/cap-outbox.mjs replay-plan` 补报再继续产生新的平台阶段事件；某条失败时记录 attempt/lastError，不得跳过依赖链，也不得把“已写入 Outbox”表述为“平台已完成”。
+
 下一动作不是提示语。若 `status=in-progress` 且没有人工门禁，当前会话必须立即路由并执行该动作；只有 `gated/blocked`、不可逆操作或用户明确要求暂停时才能停下。Artifact 登记和 STATE 更新只是证据，不构成阶段完成。
 
 “准备执行”“接下来调用”或一份执行计划不算执行证据。外部操作预检通过后，必须在当前会话真实调用可用工具并取得可观察结果，再以脱敏的命令/请求标识、状态码、终态或错误归因更新验证产物与 STATE；工具不可用或调用失败则据实标为 `ENV_BLOCKED` / `INCONCLUSIVE`，不得停在口头承诺或伪报完成。

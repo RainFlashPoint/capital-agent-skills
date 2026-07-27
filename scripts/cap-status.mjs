@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkPlatformHandshake, normalizeServerUrl } from './setup-lib.mjs'
 import { flushPendingDeliveries } from './client-delivery.mjs'
+import { inspectOutbox } from './cap-outbox.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
@@ -150,6 +151,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
   const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
   const pendingDeliveries = gitRoot && !offline ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
+  const outbox = gitRoot ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
   const localNext = resolveNextAction({ stateText, artifacts, dirty })
   const next = switchingTask
     ? nextFromPlatformTask(remoteTask, localNext)
@@ -177,7 +179,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       : platform === true
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
-    platform: { configured: Boolean(serverUrl && userKey), connected: platform, serverUrl: serverUrl || '', handshake, pendingDeliveries },
+    platform: { configured: Boolean(serverUrl && userKey), connected: platform, serverUrl: serverUrl || '', handshake, pendingDeliveries, outbox },
     repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty },
     task: {
       id: remoteTask?.id || taskId,
@@ -215,6 +217,7 @@ function render(result) {
     `原因：${result.workflow.reason}`,
     result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
     result.platform.pendingDeliveries?.total ? `待发送补报：本次发送 ${result.platform.pendingDeliveries.sent}，剩余 ${result.platform.pendingDeliveries.pending}` : '',
+    result.platform.outbox?.pending ? `离线待同步：${result.platform.outbox.pending} 条（可重放 ${result.platform.outbox.ready}，阻塞 ${result.platform.outbox.blocked}）${result.platform.outbox.next ? `；下一条 ${result.platform.outbox.next.type}` : ''}` : '',
     result.reasons.length ? `降级原因：${result.reasons.join(', ')}` : '',
   ].filter(Boolean).join('\n')
 }

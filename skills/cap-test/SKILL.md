@@ -15,6 +15,8 @@ description: >
 # cap-test — 验证中枢（调度层）
 
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
+
+同时读取 `../cap-flow/references/harness-action-protocol.md`。本阶段本地报告是诊断与 Provider 输入；当平台 Action API 可用且已有精确 Commit 时，必须创建独立 Test Action 并等待 Server 判定。Skills/STATE 不得自行证明质量 Gate PASS。
 > 涉及测试账号、外部参数或外部状态写入时，遵守任务侦察协议的“先取证，再询问”：先复用仓库与知识库已有测试资产；授权与影响边界已经明确时直接推进，只有真实缺口或风险才设置人工门禁。
 
 你是验证阶段的**调度员**。verify 是夹在 **build(实现)** 与 **review(评审)** 之间的独立阶段,职责是:把
@@ -167,7 +169,7 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
    - `ENV_BLOCKED`:缺运行时、依赖仓库、凭据、网络或外部服务;不伪装成代码失败,写入环境缺口并交项目/平台补环境。
    - `INCONCLUSIVE`:证据不足;保留日志并转企业 Runner、CI 或人工复验。
 3. **阶段总判定**:
-   - 全部验证项 PASS → verify 阶段 = **PASS**,可进 review。
+   - 全部本地验证项 PASS → 记为 `LOCAL_PASS`；随后创建/续接 Test Action。Server 返回 `succeeded` 后阶段才可记“独立验证 PASS”并进 review。
    - 核心验收全部 PASS，只有可独立、无安全风险且受外部时间/样本约束的验收项尚未执行 → 不得把整个 Task 留在
      `gated`。把这些项写入 `deferred-acceptance`，设置 `deferred-only: true`，当前阶段按 PASS 进入 review；Review
      通过后由 cap-flow 调用 `split_deferred_acceptance` 创建关联 follow-up Task，再完成当前 Task。
@@ -178,6 +180,7 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 4. 写一份**阶段汇总**(可放 `.cap/verify/summary.md` 或直接体现在 STATE),列每个验证项的结果、归因分类与去向。
 5. **输出 `## HANDOFF` → 回写 STATE.md**(经 cap-flow / 单写者,见 §6):更新 stage / status / gates /
    verify-checks / next。
+6. 若 MCP 暴露 `create_task_action`，以当前 Task、精确 Commit 和真实执行命令创建 `action_type=test`，把 `action_id/run_id` 写入 STATE；用 `wait_task_action` 有界等待。未完成时 next 指向“续查 Action”，不得伪报 PASS。若 API 不可用，明确标记 `LOCAL_PASS_ONLY` 或真实失败归因。
 
 延期只允许用于“当前核心结果已可独立验收”的项目，例如等待次日账单、厂商脱敏样本或独立兼容性矩阵。代码失败、
 安全问题、数据一致性风险、当前需求的核心行为未通过，均不得标记延期。每个延期项必须包含稳定 ID、标题、原因和
@@ -241,6 +244,9 @@ active-roles: [server-dev, qa]           # Step 1 解析出的角色,与 checks 
 changed-files:
 - <Step 1 的 git diff 路径清单>
 verification-outcome: PASS | CODE_FAILED | ENV_BLOCKED | INCONCLUSIVE
+harness-action-id: <action_xxx 或 none>
+harness-action-status: ready | leased | running | evidence_submitted | succeeded | blocked | needs_human | none
+harness-source-commit: <精确 Git SHA 或 none>
 deferred-only: true | false
 deferred-acceptance:
 - id: <稳定 id>

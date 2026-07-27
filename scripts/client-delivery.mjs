@@ -1,7 +1,8 @@
-import { appendFile, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { acknowledgeOutboxEvent, enqueueOutboxEvent, inspectOutbox, markOutboxAttempt } from './cap-outbox.mjs'
 
 const text = value => String(value || '').trim()
 const git = (repo, args) => { try { return text(execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] })) } catch { return '' } }
@@ -44,21 +45,35 @@ export async function sendCommitDelivery({ serverUrl, userKey, taskId, payload, 
 }
 
 export async function queueCommitDelivery(repoRoot, item) {
-  await appendFile(join(repoRoot, '.cap/pending-deliveries.jsonl'), `${JSON.stringify(item)}\n`)
+  return enqueueOutboxEvent(repoRoot, {
+    type: 'delivery.record',
+    idempotencyKey: item?.payload?.idempotency_key || `delivery:${item?.taskId || 'unknown'}:${item?.payload?.commit_sha || 'unknown'}`,
+    localTaskRef: item?.taskId || '',
+    payload: item,
+  })
 }
 
 export async function flushPendingDeliveries(repoRoot, { fetchImpl = fetch, homeDir = homedir() } = {}) {
   const path = join(repoRoot, '.cap/pending-deliveries.jsonl')
   const raw = await readFile(path, 'utf8').catch(() => '')
   const rows = raw.split(/\r?\n/).filter(Boolean).map(line => { try { return JSON.parse(line) } catch { return null } }).filter(Boolean)
-  if (!rows.length) return { total: 0, sent: 0, pending: 0 }
-  const config = await readClientConfig(homeDir); const pending = []; let sent = 0
-  for (const row of rows) {
-    if (await sendCommitDelivery({ serverUrl: config.CAPITAL_AGENT_SERVER_URL, userKey: config.CAPITAL_AGENT_USER_KEY, taskId: row.taskId, payload: row.payload, fetchImpl })) sent++
-    else pending.push(row)
+  for (const row of rows) await queueCommitDelivery(repoRoot, row)
+  if (rows.length) {
+    const temp = `${path}.tmp`
+    await writeFile(temp, '')
+    await rename(temp, path)
   }
-  const temp = `${path}.tmp`
-  await writeFile(temp, pending.map(item => JSON.stringify(item)).join('\n') + (pending.length ? '\n' : ''))
-  await rename(temp, path)
-  return { total: rows.length, sent, pending: pending.length }
+  const config = await readClientConfig(homeDir)
+  const plan = await inspectOutbox(repoRoot)
+  const deliveries = plan.events.filter(item => item.type === 'delivery.record' && item.replayStatus === 'ready')
+  let sent = 0
+  for (const event of deliveries) {
+    const item = event.payload || {}
+    const ok = await sendCommitDelivery({ serverUrl: config.CAPITAL_AGENT_SERVER_URL, userKey: config.CAPITAL_AGENT_USER_KEY, taskId: item.taskId, payload: item.payload, fetchImpl })
+    if (ok) { await acknowledgeOutboxEvent(repoRoot, event.id); sent += 1 }
+    else await markOutboxAttempt(repoRoot, event.id, 'delivery_replay_failed')
+  }
+  const after = await inspectOutbox(repoRoot)
+  const pending = after.events.filter(item => item.type === 'delivery.record').length
+  return { total: deliveries.length, migrated: rows.length, sent, pending }
 }

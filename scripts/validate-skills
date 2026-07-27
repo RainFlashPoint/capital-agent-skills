@@ -9,9 +9,17 @@ ROOT="skills"; REF="$ROOT/cap-flow/references"
 fail=0
 err(){ echo "  ✗ $1"; fail=$((fail+1)); }
 ok(){ echo "  ✓ $1"; }
+contains_old_skill_name(){
+  local value="$1"
+  if command -v rg >/dev/null 2>&1; then
+    rg -q "$value" "$ROOT" scripts README.md CLAUDE.md --glob '!validate-skills' --glob '!setup-lib.mjs' --glob '!test-setup.mjs'
+  else
+    grep -R -q --exclude='validate-skills' --exclude='setup-lib.mjs' --exclude='test-setup.mjs' -- "$value" "$ROOT" scripts README.md CLAUDE.md
+  fi
+}
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$ROOT/cap-flow/scripts/cap-context-guard" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/cap-flow/scripts/cap-context-guard" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -53,7 +61,7 @@ ok "公开入口与直白动作词检查完成"
 
 echo "== 4.2 canonical stage protocol =="
 for old in cap-map cap-shape cap-build cap-verify; do
-  if rg -q "$old" "$ROOT" scripts README.md CLAUDE.md --glob '!validate-skills' --glob '!setup-lib.mjs' --glob '!test-setup.mjs'; then err "仍存在旧 Skill 名: $old"; fi
+  if contains_old_skill_name "$old"; then err "仍存在旧 Skill 名: $old"; fi
 done
 grep -q 'stage: understand | define | plan | implement | test | review | release | done' "$REF/templates/STATE.md" || err "STATE 阶段枚举未迁移"
 ok "阶段协议迁移检查完成"
@@ -66,12 +74,27 @@ done
 grep -q 'task-context.md' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未要求任务级代码事实"
 grep -q 'cap-context-guard' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未执行 task-context 确定性门禁"
 grep -q 'cap-status.mjs' "$ROOT/cap/SKILL.md" || err "cap 未执行客户端握手与下一动作判定"
+grep -q 'outbox.jsonl' "$ROOT/cap/SKILL.md" || err "cap 未声明离线 Outbox 补报协议"
 grep -q '禁止静默降级' "$ROOT/cap/SKILL.md" || err "cap 未声明平台失败禁止静默降级"
 grep -q '同一会话立即执行下一动作' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 仍可能停在 Artifact/STATE"
 grep -q '不得停在口头承诺' "$REF/progress-protocol.md" || err "进度协议未强制真实执行"
 grep -q 'External operation boundary' "$REF/task-reconnaissance.md" || err "task-context 未记录外部操作边界"
 grep -q 'External operation authorization' "$REF/templates/STATE.md" || err "STATE 未跨会话保存授权边界"
 ok "进度与代码侦察协议检查完成"
+
+echo "== 4.3.1 Harness Action 边界 =="
+grep -q 'STATE 是游标' "$REF/harness-action-protocol.md" || err "Harness 协议未声明 STATE 非 Gate 真值"
+grep -q 'create_task_action' "$ROOT/cap-test/SKILL.md" || err "cap-test 未接入 Test Action"
+LEGACY_ACTION_PATTERN="claim""_task_action|complete""_task_action"
+if grep -R -E -q -- "$LEGACY_ACTION_PATTERN" "$ROOT"; then err "Skills 仍引用旧 Task Action 协议"; fi
+grep -q '客户端不得自行回写 PASS' "$REF/harness-action-protocol.md" || err "Harness 协议未禁止客户端自行回写 Test/Review PASS"
+grep -q '代码修复：只续接 Server Review 生成的 Harness Patch Action' "$ROOT/cap/SKILL.md" || err "cap 入口未把 Patch 收敛到 Server Harness Action"
+grep -q '同一阶段只能使用一套协议' "$REF/harness-action-protocol.md" || err "Harness 协议未禁止新旧 Action 双写"
+grep -q 'Review Run 默认只读源码' "$ROOT/cap-review/SKILL.md" || err "cap-review 未落实只读执行"
+if grep -q 'disposition: <auto-fix' "$ROOT/cap-review/SKILL.md"; then err "cap-review 仍暴露 auto-fix disposition"; fi
+grep -q '## Harness actions' "$REF/templates/STATE.md" || err "STATE 未保存 Harness Action 引用"
+grep -q '编码实现不创建或认领 Task Action' "$ROOT/harvest-experience/references/platform-task-loop.md" || err "编码实现仍未收敛到 Session + Artifact + Delivery"
+ok "Harness Action 与独立 Gate 边界检查完成"
 
 echo "== 4.4 external integration safety invariants =="
 SERVER_ROLE="$REF/roles/server-dev.md"

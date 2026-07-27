@@ -8,3 +8,5 @@ local-state/
 *.token
 pending-deliveries.jsonl
 pending-deliveries.jsonl.tmp
+outbox.jsonl
+outbox.jsonl.tmp

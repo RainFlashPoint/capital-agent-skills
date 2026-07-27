@@ -2,6 +2,14 @@
 
 本地研发默认不要求用户打开平台。只要 MCP 暴露对应工具，Skill 必须按以下顺序自动执行；工具不可用时降级为纯本地 `.cap` 流程。
 
+## 离线 Outbox
+
+平台或 MCP 暂时不可用时，研发本身继续，但所有待回写事件统一写入 `.cap/outbox.jsonl`，不再为 Artifact、Action、Experience 各造一套临时文件。允许类型为 `task.attach`、`artifact.record`、`delivery.record`、`action.create:test`、`action.create:review`、`experience.record`、`skill.event`。
+
+每条事件必须带稳定 `idempotencyKey`、`type`、可选 `localTaskRef`、`dependsOn`、结构化 `payload`、时间与重试信息。离线创建 Task 时先生成 `localTaskRef`；后续事件依赖 `task.attach`，重放得到真实 `task_id/session_id` 后再注入后续 MCP 参数。只传路径、hash、Commit 和结构化结论，禁止保存代码正文、密钥和完整外部身份数据。
+
+恢复后运行 `scripts/cap-outbox.mjs replay-plan <repo>`，严格按依赖顺序调用原 MCP Tool。成功后执行 `ack`；失败执行 `fail` 并停止依赖它的后续事件。重复进入 `$cap` 必须安全重试，同一幂等键不得产生重复 Task、Artifact、Delivery、Action 或经验。旧 `.cap/pending-deliveries.jsonl` 会在下一次 `cap-status` 自动迁入 Outbox，新 post-commit 失败直接写 Outbox。
+
 ## 开始
 
 1. 读取 `git remote get-url origin`、当前 branch、`git rev-parse HEAD`、upstream HEAD 和仓库根目录。
@@ -13,12 +21,13 @@
 
 ## 平台 Action 接力
 
-Task 绑定完成后，如果 MCP 暴露 `claim_task_action`，立即用同一 `repo_url`、当前 branch 和本地 runner 标识查询。返回 `claimed=false` 才走普通 STATE；返回 Action 时不得让用户重新描述需求：
+Test/Review/Patch 的 Harness 契约见 `../../cap-flow/references/harness-action-protocol.md`。测试与评审只走
+`create_task_action/get_task_action/wait_task_action/cancel_task_action`：它绑定精确 Commit、独立 Provider Run
+和 Server Gate，STATE 只缓存引用。Review 生成的 Patch Action 由受控 Provider 消费。
 
-- `review`：针对 Action 的 `commitSha` 执行代码评审，完成后调用 `complete_task_action`，回写 `review.verdict` 与 findings 摘要。
-- `verify`：执行 Task 约定的验证命令/质量资产，完成后回写顶层 `verification.status`，可附带各子检查。
-- Action 失败必须回写 `ok=false + note`，平台保留失败状态并请求人工处理；不得静默丢单。
-- `complete_task_action` 的返回值是下一步权威源。若 Server 自动生成下一 Action，同一会话继续认领；若 Task `done`，再执行经验沉淀与退场。
+编码实现不创建或认领 Task Action。当前 Skills Session 或受控执行 Provider 完成代码后，依次回写阶段 Artifact、
+真实 Commit Delivery 和经验；Server 再基于该 Commit 创建 Test/Review Harness Action。这样 Task、Session、Action、
+Delivery 各自只有一种职责，不再存在两套 Review/Test 队列。
 
 ## Artifact 元数据
 
@@ -78,7 +87,7 @@ date -u +%Y-%m-%dT%H:%M:%SZ
 只上传 Commit、文件路径、验证和 Review 结构化结论，不上传代码正文。平台只把与当前 Commit 匹配的证据用于 Gate；旧 Commit 的通过证据不得替新提交放行。
 `record_task_delivery` 成功后把该 Commit 写入 STATE 的 `delivery-head`；下次入口发现 HEAD/upstream 与之不同时必须补对账。平台查询能力可用时，以平台最近 Delivery 为准并修正本地缓存；STATE 不是最终真值。
 
-IDE、人工或其它 Agent 直接 Commit 时，由项目 `post-commit` Hook 调用同一幂等 Delivery 协议。Hook 不阻塞 Commit；网络失败写入 `.cap/pending-deliveries.jsonl`，下次 `$cap` / `cap-status` 自动重试。知识快照存在时，最终验证回写还应携带 `knowledge_outcome`（直接采用、修改采用、未采用、拒绝）及可选原因，平台据此计算真实采纳与误导率。
+IDE、人工或其它 Agent 直接 Commit 时，由项目 `post-commit` Hook 调用同一幂等 Delivery 协议。网络失败写入 `.cap/outbox.jsonl` 的 `delivery.record`，下次 `$cap` / `cap-status` 自动重试；历史 `.cap/pending-deliveries.jsonl` 自动迁移，不再产生新记录。知识快照存在时，最终验证回写还应携带 `knowledge_outcome`（直接采用、修改采用、未采用、拒绝）及可选原因，平台据此计算真实采纳与误导率。
 
 经验沉淀必须携带 `task_id + commit_sha`。权威 PASS 来自 Server 对同一 Task、同一 Commit 的 Gate 校验；Task 一旦达到 `done`，Server 同步把关联的活动 Skills Session 收口到 `done/finished`。本地 STATE 若仍停在测试或评审阶段，`cap-status` 以平台 Task 为权威提示退场，不再让用户误以为流程卡住。
 

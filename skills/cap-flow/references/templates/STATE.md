@@ -44,6 +44,17 @@ delivery-head: <最近一次已通过 record_task_delivery 登记的完整 Git S
 deferred-only: false   # true 表示核心验收已通过，下面只剩可独立拆分的延期项；不得再用 gated 阻塞当前 Task
 follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
 
+## Harness actions
+
+<!-- 仅保存执行游标和引用；Server 是最终状态源。不得在这里自行声明 Gate PASS。 -->
+- none
+# - action-id: action_xxx
+#   type: test | patch | review | security_review | human
+#   status: ready | leased | running | evidence_submitted | succeeded | blocked | needs_human | canceled | expired
+#   source-commit: <精确 Git SHA>
+#   run-id: <可选执行 Run ID>
+#   next-poll: <UTC 时间或 on-next-session>
+
 ## Deferred acceptance
 
 <!-- 每项必须可独立验收；核心失败、安全/一致性风险不得放这里。无延期项填 none。 -->

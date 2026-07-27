@@ -23,6 +23,7 @@ description: >
 
 - `references/progress-protocol.md`：阶段开始、执行中和交接都必须向用户明确说明当前动作与下一步。
 - `references/task-reconnaissance.md`：每个新任务必须基于当前仓库真实代码建立或刷新 `.cap/task-context.md`；`PROFILE.md` 只作索引，不能替代任务级代码调查。
+- `references/harness-action-protocol.md`：Test/Review/Patch 的可信执行边界；STATE 是游标，不是 Gate 证明。
 
 任一阶段被直接调用时也必须遵守这两条契约。没有新鲜 `task-context.md` 时，不得直接进入计划或编码。
 准备进入 `plan / implement / test / review / release` 时，必须运行 `scripts/cap-context-guard`；失败就留在当前阶段刷新代码调查，不能只靠模型自判“应该没问题”。
@@ -126,6 +127,8 @@ Claude、Codex 或其它 CLI 上都能跑。
 | `task-context.md` | **任务级代码事实**：入口、调用链、相似实现、测试与影响范围 | 每个新任务先建立，HEAD/意图变化时刷新 |
 | `spec.md` `plan.md` | 阶段产物 | `cap-define` / `cap-plan` |
 | `verify/*.md` `review/*.md` | 验证 / 评审报告 | `cap-test` / `cap-review` |
+
+Test/Review 的最终可信状态来自 Server Action。STATE 中的阶段结论只能引用 `action-id + source-commit + status`；模型或本地脚本写出的 `PASS` 不得自行升级为 Server Gate PASS。
 | `requirements/` | 需求树(可选,intake 建立) | intake 操作(见 `references/intake.md`) |
 
 入口第一件事:`ls .cap/` 看有哪些文件,然后:

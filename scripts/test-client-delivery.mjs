@@ -25,6 +25,17 @@ test('pending delivery queue flushes successfully and keeps failed rows', async 
   await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-key\n')
   await queueCommitDelivery(repo, { taskId: 'task_ok', payload: { commit_sha: 'a' } })
   const result = await flushPendingDeliveries(repo, { homeDir: home, fetchImpl: async () => ({ ok: true }) })
-  assert.deepEqual(result, { total: 1, sent: 1, pending: 0 })
+  assert.deepEqual(result, { total: 1, migrated: 0, sent: 1, pending: 0 })
+  assert.equal(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), '')
+})
+
+test('legacy pending delivery file migrates into the unified outbox before replay', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'delivery-legacy-')); const home = await mkdtemp(join(tmpdir(), 'delivery-home-'))
+  await mkdir(join(repo, '.cap'), { recursive: true }); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(repo, '.cap/pending-deliveries.jsonl'), `${JSON.stringify({ taskId: 'task_legacy', payload: { commit_sha: 'legacy', idempotency_key: 'legacy:1' } })}\n`)
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  const result = await flushPendingDeliveries(repo, { homeDir: home, fetchImpl: async () => ({ ok: false }) })
+  assert.equal(result.migrated, 1); assert.equal(result.pending, 1)
   assert.equal(await readFile(join(repo, '.cap/pending-deliveries.jsonl'), 'utf8'), '')
+  assert.match(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), /delivery\.record/)
 })

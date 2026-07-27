@@ -51,6 +51,16 @@ test('offline handshake exposes missing platform and task instead of silently su
   assert.ok(result.reasons.includes('task_not_attached'))
 })
 
+test('offline handshake exposes queued outbox work without claiming platform completion', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-outbox-'))
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/outbox.jsonl'), `${JSON.stringify({ id: 'evt_task', idempotencyKey: 'task:local-1', type: 'task.attach', localTaskRef: 'local-1', dependsOn: [], payload: {}, createdAt: '2026-07-27T00:00:00.000Z' })}\n`)
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true })
+  assert.equal(result.platform.outbox.pending, 1)
+  assert.equal(result.platform.outbox.ready, 1)
+  assert.equal(result.platform.outbox.next.type, 'task.attach')
+})
+
 test('configured client without task reports platform ready after capability handshake', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-ready-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true })
