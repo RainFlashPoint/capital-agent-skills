@@ -75,6 +75,8 @@ grep -q 'task-context.md' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未要求�
 grep -q 'cap-context-guard' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未执行 task-context 确定性门禁"
 grep -q 'cap-status.mjs' "$ROOT/cap/SKILL.md" || err "cap 未执行客户端握手与下一动作判定"
 grep -q 'outbox.jsonl' "$ROOT/cap/SKILL.md" || err "cap 未声明离线 Outbox 补报协议"
+grep -q '等待历史元数据补报授权' "$ROOT/cap/SKILL.md" || err "cap 未区分当前 Task 与历史 Outbox 授权边界"
+grep -q '多个外部写操作必须串行' "$REF/progress-protocol.md" || err "进度协议未阻止未授权批量外部写入"
 grep -q '禁止静默降级' "$ROOT/cap/SKILL.md" || err "cap 未声明平台失败禁止静默降级"
 grep -q '同一会话立即执行下一动作' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 仍可能停在 Artifact/STATE"
 grep -q '不得停在口头承诺' "$REF/progress-protocol.md" || err "进度协议未强制真实执行"

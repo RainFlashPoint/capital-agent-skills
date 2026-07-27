@@ -8,7 +8,11 @@
 
 每条事件必须带稳定 `idempotencyKey`、`type`、可选 `localTaskRef`、`dependsOn`、结构化 `payload`、时间与重试信息。离线创建 Task 时先生成 `localTaskRef`；后续事件依赖 `task.attach`，重放得到真实 `task_id/session_id` 后再注入后续 MCP 参数。只传路径、hash、Commit 和结构化结论，禁止保存代码正文、密钥和完整外部身份数据。
 
-恢复后运行 `scripts/cap-outbox.mjs replay-plan <repo>`，严格按依赖顺序调用原 MCP Tool。成功后执行 `ack`；失败执行 `fail` 并停止依赖它的后续事件。重复进入 `$cap` 必须安全重试，同一幂等键不得产生重复 Task、Artifact、Delivery、Action 或经验。旧 `.cap/pending-deliveries.jsonl` 会在下一次 `cap-status` 自动迁入 Outbox，新 post-commit 失败直接写 Outbox。
+恢复后运行 `scripts/cap-outbox.mjs replay-plan <repo>`。当前 Task 在本轮明确授权范围内的事件，严格按依赖顺序调用原 MCP Tool；成功后执行 `ack`，失败执行 `fail` 并停止依赖它的后续事件。不得并行发起多个写操作，否则首个权限拒绝时其它请求仍可能已经发送。
+
+历史 Task、旧 Session 或之前会话形成的事件属于独立的数据发送动作。重放前必须告诉用户：目标服务、事件数量，以及将发送仓库相对路径、branch、Commit SHA、Task/Session ID 等结构化元数据；获得明确授权后才可逐条发送。未授权时不删除、不重试、不绕过审查，保留事件并继续当前任务。宿主返回 `rejected due to unacceptable risk`、`approval required` 或同类权限拒绝时，应原样归因为“缺少历史补报授权”，立即停止该批重放并向用户请求授权，禁止解释成超时或普通中断。
+
+重复进入 `$cap` 必须安全重试，同一幂等键不得产生重复 Task、Artifact、Delivery、Action 或经验。旧 `.cap/pending-deliveries.jsonl` 会在下一次 `cap-status` 自动迁入 Outbox，新 post-commit 失败直接写 Outbox。
 
 ## 开始
 
