@@ -26,7 +26,8 @@ test('installed provider executes one exact test action in an isolated worktree'
     let body=''; for await (const chunk of req) body+=chunk
     received.push({url:req.url,headers:req.headers,body:body?JSON.parse(body):{}})
     res.setHeader('Content-Type','application/json')
-    if (req.url.endsWith('/claim')) return res.end(JSON.stringify({code:0,data:{action:{id:'action_fixture',actionType:'test',sourceCommit:commit,contractSnapshot:{source:{repoUrl:'https://example.test/org/repo.git',branch:'main',commitSha:commit},requiredChecks:[{id:'check_1',command:'test "$(cat value.txt)" = ok',timeoutSeconds:10}]}},lease:{leaseId:'lease_1'}}}))
+    if (req.url.endsWith('/claim')) return res.end(JSON.stringify({code:0,data:{action:{id:'action_fixture',actionType:'test',sourceCommit:commit,contractSnapshot:{source:{repoUrl:'https://example.test/org/repo.git',branch:'main',commitSha:commit},requiredChecks:[{id:'check_1',command:'sleep 0.15 && test "$(cat value.txt)" = ok',timeoutSeconds:10}]}},lease:{leaseId:'lease_1'}}}))
+    if (req.url.endsWith('/heartbeat')) return res.end(JSON.stringify({code:0,data:{status:'running',leaseExpiresAt:new Date(Date.now()+300000).toISOString()}}))
     if (req.url.endsWith('/evidence')) return res.end(JSON.stringify({code:0,data:{status:'succeeded'}}))
     res.end(JSON.stringify({code:0,data:{ok:true}}))
   })
@@ -34,7 +35,7 @@ test('installed provider executes one exact test action in an isolated worktree'
   const configDir=join(home,'.capital-agent','runner'); await mkdir(configDir,{recursive:true})
   await writeFile(join(configDir,'config.json'),JSON.stringify({serverUrl:`http://127.0.0.1:${server.address().port}`,runnerId:'runner_fixture',runnerCredential:'credential',capabilities:['test']}))
   const result=await new Promise((resolvePromise,reject)=>{
-    const child=spawn(process.execPath,[runtime,repo,'action_fixture'],{env:{...process.env,HOME:home}})
+    const child=spawn(process.execPath,[runtime,repo,'action_fixture'],{env:{...process.env,HOME:home,CAPITAL_AGENT_LOCAL_PROVIDER_HEARTBEAT_MS:'50'}})
     let stdout=''; let stderr=''
     child.stdout.on('data',chunk=>{stdout+=chunk})
     child.stderr.on('data',chunk=>{stderr+=chunk})
@@ -47,5 +48,6 @@ test('installed provider executes one exact test action in an isolated worktree'
   assert.equal(evidence.body.evidence.testedHead,commit)
   assert.deepEqual(evidence.body.evidence.summary,{total:1,passed:1,failed:0,skipped:0})
   assert.equal(evidence.headers['x-runner-id'],'runner_fixture')
+  assert.ok(received.some(item=>item.url.endsWith('/heartbeat')))
   assert.equal((await readFile(join(repo,'value.txt'),'utf8')).trim(),'ok')
 })

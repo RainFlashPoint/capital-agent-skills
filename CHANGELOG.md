@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 本地 Test Provider 在长测试期间每分钟续租一次，每次仅延长 5 分钟且总生命周期最多 10 小时；连续三次续租失败主动终止测试，避免失联进程无限运行。
 - `setup --upgrade` 自动安装并注册按需启动的本地 Test Provider，凭证仅以 `0600` 保存于研发机，不再要求研发理解 Runner ID 或 Token。
 - 本地 Provider 只领取当前用户显式指定的 Test Action，在独立 worktree 执行后物理清理；Server 强制 test-only，拒绝无 Action ID、跨用户和 Patch 认领。
 - `setup --doctor` 新增本地 Provider 文件、凭证与 Server 鉴权探测。
