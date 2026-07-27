@@ -53,7 +53,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 
 ```text
 Capital Agent 已连接
-仓库：financial/gu-bei · dev_huifu
+仓库：example-org/example-repo · feature/example
 Task：task_xxx（已创建或已复用）
 当前：开发计划
 下一步：编码实现（本会话立即继续）

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `setup --upgrade` 自动安装并注册按需启动的本地 Test Provider，凭证仅以 `0600` 保存于研发机，不再要求研发理解 Runner ID 或 Token。
+- 本地 Provider 只领取当前用户显式指定的 Test Action，在独立 worktree 执行后物理清理；Server 强制 test-only，拒绝无 Action ID、跨用户和 Patch 认领。
+- `setup --doctor` 新增本地 Provider 文件、凭证与 Server 鉴权探测。
+- 新增开源发布安全门禁，阻止真实凭证、私网地址、固定身份和企业项目细节进入公开仓库。
+- 将统一入口中的企业项目示例替换为通用占位仓库，避免项目与分支信息进入公开 Skill。
+
 ## 0.3.9 — 2026-07-27
 
 - Harness Action 进入终态后强制同步刷新 STATE 与 Test/Review 阶段报告，旧的“等待 Commit、Action 未创建”描述必须被替换。

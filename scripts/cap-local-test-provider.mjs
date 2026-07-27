@@ -27,12 +27,16 @@ if (!existsSync(resolve(repo, '.git'))) {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
     const candidates = [
       process.env.CAPITAL_AGENT_RUNNER_BIN,
+      resolve(process.env.HOME || '', '.capital-agent', 'runner', 'local-test-provider.mjs'),
       resolve(packageRoot, '..', 'capital-agent-runner', 'bin', 'capital-loop-runner.mjs'),
       resolve(packageRoot, '..', '..', 'capital-agent-runner', 'bin', 'capital-loop-runner.mjs'),
     ].filter(Boolean)
     const runnerBin = candidates.find(candidate => existsSync(candidate)) || ''
+    const installedRuntime = runnerBin.endsWith('local-test-provider.mjs')
     const command = runnerBin ? process.execPath : 'capital-loop-runner'
-    const args = runnerBin
+    const args = installedRuntime
+      ? [runnerBin, repo, actionId]
+      : runnerBin
       ? [runnerBin, 'once', '--harness-only', '--harness-action-id', actionId, '--repo-map', `${repoUrl}=${repo}|`]
       : ['once', '--harness-only', '--harness-action-id', actionId, '--repo-map', `${repoUrl}=${repo}|`]
     const result = spawnSync(command, args, { encoding: 'utf8', stdio: 'pipe', env: process.env })

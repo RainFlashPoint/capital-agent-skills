@@ -67,7 +67,7 @@ test('project hook blocks code commit when cap delivery artifacts are not staged
 
 test('pre-push allows development branch while environment verification is pending', async () => {
   const repo = await fixtureRepo('cap-pre-push-dev-')
-  const output = runPrePush(repo, 'dev_huifu', 'task-id: task_demo\nstatus: gated\ndelivery-status: ENV_PENDING\ncap-gate: BLOCK\n')
+  const output = runPrePush(repo, 'feature/example', 'task-id: task_demo\nstatus: gated\ndelivery-status: ENV_PENDING\ncap-gate: BLOCK\n')
   assert.match(output, /开发\/测试分支代码交付放行/)
 })
 

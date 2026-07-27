@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { checkPlatformHandshake, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
+import { bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, inspectLocalTestProvider, installLocalTestProvider, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -29,8 +29,10 @@ if (args.doctor) {
   const health = await checkPlatformHandshake(serverUrl,userKey,fetch,{clientId,clientName:hostname(),clientVersion:'setup',mcpReachable:true,capabilities:{doctor:true}})
   const codexMcp = commandExists('codex') ? (() => { try { return /capital-agent/.test(execFileSync('codex',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
   const claudeMcp = commandExists('claude') ? (() => { try { return /capital-agent/.test(execFileSync('claude',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
-  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nCodex MCP: ${codexMcp?'PASS':'未注册'}\nClaude MCP: ${claudeMcp?'PASS':'未注册'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n`)
-  if (!health.ok || (!codexMcp && !claudeMcp)) process.exitCode=1
+  const provider = await inspectLocalTestProvider(homedir())
+  const providerAuth = provider.ok ? await checkLocalTestProvider(provider.config) : { ok: false }
+  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nCodex MCP: ${codexMcp?'PASS':'未注册'}\nClaude MCP: ${claudeMcp?'PASS':'未注册'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n`)
+  if (!health.ok || (!codexMcp && !claudeMcp) || !provider.ok || !providerAuth.ok) process.exitCode=1
   process.exit()
 }
 
@@ -45,6 +47,9 @@ if (!userKey) {
 if (/\r|\n/.test(serverUrl) || /\r|\n/.test(userKey)) throw new Error('平台配置不能包含换行符')
 await mkdir(configDir,{recursive:true,mode:0o700}); await writeFile(configFile,`CAPITAL_AGENT_SERVER_URL=${serverUrl}\nCAPITAL_AGENT_USER_KEY=${userKey}\nCAPITAL_AGENT_CLIENT_ID=${clientId}\n`,{mode:0o600}); await chmod(configFile,0o600)
 
+const registration = await bootstrapLocalTestProvider(serverUrl,userKey,{clientId,clientName:hostname()})
+const localProvider = await installLocalTestProvider({ home: homedir(), source: join(root,'runtime','local-test-provider.mjs'), serverUrl, registration, clientId })
+
 const installed = []
 const targets = skillTargets(homedir())
 if (!args.claudeOnly) installed.push(`Codex: ${(await installSkillLinks(join(root,'skills'),targets.codex)).length}`)
@@ -53,4 +58,4 @@ const wrapper = join(here,'mcp-remote.mjs')
 if (!args.configOnly && !args.claudeOnly && commandExists('codex')) { try { run('codex',['mcp','remove','capital-agent']) } catch {}; run('codex',['mcp','add','capital-agent','--',process.execPath,wrapper]) }
 if (!args.configOnly && !args.codexOnly && commandExists('claude')) { try { run('claude',['mcp','remove','capital-agent','-s','user']) } catch {}; run('claude',['mcp','add','-s','user','capital-agent','--',process.execPath,wrapper]) }
 if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
-process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}。配置仅保存在 ${configFile}。\n`)
+process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}。本地 Test Provider 已启用（按需运行、test-only）。配置仅保存在 ${configFile} 与 ${localProvider.configPath}。\n`)

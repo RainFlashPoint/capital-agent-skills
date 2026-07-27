@@ -110,7 +110,7 @@ for invariant in '环境选择 fail-closed' '配置值保持真实作用域' '�
 done
 grep -q 'External Integration Safety Invariants' "$ROOT/cap-implement/SKILL.md" || err "cap-implement 未加载外部集成安全不变量"
 grep -q 'External Integration Safety Invariants' "$ROOT/cap-review/SKILL.md" || err "cap-review 未加载外部集成安全不变量"
-for project_term in pay_channel_account PayApproach Descriptor bizTp '002/016' 汇付 中金; do
+for project_term in project_specific_table ProjectSpecificEnum CustomerSpecificField 'vendor-specific-code'; do
   if grep -q "$project_term" "$SERVER_ROLE"; then err "通用 server-dev 混入项目特有字段: $project_term"; fi
 done
 ok "外部集成安全不变量与分层检查完成"
@@ -144,6 +144,9 @@ if [ -f "$GUARD" ]; then
 else
   err "缺失:$GUARD(强门禁脚本应随 cap-flow 技能自包含)"
 fi
+
+echo "== 8. 开源发布安全审计 =="
+node scripts/audit-open-source.mjs || err "开源发布安全审计未通过"
 
 echo
 if [ $fail -eq 0 ]; then echo "RESULT: PASS ✅"; exit 0

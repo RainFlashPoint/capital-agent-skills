@@ -1,4 +1,4 @@
-import { lstat, mkdir, readlink, symlink, unlink } from 'fs/promises'
+import { chmod, copyFile, lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 
 export const publicSkillNames = ['cap']
@@ -85,4 +85,62 @@ export async function checkPlatformHandshake(serverUrl, userKey, fetchImpl = fet
     const data = body.data || {}
     return { ok: response.ok && data.capabilities?.taskWrite === true && data.capabilities?.commitReconcile === true, status: response.status, ...data }
   } catch { return { ok: false, reason: 'network_error' } }
+}
+
+export async function bootstrapLocalTestProvider(serverUrl, userKey, client = {}, fetchImpl = fetch) {
+  const response = await fetchImpl(`${serverUrl}/api/auth/local-test-provider/bootstrap`, {
+    method: 'POST',
+    headers: { 'x-user-key': userKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: client.clientId, clientName: client.clientName }),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || !body.data?.runnerId || !body.data?.runnerCredential) throw new Error(body.msg || '本地 Test Provider 注册失败')
+  return body.data
+}
+
+export async function installLocalTestProvider({ home, source, serverUrl, registration, clientId }) {
+  const directory = join(home, '.capital-agent', 'runner')
+  const runtimePath = join(directory, 'local-test-provider.mjs')
+  const configPath = join(directory, 'config.json')
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  await copyFile(source, runtimePath)
+  await chmod(runtimePath, 0o700)
+  await writeFile(configPath, `${JSON.stringify({
+    serverUrl,
+    runnerId: registration.runnerId,
+    runnerCredential: registration.runnerCredential,
+    clientId,
+    capabilities: ['test'],
+    runtimeVersion: 'skills-local-test-provider-v1',
+  }, null, 2)}\n`, { mode: 0o600 })
+  await chmod(configPath, 0o600)
+  return { runtimePath, configPath }
+}
+
+export async function inspectLocalTestProvider(home) {
+  const directory = join(home, '.capital-agent', 'runner')
+  const runtimePath = join(directory, 'local-test-provider.mjs')
+  const configPath = join(directory, 'config.json')
+  try {
+    const config = JSON.parse(await readFile(configPath, 'utf8'))
+    const runtime = await lstat(runtimePath)
+    const credentialsReady = Boolean(config.serverUrl && config.runnerId && config.runnerCredential && Array.isArray(config.capabilities) && config.capabilities.length === 1 && config.capabilities[0] === 'test')
+    return { ok: runtime.isFile() && credentialsReady, runtimePath, configPath, config }
+  } catch {
+    return { ok: false, runtimePath, configPath, config: {} }
+  }
+}
+
+export async function checkLocalTestProvider(config = {}, fetchImpl = fetch) {
+  if (!config.serverUrl || !config.runnerId || !config.runnerCredential) return { ok: false, reason: 'missing_config' }
+  try {
+    const response = await fetchImpl(`${config.serverUrl}/api/execution/runner/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-runner-id': config.runnerId, 'x-runner-token': config.runnerCredential },
+      body: JSON.stringify({ capabilities: { doctor: true, test: true, patch: false } }),
+    })
+    return { ok: response.ok, status: response.status }
+  } catch {
+    return { ok: false, reason: 'network_error' }
+  }
 }

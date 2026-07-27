@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { lstat, mkdtemp, mkdir, readlink, symlink } from 'fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { checkPlatformConnection, checkPlatformHandshake, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, inspectLocalTestProvider, installLocalTestProvider, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -56,4 +56,30 @@ test('doctor handshake verifies write and commit reconcile capabilities', async 
   const result = await checkPlatformHandshake('https://example.test','user-key',async (url, options) => { request = { url, options }; return { ok: true, status: 200, json: async () => ({ data: { protocolVersion: 1, capabilities: { taskWrite: true, commitReconcile: true } } }) } })
   assert.equal(result.ok,true)
   assert.equal(request.url,'https://example.test/api/auth/handshake')
+})
+test('bootstraps a test-only provider without exposing credentials in arguments', async () => {
+  let request
+  const result = await bootstrapLocalTestProvider('https://example.test','user-key',{clientId:'client_12345678',clientName:'laptop'},async (url, options) => {
+    request = { url, options }
+    return { ok: true, status: 201, json: async () => ({ data: { runnerId: 'runner_1', runnerCredential: 'credential', capabilities: ['test'] } }) }
+  })
+  assert.equal(result.runnerId,'runner_1')
+  assert.equal(request.url,'https://example.test/api/auth/local-test-provider/bootstrap')
+  assert.equal(request.options.headers['x-user-key'],'user-key')
+  assert.deepEqual(JSON.parse(request.options.body),{clientId:'client_12345678',clientName:'laptop'})
+})
+test('installs local provider runtime and test-only credentials with a valid doctor probe', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-provider-'))
+  const source = join(home,'source.mjs')
+  await writeFile(source,'console.log("fixture")\n')
+  const installed = await installLocalTestProvider({ home, source, serverUrl:'https://example.test', registration:{runnerId:'runner_1',runnerCredential:'credential'}, clientId:'client_12345678' })
+  assert.match(await readFile(installed.runtimePath,'utf8'),/fixture/)
+  const state = await inspectLocalTestProvider(home)
+  assert.equal(state.ok,true)
+  assert.deepEqual(state.config.capabilities,['test'])
+  let request
+  const probe = await checkLocalTestProvider(state.config,async (url, options) => { request={url,options}; return {ok:true,status:200} })
+  assert.equal(probe.ok,true)
+  assert.equal(request.options.headers['x-runner-id'],'runner_1')
+  assert.equal(JSON.parse(request.options.body).capabilities.patch,false)
 })
