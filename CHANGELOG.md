@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.6
+
+- 修复 Node 18 下 `mcp-remote` 的 `undici` 启动失败：统一要求并自动寻找 Node 20.18.1+，三种客户端写入同一兼容 Node 绝对路径；不兼容时在覆盖 MCP 配置前 fail-closed。
+
 ## 0.4.5
 
 - 新增 Cursor 一键适配：安装唯一 `cap` Skill、注册固定 MCP Runtime，并写入 always-on 研发规则；真实 Git 研发请求自动创建或绑定 Task，纯问答不上传。

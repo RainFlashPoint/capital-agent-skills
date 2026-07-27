@@ -3,24 +3,35 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_BIN="${CAPITAL_AGENT_NODE_BIN:-}"
+MIN_NODE_VERSION="20.18.1"
 
-if [[ -z "$NODE_BIN" ]] && command -v node >/dev/null 2>&1; then
-  NODE_BIN="$(command -v node)"
+node_is_compatible() {
+  [[ -x "$1" ]] && "$1" -p 'const [a,b,c]=process.versions.node.split(".").map(Number); Number(a>20||(a===20&&(b>18||(b===18&&c>=1))))' 2>/dev/null | grep -qx 1
+}
+
+if [[ -n "$NODE_BIN" ]] && ! node_is_compatible "$NODE_BIN"; then
+  echo "CAPITAL_AGENT_NODE_BIN 指向的 Node 不兼容：$($NODE_BIN --version 2>/dev/null || echo unknown)，最低需要 ${MIN_NODE_VERSION}。" >&2
+  exit 1
 fi
 
 if [[ -z "$NODE_BIN" ]]; then
-  for candidate in /opt/homebrew/bin/node /usr/local/bin/node "$HOME/.volta/bin/node"; do
-    if [[ -x "$candidate" ]]; then NODE_BIN="$candidate"; break; fi
+  candidates=()
+  if command -v node >/dev/null 2>&1; then candidates+=("$(command -v node)"); fi
+  candidates+=(/opt/homebrew/bin/node /usr/local/bin/node "$HOME/.volta/bin/node")
+  if [[ -d "$HOME/.nvm/versions/node" ]]; then
+    while IFS= read -r candidate; do candidates+=("$candidate"); done < <(find "$HOME/.nvm/versions/node" -type f -path '*/bin/node' -perm -111 2>/dev/null | sort -Vr)
+  fi
+  if [[ -d "$HOME/.cache/codex-runtimes" ]]; then
+    while IFS= read -r candidate; do candidates+=("$candidate"); done < <(find "$HOME/.cache/codex-runtimes" -type f -path '*/dependencies/node/bin/node' -perm -111 2>/dev/null)
+  fi
+  for candidate in "${candidates[@]}"; do
+    if node_is_compatible "$candidate"; then NODE_BIN="$candidate"; break; fi
   done
-fi
-
-if [[ -z "$NODE_BIN" && -d "$HOME/.nvm/versions/node" ]]; then
-  NODE_BIN="$(find "$HOME/.nvm/versions/node" -type f -path '*/bin/node' -perm -111 2>/dev/null | sort -V | tail -1)"
 fi
 
 if [[ -z "$NODE_BIN" || ! -x "$NODE_BIN" ]]; then
   cat >&2 <<'EOF'
-Capital Agent 安装需要 Node.js 18 或更高版本，但当前 Shell 未找到 node。
+Capital Agent 的 MCP Runtime 需要 Node.js 20.18.1 或更高版本，但当前机器未找到兼容版本。
 
 macOS 可执行：
   brew install node
@@ -29,12 +40,6 @@ macOS 可执行：
   CAPITAL_AGENT_NODE_BIN=/Node/绝对路径 bash scripts/setup.sh --server "https://your-server" --upgrade
 EOF
   exit 127
-fi
-
-MAJOR="$($NODE_BIN -p 'Number(process.versions.node.split(".")[0])')"
-if [[ ! "$MAJOR" =~ ^[0-9]+$ || "$MAJOR" -lt 18 ]]; then
-  echo "Capital Agent 需要 Node.js 18+，当前为 $($NODE_BIN --version)。" >&2
-  exit 1
 fi
 
 export PATH="$(dirname "$NODE_BIN"):$PATH"

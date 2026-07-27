@@ -6,13 +6,14 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
+import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleMcpNode, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
 const mcpRuntimeDir = join(homedir(), '.capital-agent', 'mcp-runtime')
 const mcpRuntimePackage = join(mcpRuntimeDir, 'node_modules', 'mcp-remote', 'package.json')
 const MCP_REMOTE_VERSION = '0.1.38'
+if (!isCompatibleMcpNode(process.versions.node)) throw new Error(`Capital Agent MCP Runtime 需要 Node.js ${minimumMcpNodeVersion}+，当前为 ${process.version}。请改用 bash scripts/setup.sh，让安装器自动选择兼容 Node。`)
 const existing = await readFile(configFile, 'utf8').catch(() => '')
 const config = Object.fromEntries(existing.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1],match[2]]))
 let serverUrl = normalizeServerUrl(args.server || process.env.CAPITAL_AGENT_SERVER_URL || config.CAPITAL_AGENT_SERVER_URL || '')

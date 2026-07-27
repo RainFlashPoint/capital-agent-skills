@@ -3,6 +3,14 @@ import { basename, dirname, join } from 'path'
 
 export const publicSkillNames = ['cap']
 export const legacySkillNames = ['cap-map', 'cap-shape', 'cap-build', 'cap-verify']
+export const minimumMcpNodeVersion = '20.18.1'
+
+export function isCompatibleMcpNode(version = '') {
+  const parts = String(version).replace(/^v/, '').split('.').map(Number)
+  if (parts.length < 3 || parts.some(Number.isNaN)) return false
+  const [major, minor, patch] = parts
+  return major > 20 || (major === 20 && (minor > 18 || (minor === 18 && patch >= 1)))
+}
 
 export function parseSetupArgs(argv = []) {
   const value = flag => { const index = argv.indexOf(flag); return index >= 0 ? argv[index + 1] || '' : '' }

@@ -3,12 +3,20 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleMcpNode, legacySkillNames, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
   assert.equal(normalizeServerUrl('https://example.test/'), 'https://example.test')
   assert.throws(() => normalizeServerUrl('file:///tmp/a'))
+})
+test('requires the Node version needed by the fixed MCP runtime', () => {
+  assert.equal(minimumMcpNodeVersion,'20.18.1')
+  assert.equal(isCompatibleMcpNode('18.20.8'),false)
+  assert.equal(isCompatibleMcpNode('20.18.0'),false)
+  assert.equal(isCompatibleMcpNode('20.18.1'),true)
+  assert.equal(isCompatibleMcpNode('22.22.2'),true)
+  assert.equal(isCompatibleMcpNode('v24.14.0'),true)
 })
 test('uses the current Codex user skill discovery directory', () => {
   assert.equal(skillTargets('/home/dev').codex, '/home/dev/.agents/skills')

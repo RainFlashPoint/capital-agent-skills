@@ -2,7 +2,7 @@
 
 骑在 CLI 上的研发流程 + 经验闭环技能族。给你的 coding agent（Claude Code / Codex / Cursor / 其它）装一套**结构化研发流程**，外加一个**跨会话、跨人积累的经验中枢**：会话开始注入相关经验，会话结束沉淀本次改动，所有人的经验汇入同一个中心知识库。
 
-> **状态**：v0.4.5，持续演进中。核心是把结构化研发流程与连中心知识库的经验闭环 `harvest-experience` 合在一起。
+> **状态**：v0.4.6，持续演进中。核心是把结构化研发流程与连中心知识库的经验闭环 `harvest-experience` 合在一起。
 
 ## 这是什么
 
@@ -21,7 +21,7 @@
 bash /path/to/capital-agent-skills/scripts/setup.sh --server "https://your-server"
 ```
 
-升级与诊断：`bash scripts/setup.sh --server "https://your-server" --upgrade`、`bash scripts/setup.sh --server "https://your-server" --doctor`。Shell 入口会自动寻找 PATH、Homebrew、Volta 或 NVM 中的 Node.js 18+；找不到时给出明确安装提示。安装器同时注册一个按需启动的本地 Test Provider：仅领取当前用户明确指定的 Test Action，在独立 Git worktree 中执行并自动清理；Runner ID 与一次性签发的凭证只保存在研发机 `~/.capital-agent/runner/config.json`（`0600`），无需人工复制，也不会启用代码修改或常驻 daemon。运行中每分钟进行一次受限续租，每次只延长 5 分钟，总生命周期硬上限 10 小时；连续三次续租失败会停止测试进程。环境变量仍作为服务器/CI 的非交互兼容方式。
+升级与诊断：`bash scripts/setup.sh --server "https://your-server" --upgrade`、`bash scripts/setup.sh --server "https://your-server" --doctor`。Shell 入口会自动寻找 PATH、Homebrew、Volta、NVM 或可用的 Codex Runtime 中满足要求的 Node.js 20.18.1+；不会再用不兼容的 Node 18 写出表面注册成功、实际无法启动的 MCP。找不到时给出明确安装提示。安装器同时注册一个按需启动的本地 Test Provider：仅领取当前用户明确指定的 Test Action，在独立 Git worktree 中执行并自动清理；Runner ID 与一次性签发的凭证只保存在研发机 `~/.capital-agent/runner/config.json`（`0600`），无需人工复制，也不会启用代码修改或常驻 daemon。运行中每分钟进行一次受限续租，每次只延长 5 分钟，总生命周期硬上限 10 小时；连续三次续租失败会停止测试进程。环境变量仍作为服务器/CI 的非交互兼容方式。
 
 Skills 与 MCP 只需在研发机器安装一次。安装器会幂等更新 Codex、Claude Code、Cursor 的全局规则和 MCP 配置：Git 仓库中的实现、修复、重构、测试、评审和发布请求自动进入 Cap，不强制输入 `$cap`；纯问答、讨论和调研不创建平台 Task。已有个人规则、Cursor MCP Server 和其它配置不会被覆盖。首次进入 Git 项目时，Skill 会静默安装兼容现有 Hook 的关联器，正常 `git commit` 自动附加 Task/Session。研发不需要手工安装 Hook、填写 Task ID 或配置 GitLab CI。
 
