@@ -43,6 +43,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
    - 代码评审：强制 `create_task_action(action_type=review) → wait_task_action/get_task_action`；Review 只读，客户端不得自行写 Review PASS。
    - 代码修复：只续接 Server Review 生成的 Harness Patch Action；由受控 Patch Provider 回写新 Commit 与 Patch Evidence，Skills 不自行伪造完成结果。
    Server 返回新 Commit 的 Test/Review Action 时在同一会话继续；统一 Task `done` 后才进入 Delivery 与经验沉淀。
+   `get_task_action / wait_task_action` 返回终态时，必须同步刷新 `.cap/STATE.md` 与对应 `.cap/verify/*.md` 或 `.cap/review/*.md`，替换已经失效的“未提交、未推送、Action 未创建”等描述。两处统一记录 Action ID、源 Commit、Provider 终态、Server Gate、分类和解除条件；`ENV_BLOCKED` 不得写 PASS。
 9. 会话结束时沉淀意图与改动文件路径，并维护统一 Task/Skills Session。
 
 进入测试验证或代码评审前同时加载 `../cap-flow/references/harness-action-protocol.md`。验证阶段优先使用 `create_task_action → wait_task_action/get_task_action` 请求独立 Test Provider；STATE 只保存 Action 引用，不能用本地 `PASS` 自证平台 Gate。Review 默认只读；可修 Finding 生成独立 Patch Action，不在同一 Review Run 中修改源码并自签 PASS。

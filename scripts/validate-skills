@@ -96,6 +96,9 @@ grep -q 'Review Run 默认只读源码' "$ROOT/cap-review/SKILL.md" || err "cap-
 if grep -q 'disposition: <auto-fix' "$ROOT/cap-review/SKILL.md"; then err "cap-review 仍暴露 auto-fix disposition"; fi
 grep -q '## Harness actions' "$REF/templates/STATE.md" || err "STATE 未保存 Harness Action 引用"
 grep -q '编码实现不创建或认领 Task Action' "$ROOT/harvest-experience/references/platform-task-loop.md" || err "编码实现仍未收敛到 Session + Artifact + Delivery"
+grep -q 'Action 终态的本地证据同步' "$REF/harness-action-protocol.md" || err "Harness 协议未同步 STATE 与阶段报告"
+grep -q '必须替换报告中已经失效的文字' "$REF/harness-action-protocol.md" || err "Harness 协议未禁止保留过期阶段报告"
+grep -q 'ENV_BLOCKED.*绝不能改写为代码失败或 PASS' "$REF/harness-action-protocol.md" || err "Harness 协议未保持环境阻塞分类"
 ok "Harness Action 与独立 Gate 边界检查完成"
 
 echo "== 4.4 external integration safety invariants =="

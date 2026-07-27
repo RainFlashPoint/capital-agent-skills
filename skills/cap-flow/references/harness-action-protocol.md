@@ -24,6 +24,16 @@ Skills 是 Harness Client，不是可信 Gate 内核。STATE 是游标，不是 
 5. 本地命令和 `.cap/verify/*` 是 Provider 输入与诊断资产，不是高风险任务的最终通行证。低风险兼容是否可放行也由 Server Gate Policy 决定，Skills 不自行判断。
 6. Test Action 成功后，Server 应为同一 Commit 幂等创建只读 Review Action；客户端从 Test 结果中的 `reviewActionId` 或 Task Action 列表继续等待。没有人工门禁时不得停下来要求用户再次触发评审。
 
+### Action 终态的本地证据同步
+
+`get_task_action` 或 `wait_task_action` 返回终态后，主线必须在同一轮同步刷新 `.cap/STATE.md` 和当前阶段报告（Test 为 `.cap/verify/*.md`，Review 为 `.cap/review/*.md`）。两处至少记录：Action ID、源 Commit、Provider 终态、Server Gate 结论、机器分类和解除条件。
+
+- 必须替换报告中已经失效的文字，例如“Action 未创建”“等待 Commit/Push”；不得只在 STATE 末尾追加新 Action。
+- Commit 已形成、已推送、Action 已创建等机械事实应在 STATE 中勾选；独立 Test/Review Gate 只有 Server 返回可信成功时才能勾选。
+- `blocked/needs_human` 且分类为 `ENV_BLOCKED` 时，报告写环境阻塞和解除条件，绝不能改写为代码失败或 PASS。
+- 终态同步属于同一 Task 的本地证据校正，不要求为了更新报告再产生一个业务代码 Commit；如平台支持 Artifact，只登记路径和摘要，不上传代码正文。
+- 聊天、STATE 和阶段报告发生冲突时，立即按 Server 终态修正三者后再决定下一动作。
+
 Action API 不可用时，明确报告“仅完成本地验证，缺少独立 Provider Gate”；不得把本地 `PASS` 改写成平台已验证。
 
 ## Review 与 Patch Action
@@ -49,7 +59,7 @@ Server 验证 Patch Evidence 后才结束 Patch Action。成功只代表“新 C
 
 ## STATE 边界
 
-STATE 可记录：`action-id/type/status/source-commit/run-id/next-poll`。STATE 不得记录为权威事实：`server-validated=true`、最终 Gate PASS、Provider 原始输出正文。权威结果始终通过 `get_task_action` 从 Server 读取。
+STATE 可记录：`action-id/type/status/source-commit/run-id/next-poll` 以及从 Server 终态提炼的分类、解除条件和人类可读摘要。STATE 不得自行生成权威事实：`server-validated=true`、最终 Gate PASS、Provider 原始输出正文。权威结果始终通过 `get_task_action` 从 Server 读取；STATE 与阶段报告只是该结果的可审计本地镜像。
 
 ## Delivery 与经验回写
 

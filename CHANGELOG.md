@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.9 — 2026-07-27
+
+- Harness Action 进入终态后强制同步刷新 STATE 与 Test/Review 阶段报告，旧的“等待 Commit、Action 未创建”描述必须被替换。
+- 本地证据统一记录 Action、源 Commit、Provider 终态、Server Gate、机器分类和解除条件；`ENV_BLOCKED` 不得被写成代码失败或 PASS。
+
 ## 0.3.8 — 2026-07-27
 
 - 增加精确 Commit 的 Push 门禁：当前 HEAD 未在上游分支可见时明确提示远程、分支和 Commit，授权后连续执行 Push、当前 Delivery 与 Test Action。

@@ -61,3 +61,5 @@ Server/MCP 返回预检失败时，优先展示结构化 `reason/preflight.code/
 ```
 
 同时把相同语义写入 `STATE.md` 的 status、gates 和 next-action。聊天提示与状态文件冲突时，以真实证据修正两者，不能静默跳阶段。
+
+若阶段由 Harness Action 执行，终态还必须同步刷新对应 `.cap/verify/*.md` 或 `.cap/review/*.md`。STATE、阶段报告和聊天必须引用同一个 Action、Commit、Provider 结论与解除条件；禁止报告仍写“等待 Commit/Action 未创建”，而 STATE 已记录 Action 阻塞或成功。
