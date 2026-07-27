@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 新增 `scripts/setup.sh` 作为统一安装入口，自动发现 PATH、Homebrew、Volta 与 NVM 的 Node.js；Shell 找不到 Node 时不再直接报 `command not found`，而是输出明确的 Node 18+ 修复方式。
 - setup 以幂等受管理区块安装 Codex/Claude 全局自动激活规则：Git 仓库中的真实研发请求无需显式 `$cap` 即创建/绑定 Task，纯问答与讨论不上传；用户原有全局指令保持不变。
 - 本地 Test Provider 在长测试期间每分钟续租一次，每次仅延长 5 分钟且总生命周期最多 10 小时；连续三次续租失败主动终止测试，避免失联进程无限运行。
 - `setup --upgrade` 自动安装并注册按需启动的本地 Test Provider，凭证仅以 `0600` 保存于研发机，不再要求研发理解 Runner ID 或 Token。

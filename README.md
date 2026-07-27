@@ -18,10 +18,10 @@
 一键初始化（自动打开浏览器授权，不需要复制个人 Key；自动安装 Codex/Claude Skills 并注册 MCP）：
 
 ```bash
-node /path/to/capital-agent-skills/scripts/setup.mjs --server "https://your-server"
+bash /path/to/capital-agent-skills/scripts/setup.sh --server "https://your-server"
 ```
 
-升级与诊断：`setup.mjs --server "https://your-server" --upgrade`、`setup.mjs --server "https://your-server" --doctor`。安装器同时注册一个按需启动的本地 Test Provider：仅领取当前用户明确指定的 Test Action，在独立 Git worktree 中执行并自动清理；Runner ID 与一次性签发的凭证只保存在研发机 `~/.capital-agent/runner/config.json`（`0600`），无需人工复制，也不会启用代码修改或常驻 daemon。运行中每分钟进行一次受限续租，每次只延长 5 分钟，总生命周期硬上限 10 小时；连续三次续租失败会停止测试进程。环境变量仍作为服务器/CI 的非交互兼容方式。
+升级与诊断：`bash scripts/setup.sh --server "https://your-server" --upgrade`、`bash scripts/setup.sh --server "https://your-server" --doctor`。Shell 入口会自动寻找 PATH、Homebrew、Volta 或 NVM 中的 Node.js 18+；找不到时给出明确安装提示。安装器同时注册一个按需启动的本地 Test Provider：仅领取当前用户明确指定的 Test Action，在独立 Git worktree 中执行并自动清理；Runner ID 与一次性签发的凭证只保存在研发机 `~/.capital-agent/runner/config.json`（`0600`），无需人工复制，也不会启用代码修改或常驻 daemon。运行中每分钟进行一次受限续租，每次只延长 5 分钟，总生命周期硬上限 10 小时；连续三次续租失败会停止测试进程。环境变量仍作为服务器/CI 的非交互兼容方式。
 
 Skills 与 MCP 只需在研发机器安装一次。安装器会以可识别的受管理区块更新 Codex/Claude 全局指令：Git 仓库中的实现、修复、重构、测试、评审和发布请求自动进入 Cap，不强制输入 `$cap`；纯问答、讨论和调研不创建平台 Task。已有个人指令不会被覆盖。首次进入 Git 项目时，Skill 会静默安装兼容现有 Hook 的关联器，正常 `git commit` 自动附加 Task/Session。研发不需要手工安装 Hook、填写 Task ID 或配置 GitLab CI。
 
