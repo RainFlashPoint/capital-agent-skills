@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, hasActivationRule, inspectLocalTestProvider, installActivationRule, installLocalTestProvider, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, hasActivationRule, hasCodexMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installLocalTestProvider, installSkillLinks, legacySkillNames, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -13,6 +13,22 @@ test('parses setup modes and validates server URL', () => {
 test('uses the current Codex user skill discovery directory', () => {
   assert.equal(skillTargets('/home/dev').codex, '/home/dev/.agents/skills')
   assert.equal(activationRuleTargets('/home/dev').codex, '/home/dev/.codex/AGENTS.md')
+  assert.equal(codexConfigPath('/home/dev'), '/home/dev/.codex/config.toml')
+})
+test('installs Codex MCP config without requiring the codex CLI or replacing other config', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-codex-config-'))
+  const target = codexConfigPath(home); await mkdir(join(home,'.codex'),{recursive:true})
+  await writeFile(target,'model = "example"\n\n[mcp_servers.other]\ncommand = "other"\n\n[mcp_servers.capital-agent]\ncommand = "old"\nargs = ["old"]\n')
+  await installCodexMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs')
+  await installCodexMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs')
+  const content=await readFile(target,'utf8')
+  assert.match(content,/model = "example"/)
+  assert.match(content,/\[mcp_servers\.other\]/)
+  assert.equal(content.split('[mcp_servers.capital-agent]').length-1,1)
+  assert.equal(content.split('capital-agent:mcp:start').length-1,1)
+  assert.doesNotMatch(content,/command = "old"|args = \["old"\]/)
+  assert.equal(content.split('args = ["/repo/mcp-remote.mjs"]').length-1,1)
+  assert.equal(await hasCodexMcpConfig(target,'/repo/mcp-remote.mjs'),true)
 })
 test('installs one managed activation block without overwriting user instructions', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-activation-'))

@@ -27,7 +27,7 @@ await fetch(`${serverUrl}/api/auth/handshake`, {
   signal: AbortSignal.timeout(5000),
 }).catch(() => null)
 
-const command = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-const child = spawn(command, ['-y', 'mcp-remote', `${serverUrl}/api/mcp/message`, '--header', `x-user-key:${userKey}`], { stdio: 'inherit', env: process.env })
+const proxy = join(homedir(), '.capital-agent', 'mcp-runtime', 'node_modules', 'mcp-remote', 'dist', 'proxy.js')
+const child = spawn(process.execPath, [proxy, `${serverUrl}/api/mcp/message`, '--header', `x-user-key:${userKey}`], { stdio: 'inherit', env: process.env })
 child.on('error', error => { process.stderr.write(`${error.message}\n`); process.exit(1) })
 child.on('exit', code => process.exit(code ?? 1))

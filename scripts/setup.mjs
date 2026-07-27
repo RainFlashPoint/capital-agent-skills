@@ -6,10 +6,13 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, hasActivationRule, inspectLocalTestProvider, installActivationRule, installLocalTestProvider, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
+import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, codexConfigPath, hasActivationRule, hasCodexMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installLocalTestProvider, installSkillLinks, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
+const mcpRuntimeDir = join(homedir(), '.capital-agent', 'mcp-runtime')
+const mcpRuntimePackage = join(mcpRuntimeDir, 'node_modules', 'mcp-remote', 'package.json')
+const MCP_REMOTE_VERSION = '0.1.38'
 const existing = await readFile(configFile, 'utf8').catch(() => '')
 const config = Object.fromEntries(existing.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1],match[2]]))
 let serverUrl = normalizeServerUrl(args.server || process.env.CAPITAL_AGENT_SERVER_URL || config.CAPITAL_AGENT_SERVER_URL || '')
@@ -27,15 +30,17 @@ function openBrowser(url) {
 
 if (args.doctor) {
   const health = await checkPlatformHandshake(serverUrl,userKey,fetch,{clientId,clientName:hostname(),clientVersion:'setup',mcpReachable:true,capabilities:{doctor:true}})
-  const codexMcp = commandExists('codex') ? (() => { try { return /capital-agent/.test(execFileSync('codex',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
+  const codexMcp = await hasCodexMcpConfig(codexConfigPath(homedir()),join(here,'mcp-remote.mjs'))
   const claudeMcp = commandExists('claude') ? (() => { try { return /capital-agent/.test(execFileSync('claude',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
+  const mcpRuntime = await readFile(mcpRuntimePackage,'utf8').then(value=>JSON.parse(value).version===MCP_REMOTE_VERSION).catch(()=>false)
+  const mcpTools = mcpRuntime ? (() => { try { return JSON.parse(execFileSync(process.execPath,[join(here,'probe-mcp.mjs')],{encoding:'utf8',timeout:15_000})).ok === true } catch { return false } })() : false
   const provider = await inspectLocalTestProvider(homedir())
   const providerAuth = provider.ok ? await checkLocalTestProvider(provider.config) : { ok: false }
   const rules = activationRuleTargets(homedir())
   const codexActivation = await hasActivationRule(rules.codex)
   const claudeActivation = await hasActivationRule(rules.claude)
-  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nCodex MCP: ${codexMcp?'PASS':'未注册'}\nClaude MCP: ${claudeMcp?'PASS':'未注册'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n`)
-  if (!health.ok || (!codexMcp && !claudeMcp) || !provider.ok || !providerAuth.ok || !codexActivation || !claudeActivation) process.exitCode=1
+  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${codexMcp?'PASS':'未注册'}\nClaude MCP: ${claudeMcp?'PASS':'未注册'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n`)
+  if (!health.ok || !mcpRuntime || !mcpTools || (!codexMcp && !claudeMcp) || !provider.ok || !providerAuth.ok || !codexActivation || !claudeActivation) process.exitCode=1
   process.exit()
 }
 
@@ -52,6 +57,12 @@ await mkdir(configDir,{recursive:true,mode:0o700}); await writeFile(configFile,`
 
 const registration = await bootstrapLocalTestProvider(serverUrl,userKey,{clientId,clientName:hostname()})
 const localProvider = await installLocalTestProvider({ home: homedir(), source: join(root,'runtime','local-test-provider.mjs'), serverUrl, registration, clientId })
+const installedMcpVersion = await readFile(mcpRuntimePackage,'utf8').then(value=>JSON.parse(value).version).catch(()=> '')
+if (installedMcpVersion !== MCP_REMOTE_VERSION) {
+  if (!commandExists('npm')) throw new Error('未找到与 Node 配套的 npm，无法安装固定 MCP 运行时')
+  await mkdir(mcpRuntimeDir,{recursive:true,mode:0o700})
+  run('npm',['install','--prefix',mcpRuntimeDir,'--no-audit','--no-fund',`mcp-remote@${MCP_REMOTE_VERSION}`])
+}
 
 const installed = []
 const targets = skillTargets(homedir())
@@ -61,7 +72,7 @@ await installActivationRule(rules.claude)
 if (!args.claudeOnly) installed.push(`Codex: ${(await installSkillLinks(join(root,'skills'),targets.codex)).length}`)
 if (!args.codexOnly) installed.push(`Claude: ${(await installSkillLinks(join(root,'skills'),targets.claude)).length}`)
 const wrapper = join(here,'mcp-remote.mjs')
-if (!args.configOnly && !args.claudeOnly && commandExists('codex')) { try { run('codex',['mcp','remove','capital-agent']) } catch {}; run('codex',['mcp','add','capital-agent','--',process.execPath,wrapper]) }
+if (!args.configOnly && !args.claudeOnly) await installCodexMcpConfig(codexConfigPath(homedir()),process.execPath,wrapper)
 if (!args.configOnly && !args.codexOnly && commandExists('claude')) { try { run('claude',['mcp','remove','capital-agent','-s','user']) } catch {}; run('claude',['mcp','add','-s','user','capital-agent','--',process.execPath,wrapper]) }
 if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
 process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}。真实研发请求将自动进入 Cap；本地 Test Provider 已启用（按需运行、test-only）。配置仅保存在 ${configFile} 与 ${localProvider.configPath}。\n`)

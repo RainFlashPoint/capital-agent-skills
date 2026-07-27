@@ -37,4 +37,5 @@ if [[ ! "$MAJOR" =~ ^[0-9]+$ || "$MAJOR" -lt 18 ]]; then
   exit 1
 fi
 
+export PATH="$(dirname "$NODE_BIN"):$PATH"
 exec "$NODE_BIN" "$SCRIPT_DIR/setup.mjs" "$@"

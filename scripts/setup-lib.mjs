@@ -11,6 +11,7 @@ export function parseSetupArgs(argv = []) {
 
 export const skillTargets = home => ({ codex: join(home, '.agents/skills'), claude: join(home, '.claude/skills') })
 export const activationRuleTargets = home => ({ codex: join(home, '.codex', 'AGENTS.md'), claude: join(home, '.claude', 'CLAUDE.md') })
+export const codexConfigPath = home => join(home, '.codex', 'config.toml')
 
 const ACTIVATION_START = '<!-- capital-agent:auto-activation:start -->'
 const ACTIVATION_END = '<!-- capital-agent:auto-activation:end -->'
@@ -40,6 +41,34 @@ export async function installActivationRule(filePath, block = activationRuleBloc
 export async function hasActivationRule(filePath) {
   const content = await readFile(filePath, 'utf8').catch(() => '')
   return content.includes(ACTIVATION_START) && content.includes(ACTIVATION_END)
+}
+
+const CODEX_MCP_START = '# capital-agent:mcp:start'
+const CODEX_MCP_END = '# capital-agent:mcp:end'
+export async function installCodexMcpConfig(filePath, nodePath, wrapperPath) {
+  await mkdir(join(filePath, '..'), { recursive: true, mode: 0o700 })
+  const existing = await readFile(filePath, 'utf8').catch(() => '')
+  const block = `${CODEX_MCP_START}\n[mcp_servers.capital-agent]\ncommand = ${JSON.stringify(nodePath)}\nargs = [${JSON.stringify(wrapperPath)}]\n${CODEX_MCP_END}`
+  let base = existing
+  const managedStart = base.indexOf(CODEX_MCP_START); const managedEnd = base.indexOf(CODEX_MCP_END)
+  if (managedStart >= 0 && managedEnd >= managedStart) base = `${base.slice(0, managedStart)}${base.slice(managedEnd + CODEX_MCP_END.length)}`
+  const lines = base.split(/\r?\n/); const kept = []; let skipping = false
+  for (const line of lines) {
+    if (line.trim() === '[mcp_servers.capital-agent]') { skipping = true; continue }
+    if (skipping && /^\s*\[/.test(line)) skipping = false
+    if (skipping) continue
+    if (line.trim() === `args = [${JSON.stringify(wrapperPath)}]`) continue
+    kept.push(line)
+  }
+  base = kept.join('\n')
+  const next = `${base.trimEnd()}${base.trim() ? '\n\n' : ''}${block}\n`
+  await writeFile(filePath, next, { mode: 0o600 })
+  return { filePath, changed: next !== existing }
+}
+
+export async function hasCodexMcpConfig(filePath, wrapperPath = '') {
+  const content = await readFile(filePath, 'utf8').catch(() => '')
+  return content.includes('[mcp_servers.capital-agent]') && (!wrapperPath || content.includes(JSON.stringify(wrapperPath)))
 }
 
 export async function installSkillLinks(sourceDir, targetDir, skillNames = publicSkillNames) {
