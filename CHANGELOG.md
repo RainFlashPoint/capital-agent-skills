@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.7
+
+- 根 `.cap` 固定表示当前活动需求；新需求开始前阻止覆盖仍在执行或待退场的 Task。
+- 完成需求按 Task 生成可校验历史快照和索引，只有同 Commit 的 Delivery 与 Server Gate 通过后才清理活动产物。
+- 历史需求默认不全量注入 AI；续作通过父 Task 或精确索引按需召回，并重新核验当前代码。
+
 ## 0.4.6
 
 - 修复 Node 18 下 `mcp-remote` 的 `undici` 启动失败：统一要求并自动寻找 Node 20.18.1+，三种客户端写入同一兼容 Node 绝对路径；不兼容时在覆盖 MCP 配置前 fail-closed。
