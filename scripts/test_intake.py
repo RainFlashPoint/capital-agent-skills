@@ -125,6 +125,11 @@ def run_retire(*args):
     return r
 
 
+def run_prepare_next(cap):
+    return subprocess.run([sys.executable, INTAKE, "prepare-next", "--cap", cap],
+                          capture_output=True, text=True)
+
+
 def _read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
@@ -142,6 +147,78 @@ def _make_cap(cap, names=("spec.md", "plan.md", "STATE.md"),
 
 
 class RetireTest(unittest.TestCase):
+    def test_prepare_next_allows_empty_activity_area(self):
+        with tempfile.TemporaryDirectory() as cap:
+            r = run_prepare_next(cap)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(json.loads(r.stdout)["ready"])
+
+    def test_prepare_next_blocks_active_task(self):
+        with tempfile.TemporaryDirectory() as cap:
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: implement\ntask-id: task_active\n")
+            r = run_prepare_next(cap)
+            self.assertEqual(r.returncode, 3)
+            self.assertEqual(json.loads(r.stdout)["reason"], "active_task_exists")
+
+    def test_prepare_next_requires_done_task_retirement(self):
+        with tempfile.TemporaryDirectory() as cap:
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_done\n")
+            r = run_prepare_next(cap)
+            self.assertEqual(r.returncode, 3)
+            self.assertEqual(json.loads(r.stdout)["reason"], "retirement_required")
+
+    def test_task_history_snapshot_is_indexed_and_clears_after_validation(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
+                           "--task-id", "task_123", "--parent-task-id", "task_parent",
+                           "--title", "支付 DTO 续作", "--keywords", "支付,DTO",
+                           "--branch", "dev", "--base-commit", "abc",
+                           "--delivery-commit", "def", "--completed-at", "2026-07-29T01:00:00Z",
+                           "--gate-status", "passed", "--strict")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            history = os.path.join(cap, "history", "task_123")
+            with open(os.path.join(history, "manifest.json"), encoding="utf-8") as f:
+                manifest = json.load(f)
+            with open(os.path.join(cap, "history", "index", "task_123.json"), encoding="utf-8") as f:
+                index = json.load(f)
+            self.assertEqual(manifest["taskId"], "task_123")
+            self.assertEqual(manifest["parentTaskId"], "task_parent")
+            self.assertEqual(manifest["deliveryCommit"], "def")
+            self.assertEqual(index["artifactRoot"], ".cap/history/task_123")
+            self.assertTrue(any(item["path"] == "plan.md" and item["sha256"] for item in manifest["artifacts"]))
+            self.assertFalse(os.path.exists(os.path.join(cap, "STATE.md")))
+
+    def test_strict_retire_refuses_without_done_and_preserves_active_files(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: test\ntask-id: task_123\n")
+            r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
+                           "--task-id", "task_123", "--delivery-commit", "def",
+                           "--gate-status", "passed", "--strict")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertTrue(os.path.exists(os.path.join(cap, "STATE.md")))
+            self.assertFalse(os.path.exists(os.path.join(cap, "history", "task_123")))
+
+    def test_task_history_retire_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            args = ("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
+                    "--task-id", "task_123", "--delivery-commit", "def",
+                    "--gate-status", "passed", "--strict")
+            first = run_retire(*args)
+            second = run_retire(*args)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertTrue(json.loads(second.stdout)["idempotent"])
+
     def test_archives_and_clears(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap)

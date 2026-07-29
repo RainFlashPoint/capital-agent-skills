@@ -90,6 +90,18 @@ test('completed platform task overrides stale local test stage', async () => {
   const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl })
   assert.equal(result.task.remoteStatus, 'done')
   assert.equal(result.workflow.stage, 'done')
+  assert.equal(result.task.retirementStatus, 'pending')
+})
+
+test('history manifest marks task snapshot as completed without scanning history', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-history-'))
+  await mkdir(join(repo, '.cap/history/task_1'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_1\nparent-task-id: task_parent\nstage: done\nstatus: in-progress\n')
+  await writeFile(join(repo, '.cap/history/task_1/manifest.json'), '{"taskId":"task_1"}\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true })
+  assert.equal(result.task.parentTaskId, 'task_parent')
+  assert.equal(result.task.retirementStatus, 'snapshotted')
+  assert.equal(result.task.historyArtifactRoot, '.cap/history/task_1')
 })
 
 test('completed parent task hands a new session to its active follow-up task', async () => {

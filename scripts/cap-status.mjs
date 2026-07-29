@@ -142,6 +142,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const stateText = await readFile(statePath, 'utf8').catch(() => '')
   const taskId = field(stateText, 'task-id')
   const sessionId = field(stateText, 'session-id')
+  const parentTaskId = field(stateText, 'parent-task-id')
+  const retirementStatus = field(stateText, 'retirement-status') || (stateText ? 'active' : '')
+  const historyArtifactRoot = field(stateText, 'history-artifact-root') || (taskId && await exists(join(repo, `.cap/history/${taskId}/manifest.json`)) ? `.cap/history/${taskId}` : '')
   const artifacts = {
     profile: await exists(join(repo, '.cap/PROFILE.md')),
     spec: await exists(join(repo, '.cap/spec.md')),
@@ -197,6 +200,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       nextAction: remoteTask?.nextAction || null,
       executionMode: remoteTask?.executionMode || remoteTask?.taskContract?.executionMode || '',
       verificationCommands: remoteTask?.verificationCommands || remoteTask?.taskContract?.verificationCommands || [],
+      parentTaskId: remoteTask?.parentTaskId || parentTaskId,
+      retirementStatus: remoteTask?.status === 'done' && !historyArtifactRoot ? 'pending' : historyArtifactRoot ? 'snapshotted' : retirementStatus,
+      historyArtifactRoot,
     },
     reconciliation,
     workflow: { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
@@ -216,6 +222,8 @@ function render(result) {
     `Task：${task}`,
     result.task.requiresNewSession ? `任务接续：${result.task.previousId} → ${result.task.id}（必须新建 Session）` : '',
     result.task.remoteStatus ? `平台 Task：${result.task.remoteStatus}${result.task.gatesReady ? ' · Gate 已通过' : ''}` : '',
+    result.task.parentTaskId ? `父 Task：${result.task.parentTaskId}` : '',
+    result.task.retirementStatus ? `历史快照：${result.task.retirementStatus}${result.task.historyArtifactRoot ? ` · ${result.task.historyArtifactRoot}` : ''}` : '',
     `当前：${stageLabel(result.workflow.currentStage || result.workflow.stage)}`,
     `下一步：${result.workflow.action}`,
     `原因：${result.workflow.reason}`,

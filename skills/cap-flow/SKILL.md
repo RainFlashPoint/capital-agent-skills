@@ -173,11 +173,17 @@ sh <cap-flow 目录>/scripts/cap-guard    # 脚本自包含;确定性比对 STAT
    └─ 有 PROFILE.md                                     → 在 STATE.stage 处续接
 ```
 
-**优先判定:上个特性走完但没退场(`STATE.stage == done`)。** 入口读到 `stage==done`(特性到终点但
-工件还没收尾)→ **先触发退场仪式**(归档 `.cap` 工件到 `.cap/archive/<date>-<feat>/`、把耐久决策从
+**优先判定:上个特性走完但没退场(`STATE.stage == done`)。** 每次准备创建新需求前先运行
+`python3 scripts/intake.py prepare-next --cap <target>/.cap`。根 `.cap` 只允许一个活动 Task；存在进行中 Task
+必须续接或换 branch/worktree，禁止覆盖。入口读到 `stage==done`(特性到终点但工件还没收尾)→ **先触发退场仪式**
+(在 Server 确认同一 Commit 的 Gate PASS 后，将活动工件快照到 `.cap/history/<task-id>/`、把耐久决策从
 `STATE.Decisions log` 蒸馏回 `PROFILE.md ## Evolution log`、若特性源自需求树叶则标该叶 `shipped`、清空
 STATE),再按上面三条主分支处理新特性。退场的机械部分走 `references/intake.md` 的 Retire 操作;编排器
 只**触发**,不亲自归档。用户也可显式 `/cap retire`。
+
+历史读取采用确定性路由：正常研发只读根 `.cap` 活动产物；禁止递归扫描 `.cap/history`。仅当用户明确指定
+历史 Task，或平台知识/`.cap/history/index/<task-id>.json` 精确命中时，才读取对应历史目录。历史快照只作
+过去证据；续作必须创建新 Task、记录 `parent-task-id`，并重新调查当前 HEAD，禁止修改旧快照。
 
 **判 repo 空不空**:忽略 `.git`、`.cap`,有源码文件即非空。别只信 `git ls-files`——目标可能是未跟踪的
 子目录,或刚克隆还没 init,只看跟踪文件会把真项目误判成空;拿不准就直接列文件确认。
@@ -432,7 +438,7 @@ Review 通过且已有有效 Commit 时，若 MCP 提供 `split_deferred_accepta
 **解析快照写进 STATE 只作交接 / 审计用,永不当权威源**——下次进改动阶段时**重新解析**(diff 每次都变,
 存盘会过时)。
 
-**特性退场(stage→done)**:某阶段把特性推到 `done` 后,STATE 不就地清理;退场仪式(归档 / 回流 /
+**特性退场(stage→done)**:某阶段把特性推到 `done` 后,STATE 不就地清理;退场仪式(历史快照 / 回流 /
 标 shipped / 清栈)由 intake 的 Retire 操作执行(见「入口判定」的优先分支),编排器只触发。退场把决策从
 短命 STATE 蒸馏进长命 `PROFILE.md ## Evolution log`,让完成的工作持续指导后续演进。
 

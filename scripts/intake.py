@@ -12,12 +12,14 @@
 retire 写树(标 shipped)+ 移工件 + 回流追加。
 """
 import argparse
+import hashlib
 import html
 import json
 import os
 import re
 import shutil
 import sys
+import tempfile
 
 REQUIRED_FIELDS = [
     "id", "title", "domain_path", "cross_link", "old_system_ref",
@@ -44,6 +46,37 @@ def normalize_stage(stage):
     value = str(stage or "").strip().lower()
     return LEGACY_STAGE_ALIASES.get(value, value)
 RETIRE_ARTIFACTS = ["task-context.md", "spec.md", "plan.md", "verify", "review", "STATE.md"]
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_manifest(root):
+    rows = []
+    for dirpath, dirs, files in os.walk(root):
+        dirs.sort()
+        for name in sorted(files):
+            path = os.path.join(dirpath, name)
+            rows.append({"path": os.path.relpath(path, root).replace(os.sep, "/"),
+                         "sha256": _sha256(path), "size": os.path.getsize(path)})
+    return rows
+
+
+def _state_value(path, key):
+    if not os.path.isfile(path):
+        return ""
+    pattern = re.compile(rf"^{re.escape(key)}\s*:\s*(.*?)\s*$", re.I)
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            match = pattern.match(line.strip())
+            if match:
+                return match.group(1).strip()
+    return ""
 
 
 def parse_frontmatter(text):
@@ -393,18 +426,93 @@ def cmd_write_tree(args):
 
 
 def cmd_retire(args):
-    """特性退场:①归档工件 ②标源叶 shipped(可选) ③回流追加(可选) ④清栈。幂等:archive 已存在则拒绝。"""
-    archive_dir = os.path.join(args.cap, "archive", f"{args.date}-{args.slug}")
+    """特性退场:先生成可校验快照，再清理活动工件；新协议按 Task ID 写 history。"""
+    state_path = os.path.join(args.cap, "STATE.md")
+    state_task_id = _state_value(state_path, "task-id")
+    state_stage = normalize_stage(_state_value(state_path, "stage"))
+    history_mode = bool(args.task_id)
+    archive_dir = os.path.join(args.cap, "history", args.task_id) if history_mode else os.path.join(args.cap, "archive", f"{args.date}-{args.slug}")
+    if history_mode and os.path.isfile(os.path.join(archive_dir, "manifest.json")):
+        print(json.dumps({"archived": archive_dir, "idempotent": True}, ensure_ascii=False))
+        return 0
+    if args.strict:
+        if not args.task_id:
+            print("strict retire requires --task-id", file=sys.stderr)
+            return 2
+        if state_task_id and state_task_id != args.task_id:
+            print(f"STATE task-id 不匹配: {state_task_id} != {args.task_id}", file=sys.stderr)
+            return 2
+        if state_stage != "done":
+            print(f"Task 尚未完成,拒绝退场: stage={state_stage or 'missing'}", file=sys.stderr)
+            return 2
+        if args.gate_status != "passed":
+            print("Server Gate 未确认通过,拒绝退场", file=sys.stderr)
+            return 2
+        if not args.delivery_commit:
+            print("缺少 delivery commit,拒绝退场", file=sys.stderr)
+            return 2
+
     if os.path.exists(archive_dir):
         print(f"archive 已存在,拒绝覆盖: {archive_dir}", file=sys.stderr)
         return 1
-    os.makedirs(archive_dir)
+
+    parent = os.path.dirname(archive_dir)
+    os.makedirs(parent, exist_ok=True)
+    temp_dir = tempfile.mkdtemp(prefix=".snapshot-", dir=parent)
+    copied = []
+    try:
+        for name in RETIRE_ARTIFACTS:
+            src = os.path.join(args.cap, name)
+            dst = os.path.join(temp_dir, name)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+                copied.append(name)
+            elif os.path.isfile(src):
+                shutil.copy2(src, dst)
+                copied.append(name)
+        artifacts = _artifact_manifest(temp_dir)
+        manifest = {
+            "schemaVersion": 1,
+            "taskId": args.task_id or state_task_id,
+            "parentTaskId": args.parent_task_id or "",
+            "title": args.title or args.slug,
+            "intentSummary": args.intent_summary or "",
+            "keywords": [item.strip() for item in (args.keywords or "").split(",") if item.strip()],
+            "branch": args.branch or "",
+            "baseCommit": args.base_commit or "",
+            "deliveryCommit": args.delivery_commit or "",
+            "completedAt": args.completed_at or args.date,
+            "status": "completed",
+            "artifacts": artifacts,
+        }
+        with open(os.path.join(temp_dir, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.rename(temp_dir, archive_dir)
+        temp_dir = ""
+    finally:
+        if temp_dir and os.path.isdir(temp_dir):
+            shutil.rmtree(temp_dir)
+
     moved = []
-    for name in RETIRE_ARTIFACTS:  # ①归档 + ④清栈(move 走顶层即清空)
+    for name in copied:  # 快照完整落地后才清理活动区
         src = os.path.join(args.cap, name)
-        if os.path.exists(src):
-            shutil.move(src, os.path.join(archive_dir, name))
-            moved.append(name)
+        if os.path.isdir(src):
+            shutil.rmtree(src)
+        elif os.path.exists(src):
+            os.remove(src)
+        moved.append(name)
+
+    index_path = None
+    if history_mode:
+        index_dir = os.path.join(args.cap, "history", "index")
+        os.makedirs(index_dir, exist_ok=True)
+        index_path = os.path.join(index_dir, f"{args.task_id}.json")
+        index_item = {key: manifest[key] for key in ("schemaVersion", "taskId", "parentTaskId", "title", "intentSummary", "keywords", "branch", "baseCommit", "deliveryCommit", "completedAt", "status")}
+        index_item["artifactRoot"] = f".cap/history/{args.task_id}"
+        with open(index_path, "w", encoding="utf-8") as f:
+            json.dump(index_item, f, ensure_ascii=False, indent=2)
+            f.write("\n")
     leaf_path = None
     if args.leaf and args.req_root:  # ③标 shipped(优雅降级:无叶/无树则跳过)
         leaf_path = _mark_leaf_shipped(args.req_root, args.leaf)
@@ -418,11 +526,32 @@ def cmd_retire(args):
         if leaf_path:  # 同条也挂源叶 `## cap 记录`(需求树成带 cap 记录的活档案)
             _append_leaf_cap_log(leaf_path, args.evolution_entry)
             leaf_evolution = leaf_path
-    print(json.dumps({"archived": archive_dir, "moved": moved,
+    print(json.dumps({"archived": archive_dir, "moved": moved, "manifest": os.path.join(archive_dir, "manifest.json"), "index": index_path,
                       "leaf_shipped": leaf_shipped, "backflow": backflow,
                       "leaf_evolution": leaf_evolution},
                      ensure_ascii=False))
     return 0
+
+
+def cmd_prepare_next(args):
+    """新需求前置守卫：根 .cap 只能承载一个活动 Task，不替模型猜测或覆盖旧产物。"""
+    state_path = os.path.join(args.cap, "STATE.md")
+    if not os.path.isfile(state_path):
+        print(json.dumps({"ready": True, "reason": "no_active_task"}, ensure_ascii=False))
+        return 0
+    task_id = _state_value(state_path, "task-id")
+    stage = normalize_stage(_state_value(state_path, "stage"))
+    history_path = os.path.join(args.cap, "history", task_id) if task_id else ""
+    result = {"ready": False, "taskId": task_id, "stage": stage,
+              "historyPath": history_path if history_path and os.path.isdir(history_path) else ""}
+    if stage == "done":
+        result["reason"] = "retirement_required"
+        result["nextAction"] = "run strict retire after confirming Server Gate and delivery commit"
+    else:
+        result["reason"] = "active_task_exists"
+        result["nextAction"] = "resume current task or use another branch/worktree"
+    print(json.dumps(result, ensure_ascii=False))
+    return 3
 
 
 def main(argv=None):
@@ -435,10 +564,23 @@ def main(argv=None):
     pr.add_argument("--cap", required=True, help=".cap 目录")
     pr.add_argument("--slug", required=True, help="特性 slug(归档目录名用)")
     pr.add_argument("--date", required=True, help="日期 YYYY-MM-DD(归档目录名用)")
+    pr.add_argument("--task-id", help="平台 Task ID；提供后写入 .cap/history/<task-id>")
+    pr.add_argument("--parent-task-id", default="")
+    pr.add_argument("--title", default="")
+    pr.add_argument("--intent-summary", default="")
+    pr.add_argument("--keywords", default="", help="逗号分隔的检索词")
+    pr.add_argument("--branch", default="")
+    pr.add_argument("--base-commit", default="")
+    pr.add_argument("--delivery-commit", default="")
+    pr.add_argument("--completed-at", default="")
+    pr.add_argument("--gate-status", choices=("passed", "pending", "blocked"), default="pending")
+    pr.add_argument("--strict", action="store_true", help="要求 Task/Commit/Server Gate 完整后才允许退场")
     pr.add_argument("--leaf", help="源叶 id(给则标 shipped)")
     pr.add_argument("--req-root", dest="req_root", help="requirements 树根(配合 --leaf)")
     pr.add_argument("--evolution-entry", dest="evolution_entry",
                     help="回流到 Evolution log 的一行(由调用方蒸馏)")
+    pn = sub.add_parser("prepare-next", help="新需求前检查是否仍有活动 Task 或待退场 Task")
+    pn.add_argument("--cap", required=True, help=".cap 目录")
     pm = sub.add_parser("move", help="叶迁域:mv 文件 + 改 id/domain_path + 改写依赖")
     pm.add_argument("--root", required=True, help=".cap/requirements 目录")
     pm.add_argument("--leaf", required=True, help="要迁移的叶 id")
@@ -456,6 +598,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.cmd == "retire":
         return cmd_retire(args)
+    if args.cmd == "prepare-next":
+        return cmd_prepare_next(args)
     if not os.path.isdir(args.root):
         print(f"root 不存在: {args.root}", file=sys.stderr)
         return 2

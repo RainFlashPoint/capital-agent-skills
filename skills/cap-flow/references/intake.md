@@ -251,7 +251,7 @@ python3 scripts/intake.py move --root <root> --leaf <leaf-id> --to <domain>/<sub
 
 | 步 | 动作 | 谁做 | 适用 |
 |---|---|---|---|
-| ① 归档 | `.cap/{task-context.md,spec.md,plan.md,verify,review,STATE.md}` → `.cap/archive/<date>-<slug>/` | 脚本 | 全部特性 |
+| ① 历史快照 | `.cap/{task-context.md,spec.md,plan.md,verify,review,STATE.md}` → `.cap/history/<task-id>/`，生成 manifest/hash 与单 Task 索引 | 脚本 | 全部特性 |
 | ② 回流 | 从 `STATE.Decisions log` 蒸馏耐久决策 / 教训 / 新风险成一行,append `.cap/EVOLUTION.md` | 模型蒸馏 + 脚本追加 | 全部特性 |
 | ③ 标 shipped + 写叶记录 | 源叶 `status=shipped` → ready-queue 自动解锁下游;若传了 `--evolution-entry`,同条也 append 进该源叶的 `## cap 记录` 段 | 脚本 | 仅源自需求树的特性 |
 | ④ 清栈 | STATE.md 随①移走 → 顶层留空,交还给下个特性 | 脚本 | 全部特性 |
@@ -259,9 +259,23 @@ python3 scripts/intake.py move --root <root> --leaf <leaf-id> --to <domain>/<sub
 
 ```
 python3 scripts/intake.py retire --cap <target>/.cap --slug <feat> --date <YYYY-MM-DD> \
+  --task-id <task-id> --delivery-commit <commit> --gate-status passed --strict \
+  [--parent-task-id <parent-task-id>] [--title "<title>"] [--intent-summary "<summary>"] \
+  [--keywords "<keyword1>,<keyword2>"] [--branch <branch>] [--base-commit <commit>] \
+  [--completed-at <UTC timestamp>] \
   [--leaf <leaf-id> --req-root <target>/.cap/requirements] \
   [--evolution-entry "<蒸馏出的一行>"]
 ```
+
+新需求开始前必须运行：
+
+```bash
+python3 scripts/intake.py prepare-next --cap <target>/.cap
+```
+
+它只在根目录没有活动 Task 时返回成功；进行中 Task 要求续接或换 worktree，`stage=done` 则要求先完成严格退场。
+严格退场只有在 Task ID、Delivery Commit 和 Server Gate PASS 同时明确时才执行。脚本先在临时目录复制并计算
+SHA-256，原子落下快照和 `manifest.json` 后才清理活动产物；失败时根 `.cap` 保持不变。
 
 **确定性 vs 判断性**:文件移动 / 标 shipped / 追加 = 脚本。**"哪些决策值得回流" = 模型判断**——判据:跨特性
 仍成立的架构 / 契约决策、踩过的坑、新发现的风险才回流;一次性实现细节不回流。
@@ -293,7 +307,7 @@ session_id      # 会话标识
 
 **回流去向**:`<cap>/EVOLUTION.md`(脚本统一 append,缺则建头)。PROFILE.md 不承载流水,仅留一行指针——
 Evolution log 是无界流水、PROFILE 是有界快照,本性不同故分文件。这是长寿、可跨会话复用的演进记忆,区别于
-archive(本地工件留存)。
+history(本地 Task 事实快照)。旧 `.cap/archive` 继续作为兼容历史读取，但新 Task 一律写 `.cap/history/<task-id>`。
 
 > **与中心知识库的关系(两条出口,别混)**:①**教训**——EVOLUTION.md 是**本仓本地**的演进记忆;要让耐久教训
 > **跨人复用**,退场后跑 `/cap evolve`(见 `evolve-loop.md`)经 `record_experience` 推进中心 KB。②**数据点**——

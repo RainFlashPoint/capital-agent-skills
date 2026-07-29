@@ -86,6 +86,7 @@ git diff --name-only HEAD    # 未提交改动
 - 记录 `session_finished`，data 放 verify/review 的结构化结论，不放代码正文。
 
 若 MCP 提供 `record_task_artifact`，按 `references/platform-task-loop.md` 补登记本轮 `.cap` 产物元数据。只传相对路径、hash、Git ref 和结构化摘要；不传文件正文。无 task-id、工具不存在或调用失败时静默降级。
+Task 完成并严格退场后，额外登记 `.cap/history/<task-id>` 的历史快照元数据与父 Task 引用；历史正文仍只留在 Git 仓库，不上传平台。
 
 若已有有效 Git Commit 且 MCP 提供 `record_task_delivery`，按 `references/platform-task-loop.md` 自动回写 Commit、改动文件路径、verify/review。HEAD 已推送且门禁满足时，再调用 `request_docker_verification`；不得上传未提交工作区或代码正文。
 

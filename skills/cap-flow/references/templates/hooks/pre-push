@@ -47,13 +47,12 @@ if [ -z "$PROTECTED_TARGET" ]; then
 fi
 
 if [ ! -f "$STATE" ]; then
-  # 无 STATE 有两种情形:① 特性已退场(retire 清栈,工件归档到 .cap/archive/)= 合法收尾
-  #                    ② 从没走过 cap 流程。用 archive 区分。
-  if [ -n "$(ls -A .cap/archive 2>/dev/null)" ]; then
-    echo "✓ cap: 无在飞特性(STATE 已随退场归档),.cap/archive 有退场记录 —— 放行 (HEAD ${SHORT})"
+  # 无 STATE 有两种情形:① 特性已退场,history/archive 有快照=合法收尾;② 从没走过 cap 流程。
+  if [ -n "$(ls -A .cap/history 2>/dev/null)" ] || [ -n "$(ls -A .cap/archive 2>/dev/null)" ]; then
+    echo "✓ cap: 无在飞特性且存在历史快照 —— 放行 (HEAD ${SHORT})"
     exit 0
   fi
-  echo "✗ cap: 没找到 $STATE 且无 .cap/archive —— 这些改动还没走过 cap 流程。"
+  echo "✗ cap: 没找到 $STATE 且无 .cap/history 或 .cap/archive —— 这些改动还没走过 cap 流程。"
   echo "  先跑 /cap 走一遍(shape→plan→build→verify→review)。"
   echo "  确实要跳过：git push --no-verify"
   exit 1

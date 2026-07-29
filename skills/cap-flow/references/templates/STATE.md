@@ -33,6 +33,9 @@ work-type: feature | remediation | hotfix     # 流程画像(中央旋钮):各�
 branch: <写 STATE 时记 `git rev-parse --abbrev-ref HEAD`>     # 并发边界戳:cap-guard 据此防串台
 worktree: <写 STATE 时记 `git rev-parse --show-toplevel`>     # 同上(worktree 隔离)
 source-leaf: <若本特性源自 requirements 树则记叶 id，否则 (none)>   # Retire 据此回写源叶 status=shipped（见 cap-flow §2 退场前置）
+parent-task-id: <历史需求续作时记录父 Task，否则 (none)>
+retirement-status: active | pending | snapshotted
+history-artifact-root: <退场后为 .cap/history/<task-id>，活动期间为空>
 owner: <本特性的人类归属：当初需求确认/计划拍板的人；缺省 (none)>   # 归因用；退场随数据点吐出
 runner: <谁执行本轮：人跑=<operator>，无头/夜间自治=night-factory>   # 与 owner 分记；A/B 时切分人机产出。见 headless-policy.md §3
 updated: <时间戳，由调用方传入，例如 2026-06-04T15:30>
