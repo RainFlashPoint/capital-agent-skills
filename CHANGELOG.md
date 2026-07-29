@@ -24,6 +24,7 @@
 
 ## Unreleased
 
+- 重构 README 产品表达：围绕 Agent 研发主线、可信门禁、持久状态和经验飞轮说明项目价值，精简内部字段与运行细节，同时保留完整安装、升级、诊断和使用入口。
 - 更新 README 路线图：标记中心知识库统一出口、owner/runner 归因链路和文件预测 F1 数据契约已经落地，并把尚未完成的个人看板与服务端趋势报告拆成明确后续项。
 - Codex MCP 注册改为幂等维护 `~/.codex/config.toml` 受管理区块，不再要求 Codex Desktop 用户额外安装或暴露 `codex` CLI；保留其它 MCP 与个人配置。
 - MCP Bridge 改为 setup 时固定安装到本机运行时目录，Codex 启动时不再依赖 `npx`、GUI PATH 或临时联网下载；Doctor 真实执行 MCP initialize 与 tools/list，避免“已注册但不可用”假 PASS。

@@ -1,54 +1,112 @@
 # capital-agent-skills
 
-骑在 CLI 上的研发流程 + 经验闭环技能族。给你的 coding agent（Claude Code / Codex / Cursor / 其它）装一套**结构化研发流程**，外加一个**跨会话、跨人积累的经验中枢**：会话开始注入相关经验，会话结束沉淀本次改动，所有人的经验汇入同一个中心知识库。
+一套面向 Coding Agent 的结构化研发与经验飞轮。它把需求理解、开发计划、编码实现、独立验证、代码评审和发布交付串成可恢复的研发主线，并将每次交付中验证过的经验沉淀为团队可复用的知识。
 
-> **状态**：v0.4.8，持续演进中。核心是把结构化研发流程与连中心知识库的经验闭环 `harvest-experience` 合在一起。
+它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-## 这是什么
+> **状态**：v0.4.8，持续演进中。支持 Codex、Claude Code 和 Cursor，不锁定单一模型或运行时。
 
-两条能力叠在一起：
+## 它解决什么问题
 
-1. **cap 流程主线**——研发只记一个 `$cap`（Claude Code 为 `/cap`），直接描述“实现 / 修复 / 测试 / 评审 / 发布”即可。系统内部自动完成项目了解、需求确认、开发计划、编码实现、测试验证、代码评审和发布上线；内部状态 ID 继续兼容旧版本。不依赖特定运行时，Claude/Codex 都能跑。
+普通 Coding Agent 已经能快速生成代码，但真实研发还面临几个更难的问题：
 
-2. **经验闭环 `harvest-experience`**（本项目核心）——骑在 CLI 上的 `注入 → 编码 → 沉淀`。依赖一个 MCP server `capital-agent`（连中心知识库），会话首尾各调一次 `enrich_context` / `record_experience`。接入方式见 [skills/harvest-experience/references/setup-mcp.md](skills/harvest-experience/references/setup-mcp.md)。
-3. **统一 Task 无感闭环**——MCP 支持时，Skills 自动创建/绑定平台 Task，回写 Commit、文件路径、测试与 Review，并在代码已推送且自治门禁通过后请求 Docker 复验。代码正文始终通过 Git 交付，不上传知识平台。
+- **过程容易失控**：需求、计划、实现、测试和评审散落在对话中，长任务容易偏航，换会话后难以继续。
+- **结果缺少可信证据**：Agent 既写代码又给自己判定通过，本地测试、代码评审与真实 Commit 之间缺少稳定绑定。
+- **经验无法形成复利**：一次任务中发现的好方法和踩过的坑，往往随着会话结束而消失，下个人还会重新摸索。
+- **工具之间难以迁移**：流程绑定某个 CLI、模型或专有能力后，团队很难形成统一研发方式。
 
-平台地址和个人身份只通过研发本机环境变量提供：`CAPITAL_AGENT_SERVER_URL`、`CAPITAL_AGENT_USER_KEY`。开源仓库不内置任何公司地址或密钥；推荐使用 `scripts/mcp-remote.mjs` 启动 MCP。
+Capital Agent Skills 在 Coding Agent 之上补齐研发流程、可信门禁、持久状态和知识积累层，让 Agent 从“代码生成工具”走向可协作、可验证、可持续改进的研发执行者。
 
-一键初始化（自动打开浏览器授权，不需要复制个人 Key；自动安装 Codex、Claude Code、Cursor Skills 并注册 MCP）：
+## 核心能力
+
+### 完整的 Agent 研发主线
+
+研发只需描述目标，系统会根据任务复杂度组织项目了解、需求确认、开发计划、编码实现、测试验证、代码评审和发布上线。简单任务走轻量路径，复杂任务保留完整阶段与门禁。
+
+### 与真实代码版本绑定的可信交付
+
+编码、测试和评审职责分离。独立 Test / Review Harness 针对精确 Commit 产出证据，避免 Agent 自测、自评、自签通过；出现问题时，修复产生新 Commit，并重新进入验证闭环。
+
+### 可恢复的持久研发状态
+
+需求、计划、阶段游标和验证证据保存在仓库文件中，而不是依赖不断膨胀的聊天上下文。任务可以跨会话、跨 Agent 接力，也能在中断后从明确阶段继续。
+
+### 跨会话、跨团队的经验飞轮
+
+会话开始时注入与当前任务相关的历史经验，完成后沉淀经过验证的问题、解法和证据。个人经验由此进入团队知识库，在后续项目中被再次检索、采用和校正。
+
+### 开放且可移植
+
+流程由纯文件 Skill 和清晰协议组成，支持 Codex、Claude Code、Cursor 及其它兼容 CLI。并行执行和富交互是加速能力，不是运行前提。
+
+## 工作方式
+
+```text
+描述研发目标
+    ↓
+理解项目与确认需求
+    ↓
+计划 → 实现 → 独立测试 → 独立评审
+    ↓                       ↑
+    └──── 发现问题 → 修复新 Commit ────┘
+    ↓
+发布交付 + 沉淀可复用经验
+```
+
+MCP 可用时，Skills 会自动创建或绑定统一 Task，关联真实 Commit、验证证据和经验记录。代码正文始终通过 Git 交付，不上传知识平台。
+
+## 安装
+
+Skills 与 MCP 在研发机器上安装一次即可。推荐使用一键安装器，它会打开浏览器完成授权，并自动配置 Codex、Claude Code、Cursor 和 Capital Agent MCP：
 
 ```bash
 bash /path/to/capital-agent-skills/scripts/setup.sh --server "https://your-server"
 ```
 
-升级与诊断：`bash scripts/setup.sh --server "https://your-server" --upgrade`、`bash scripts/setup.sh --server "https://your-server" --doctor`。Shell 入口会自动寻找 PATH、Homebrew、Volta、NVM 或可用的 Codex Runtime 中满足要求的 Node.js 20.18.1+；不会再用不兼容的 Node 18 写出表面注册成功、实际无法启动的 MCP。找不到时给出明确安装提示。安装器同时注册一个按需启动的本地 Test Provider：仅领取当前用户明确指定的 Test Action，在独立 Git worktree 中执行并自动清理；Runner ID 与一次性签发的凭证只保存在研发机 `~/.capital-agent/runner/config.json`（`0600`），无需人工复制，也不会启用代码修改或常驻 daemon。运行中每分钟进行一次受限续租，每次只延长 5 分钟，总生命周期硬上限 10 小时；连续三次续租失败会停止测试进程。环境变量仍作为服务器/CI 的非交互兼容方式。
+升级和诊断：
 
-Skills 与 MCP 只需在研发机器安装一次。安装器会幂等更新 Codex、Claude Code、Cursor 的全局规则和 MCP 配置：Git 仓库中的实现、修复、重构、测试、评审和发布请求自动进入 Cap，不强制输入 `$cap`；纯问答、讨论和调研不创建平台 Task。已有个人规则、Cursor MCP Server 和其它配置不会被覆盖。首次进入 Git 项目时，Skill 会静默安装兼容现有 Hook 的关联器，正常 `git commit` 自动附加 Task/Session。研发不需要手工安装 Hook、填写 Task ID 或配置 GitLab CI。
-
-**为什么两条要在一起**：流程定义了任务边界，边界产出干净的经验原子（spec 决策 / review findings / 蒸馏 pattern）；经验闭环把这些原子汇入中心知识库、下次跨人复用。流程是产出口，知识库是积累池。
-
-## 快速开始
-
-**装 skills**（Claude Code 插件方式，或直接把 `skills/` 软链到你的 skills 目录）：
 ```bash
-git clone https://github.com/RainFlashPoint/capital-agent-skills.git
-# Claude Code: 作为 plugin 加载(见 .claude-plugin/)，或把 skills/* 链接到 ~/.claude/skills/
-# Codex: 把 skills/* 链接到 ~/.agents/skills/
-# Cursor: 把 cap 链接到 ~/.cursor/skills/，并在 ~/.cursor/mcp.json 注册 Capital Agent
+bash scripts/setup.sh --server "https://your-server" --upgrade
+bash scripts/setup.sh --server "https://your-server" --doctor
 ```
 
-**开始研发**：正常描述“实现需求 / 修改代码 / 修 bug”即可自动进入 Task 与经验闭环；想显式启动时只需使用 Codex 的 `$cap` 或 Claude Code 的 `/cap`。也可以说 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布`，不需要记 `cap-define`、`cap-implement` 等内部名字。
+安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。需要手工配置中心知识库时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
 
-**开经验闭环**：先按 [setup-mcp.md](skills/harvest-experience/references/setup-mcp.md) 注册 `capital-agent` MCP server，之后 `harvest-experience` 会在编码会话首尾自动注入/沉淀。
+也可以手工安装 Skills：
 
-## 路线图（演进方向）
+```bash
+git clone https://github.com/RainFlashPoint/capital-agent-skills.git
 
-- [x] v0.1.0：结构化流程主线 + 嫁接 harvest-experience 经验闭环 + 接入文档
-- [x] 蒸馏、Review findings 和退场数据点统一通过 `record_experience` 进入中心知识库，支持跨会话、跨人复用
-- [x] 经验归因链路贯通：用 `owner` 记录需求归属、`runner` 记录执行者，兼容旧 `operator` 字段，并回传曝光、采纳和误导结果
-- [x] 文件预测 F1 数据契约落地：Plan 产出 `predicted_files`，退场时与真实 `changed_files` 配对，作为知识库效果与 Skill A/B 的适应度数据
-- [ ] 完善按 owner / runner 切分的个人与人机协作看板，展示曝光率、采纳率和误导率趋势
-- [ ] 完善服务端文件预测 F1 的持续评分、基线对比和版本趋势，形成可直接查看的 proof-of-value 报告
+# Claude Code：作为 plugin 加载，或把 skills/* 链接到 ~/.claude/skills/
+# Codex：把 skills/* 链接到 ~/.agents/skills/
+# Cursor：把 cap 链接到 ~/.cursor/skills/，并在 ~/.cursor/mcp.json 注册 Capital Agent
+```
+
+平台地址和个人身份只保存在研发机器配置中。开源仓库不内置公司地址、个人凭据或项目代码。
+
+## 怎么用
+
+安装后正常描述研发任务即可：
+
+```text
+实现订单退款功能
+修复登录偶发失效的问题
+给这次改动补测试并做代码评审
+把已经通过评审的版本发布到测试环境
+```
+
+Git 仓库中的实现、修复、重构、测试、评审和发布请求会自动进入 Cap；纯问答、讨论和调研不会创建平台 Task。
+
+需要显式启动时，Codex 使用 `$cap`，Claude Code 使用 `/cap`。也可以使用 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布` 等直白表达，不需要记忆内部 Skill 名称。
+
+## 演进方向
+
+- [x] 建立覆盖需求、实现、验证、评审和发布的 Agent 研发主线
+- [x] 建立与真实 Commit 绑定的独立测试和评审机制
+- [x] 建立跨会话、跨项目、跨团队积累的工程经验飞轮
+- [ ] 完善人类与 Agent 协作效能的可观测体系
+- [ ] 持续衡量知识积累对研发质量和效率的提升
+- [ ] 扩展更多执行环境、验证能力和交付目标
 
 ## License
 
