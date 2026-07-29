@@ -44,9 +44,11 @@ git clone https://github.com/RainFlashPoint/capital-agent-skills.git
 ## 路线图（演进方向）
 
 - [x] v0.1.0：结构化流程主线 + 嫁接 harvest-experience 经验闭环 + 接入文档
-- [ ] 把流程的蒸馏出口（distillation / review findings）从"写回本地 skill 文件"扩展为"同时 push 到中心知识库"，实现跨人复用
-- [ ] operator 归因贯通：谁沉淀的经验可追踪，复用率按人看板
-- [ ] 用文件预测 F1 等指标做 proof-of-value（接入知识库后模型对该 repo 的理解准确率变化）
+- [x] 蒸馏、Review findings 和退场数据点统一通过 `record_experience` 进入中心知识库，支持跨会话、跨人复用
+- [x] 经验归因链路贯通：用 `owner` 记录需求归属、`runner` 记录执行者，兼容旧 `operator` 字段，并回传曝光、采纳和误导结果
+- [x] 文件预测 F1 数据契约落地：Plan 产出 `predicted_files`，退场时与真实 `changed_files` 配对，作为知识库效果与 Skill A/B 的适应度数据
+- [ ] 完善按 owner / runner 切分的个人与人机协作看板，展示曝光率、采纳率和误导率趋势
+- [ ] 完善服务端文件预测 F1 的持续评分、基线对比和版本趋势，形成可直接查看的 proof-of-value 报告
 
 ## License
 
