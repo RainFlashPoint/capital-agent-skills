@@ -151,7 +151,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     plan: await exists(join(repo, '.cap/plan.md')),
   }
   const handshake = offline ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
-  const platform = offline ? null : Boolean(handshake?.ok)
+  const platform = offline || handshake?.reason === 'direct_probe_unavailable' ? null : Boolean(handshake?.ok)
   const stateTask = platform ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
   const followUpTaskId = activeFollowUpId(stateTask)
   const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
@@ -177,7 +177,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   if (!gitRoot) reasons.push('not_git_repository')
   if (!serverUrl) reasons.push('missing_server_url')
   if (!userKey) reasons.push('missing_user_key')
-  if (!offline && serverUrl && userKey && platform === false) reasons.push('platform_probe_failed_needs_mcp_confirmation')
+  if (!offline && serverUrl && userKey && handshake?.reason === 'direct_probe_unavailable') reasons.push('direct_probe_unavailable_needs_mcp_confirmation')
+  else if (!offline && serverUrl && userKey && platform === false) reasons.push('platform_handshake_rejected_needs_mcp_confirmation')
   if (!taskId) reasons.push('task_not_attached')
   if (reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
   return {
@@ -211,7 +212,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
 }
 
 function render(result) {
-  const connected = result.platform.connected === true ? '已连接' : result.platform.connected === false ? '待 MCP 确认' : result.platform.configured ? '未探测' : '未配置'
+  const connected = result.platform.connected === true ? '已连接' : result.platform.handshake?.reason === 'direct_probe_unavailable' ? '直接探测不可用，等待 MCP 确认' : result.platform.connected === false ? '握手未通过，等待 MCP 确认' : result.platform.configured ? '未探测' : '未配置'
   const task = result.task.id || (result.mode === 'platform_ready' ? '待创建' : '未关联')
   return [
     'CAP CLIENT HANDSHAKE',

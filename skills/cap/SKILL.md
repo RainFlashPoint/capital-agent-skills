@@ -32,6 +32,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 4. 若状态包含 `git_delivery_reconciliation_needed`，立即扫描 `delivery-head..HEAD`；对 IDEA、人工或其它 Agent 产生的 Commit 幂等补调用 `record_task_delivery`。平台没有 Delivery 查询工具时也要重报当前 HEAD，由平台幂等去重，不能依赖原编码会话仍然存在。
    进入独立测试或评审前必须检查 `cap-status.repository.head/upstreamHead` 与 `reconciliation.pushRequired`。当前精确 Commit 尚未在上游分支可见时，进入明确的 **Push 门禁**：用一句话说明“将把当前分支的精确 Commit 推送到哪个远程”，请求一次授权；不得先创建 Action，也不得把 Server 的仓库预检失败解释为 Provider 故障。授权后同一 Task 内依次完成 Push → 当前 Delivery 补报 → Test Action，不再要求用户重复说“继续”。授权只覆盖当前 Task、当前仓库、当前分支和当前 Commit；分支、Commit、仓库或目标环境变化后失效。
 5. 用统一“客户端握手快报”告诉用户平台连接、仓库、分支、Task、当前阶段、已认领 Action 和下一步；不得先写规格或代码再补报。
+   `cap-status` 返回 `direct_probe_unavailable` 时，只能表述为“直接探测不可用，等待 MCP 确认”，不得报告平台断网、网络错误或连接失败；必须继续调用 MCP 做最终确认。MCP 成功即按平台已连接继续，只有直接探测与 MCP 都失败时才报告平台不可用。
    快报必须同时显示 Outbox 待同步数、可重放数、阻塞数与下一事件类型；存在待同步事件时不得只说“平台已连接”。
    若待同步项属于历史 Task，快报必须标记“等待历史元数据补报授权”，不能直接执行，也不能含糊描述成普通连接恢复。
 6. 调用中心知识层注入与本需求相关的历史经验。

@@ -14,3 +14,12 @@ test('client handshake sends machine and repository capabilities without putting
   assert.deepEqual(JSON.parse(request.options.body), { clientId: 'client_1', repoUrl: 'team/app', branch: 'feature/x', mcpReachable: true })
   assert.equal(JSON.stringify(result).includes('secret-user-key'), false)
 })
+
+test('unavailable direct probe waits for MCP confirmation without claiming platform network failure', async () => {
+  const error = new Error('fetch failed', { cause: { code: 'ENOTFOUND' } })
+  const result = await checkPlatformHandshake('https://example.test', 'user-key', async () => { throw error })
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'direct_probe_unavailable')
+  assert.equal(result.errorCode, 'ENOTFOUND')
+  assert.equal(JSON.stringify(result).includes('network_error'), false)
+})

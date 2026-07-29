@@ -186,8 +186,10 @@ export async function checkPlatformHandshake(serverUrl, userKey, fetchImpl = fet
     const response = await fetchImpl(`${serverUrl}/api/auth/handshake`, { method: 'PUT', headers: { 'x-user-key': userKey, 'Content-Type': 'application/json' }, body: JSON.stringify(client && typeof client === 'object' ? client : {}) })
     const body = await response.json().catch(() => ({}))
     const data = body.data || {}
-    return { ok: response.ok && data.capabilities?.taskWrite === true && data.capabilities?.commitReconcile === true, status: response.status, ...data }
-  } catch { return { ok: false, reason: 'network_error' } }
+    return { ok: response.ok && data.capabilities?.taskWrite === true && data.capabilities?.commitReconcile === true, status: response.status, reason: response.ok ? '' : 'http_rejected', ...data }
+  } catch (error) {
+    return { ok: false, reason: 'direct_probe_unavailable', errorCode: String(error?.cause?.code || error?.code || '').slice(0, 80) }
+  }
 }
 
 export async function bootstrapLocalTestProvider(serverUrl, userKey, client = {}, fetchImpl = fetch) {

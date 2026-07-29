@@ -70,13 +70,25 @@ test('configured client without task reports platform ready after capability han
   assert.equal(result.platform.connected, true)
 })
 
-test('failed direct probe waits for MCP confirmation instead of falsely claiming local-only mode', async () => {
+test('rejected HTTP handshake waits for MCP confirmation instead of falsely claiming local-only mode', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-probe-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true })
   await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
-  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async () => ({ ok: false }) })
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({ msg: 'unavailable' }) }) })
   assert.equal(result.mode, 'platform_unverified')
-  assert.ok(result.reasons.includes('platform_probe_failed_needs_mcp_confirmation'))
+  assert.equal(result.platform.connected, false)
+  assert.ok(result.reasons.includes('platform_handshake_rejected_needs_mcp_confirmation'))
+})
+
+test('unavailable direct probe remains unknown until MCP confirmation', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-direct-probe-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async () => { throw new Error('fetch unavailable', { cause: { code: 'ENOTFOUND' } }) } })
+  assert.equal(result.mode, 'platform_unverified')
+  assert.equal(result.platform.connected, null)
+  assert.equal(result.platform.handshake.reason, 'direct_probe_unavailable')
+  assert.ok(result.reasons.includes('direct_probe_unavailable_needs_mcp_confirmation'))
 })
 
 test('completed platform task overrides stale local test stage', async () => {
