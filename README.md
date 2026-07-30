@@ -4,7 +4,7 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.4.8，持续演进中。支持 Codex、Claude Code 和 Cursor，不锁定单一模型或运行时。
+> **状态**：v0.4.8，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
 
 ## 它解决什么问题
 
@@ -25,7 +25,7 @@ Capital Agent Skills 在 Coding Agent 之上补齐研发流程、可信门禁、
 
 ### 与真实代码版本绑定的可信交付
 
-编码、测试和评审职责分离。独立 Test / Review Harness 针对精确 Commit 产出证据，避免 Agent 自测、自评、自签通过；出现问题时，修复产生新 Commit，并重新进入验证闭环。
+本地模式会把测试、评审和发布证据随研发状态保存；接入 Cap Server 后，编码、测试和评审进一步职责分离，由独立 Test / Review Harness 针对精确 Commit 产出可信 Gate。出现问题时，修复产生新 Commit，并重新进入验证闭环。
 
 ### 可恢复的持久研发状态
 
@@ -37,7 +37,24 @@ Capital Agent Skills 在 Coding Agent 之上补齐研发流程、可信门禁、
 
 ### 开放且可移植
 
-流程由纯文件 Skill 和清晰协议组成，支持 Codex、Claude Code、Cursor 及其它兼容 CLI。并行执行和富交互是加速能力，不是运行前提。
+流程由纯文件 Skill 和清晰协议组成，核心研发主线不依赖 Cap Server，支持 Codex、Claude Code、Cursor 及其它兼容 CLI。个人、开源团队和其他公司都可以只使用本地能力，也可以接入自己的 Git、CI、测试和发布环境。
+
+## 两种使用模式
+
+Cap Server 是可选的团队增强层，不是运行 Skills 的前置条件。
+
+| 能力 | 本地模式（无 Cap Server） | 团队增强模式（接入 Cap Server） |
+|---|---|---|
+| 结构化研发主线 | 支持 | 支持 |
+| `.cap/` 持久状态与跨会话接力 | 支持 | 支持 |
+| 本地测试、代码评审和发布流程 | 支持 | 支持 |
+| 自有 Git / CI / 测试环境 | 可直接接入 | 可直接接入 |
+| 统一 Task 与团队看板 | — | 支持 |
+| 跨成员中心知识库 | — | 支持 |
+| 独立 Test / Review Harness Gate | — | 支持 |
+| 经验归因与效果统计 | — | 支持 |
+
+没有 Server 时，测试和评审结论属于本地研发证据；接入 Server 后，才能获得绑定同一 Commit 的独立 Provider Gate。两种模式使用同一套研发阶段和文件协议，后续可以平滑升级，不需要重建流程。
 
 ## 工作方式
 
@@ -53,11 +70,27 @@ Capital Agent Skills 在 Coding Agent 之上补齐研发流程、可信门禁、
 发布交付 + 沉淀可复用经验
 ```
 
-MCP 可用时，Skills 会自动创建或绑定统一 Task，关联真实 Commit、验证证据和经验记录。代码正文始终通过 Git 交付，不上传知识平台。
+本地模式下，整个流程由 Git、项目命令和 `.cap/` 文件驱动。MCP 可用时，Skills 会进一步自动创建或绑定统一 Task，关联真实 Commit、独立验证证据和经验记录。两种模式下代码正文都只通过 Git 交付。
 
 ## 安装
 
-Skills 与 MCP 在研发机器上安装一次即可。推荐使用一键安装器，它会打开浏览器完成授权，并自动配置 Codex、Claude Code、Cursor 和 Capital Agent MCP：
+### 本地模式：没有 Cap Server
+
+克隆仓库并把 Skills 安装到使用的 Coding Agent 即可，不需要配置 MCP、平台地址或个人凭据：
+
+```bash
+git clone https://github.com/RainFlashPoint/capital-agent-skills.git
+
+# Claude Code：作为 plugin 加载，或把 skills/* 链接到 ~/.claude/skills/
+# Codex：把 skills/* 链接到 ~/.agents/skills/
+# Cursor：把 cap 链接到 ~/.cursor/skills/
+```
+
+安装后直接在任意 Git 项目中描述研发任务，Skills 会以本地模式运行。经验注入、平台 Task 和独立 Harness 会自动跳过，不影响项目了解、需求确认、计划、实现、本地验证、评审和发布流程。
+
+### 团队增强模式：接入 Cap Server
+
+有 Cap Server 时，推荐使用一键安装器。它会打开浏览器完成授权，并自动配置 Codex、Claude Code、Cursor、Capital Agent MCP 和本地 Test Provider：
 
 ```bash
 bash /path/to/capital-agent-skills/scripts/setup.sh --server "https://your-server"
@@ -70,17 +103,7 @@ bash scripts/setup.sh --server "https://your-server" --upgrade
 bash scripts/setup.sh --server "https://your-server" --doctor
 ```
 
-安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。需要手工配置中心知识库时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
-
-也可以手工安装 Skills：
-
-```bash
-git clone https://github.com/RainFlashPoint/capital-agent-skills.git
-
-# Claude Code：作为 plugin 加载，或把 skills/* 链接到 ~/.claude/skills/
-# Codex：把 skills/* 链接到 ~/.agents/skills/
-# Cursor：把 cap 链接到 ~/.cursor/skills/，并在 ~/.cursor/mcp.json 注册 Capital Agent
-```
+安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。需要手工连接自建 Server 时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
 
 平台地址和个人身份只保存在研发机器配置中。开源仓库不内置公司地址、个人凭据或项目代码。
 
@@ -96,6 +119,8 @@ git clone https://github.com/RainFlashPoint/capital-agent-skills.git
 ```
 
 Git 仓库中的实现、修复、重构、测试、评审和发布请求会自动进入 Cap；纯问答、讨论和调研不会创建平台 Task。
+
+没有 Cap Server 时，“自动进入 Cap”表示启动本地研发主线，不会尝试创建远程 Task，也不会阻塞工作。团队未来接入 Server 后，继续使用相同命令即可获得中心知识库和可信 Gate 增强。
 
 需要显式启动时，Codex 使用 `$cap`，Claude Code 使用 `/cap`。也可以使用 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布` 等直白表达，不需要记忆内部 Skill 名称。
 
