@@ -164,6 +164,17 @@ sh <cap-flow 目录>/scripts/cap-guard    # 脚本自包含;确定性比对 STAT
 > 独立性 / 自包含简报)、收敛时先基到最新再重测才合(防 merge skew)——统一见
 > `references/collaboration-discipline.md`。本编排器在这个源码 setup 决策点加载它,各阶段沿用。
 
+## 分支意图 Gate（新任务早于规格和编码）
+
+边界守卫只证明“当前目录没有串到另一份 STATE”，不能证明“这条分支适合本次新任务”。每个新 feature / fix / hotfix 在进入 define / plan / implement 前，必须执行 `references/collaboration-discipline.md §0`：
+
+- 当前是默认主干，或分支名 / STATE / Task 显示它属于历史功能、release、客户变体、维护版本或另一任务 → 列出证据并让用户选择新建推荐分支、明确续用当前分支、或切到指定基线。
+- 当前短命分支已绑定同一任务意图且基线未变化 → 直接续接，不重复打扰。
+- 有既有脏改动时先按路径说明归属；禁止为了切分支自动 stash、自动提交或把它们带进新任务。
+- 决策写入 STATE 的 `branch-purpose / base-branch / base-commit`。任一值或任务意图变化，重新过 Gate。
+
+**没有完成分支意图 Gate，不得写 spec、plan 或实现。** 这道门防的是“新功能继续写进历史代码分支”，与后面的 protected-branch push 门职责不同。
+
 ## 入口判定
 
 ```
@@ -367,6 +378,14 @@ verify-checks: [...]
 active-roles: [...]
 changed-files:
 - <path>
+branch-intent:
+  purpose: <feature/fix/hotfix/maintenance/fork + intent>
+  base-branch: <default or maintenance branch>
+  base-commit: <full Git SHA>
+commit-scope:
+  include: [<path>]
+  confirm: [<path>]       # 无则 []
+  exclude: [<path>]
 gates-passed:
 - <gate>
 decisions:
@@ -389,6 +408,9 @@ status: in-progress | gated | blocked
 updated: <caller 传入的时间戳>
 verify-checks: [logic, journey, model]   # 本次解析出的
 branch: <当前分支>
+branch-purpose: <本分支承载的 feature/fix/hotfix/maintenance/fork 意图>
+base-branch: <本任务基于的默认主干或维护分支>
+base-commit: <进入本任务时基线的完整 Git SHA>
 worktree: <路径或 (none)>
 work-type: feature | remediation | hotfix
 source-leaf: <需求树叶 id 或 (none)>
@@ -409,6 +431,11 @@ source-leaf: <需求树叶 id 或 (none)>
 
 ## Changed-files snapshot
 <上次 git diff 的路径>
+
+## Commit scope
+- include: <本任务必须提交的路径 + 原因>
+- confirm: <需要用户确认的路径 + 原因；无则 none>
+- exclude: <明确不提交的路径 + 原因>
 
 ## Decisions log
 - <date> 选 X 不选 Y,因为 ...
@@ -484,7 +511,7 @@ Review 通过且已有有效 Commit 时，若 MCP 提供 `split_deferred_accepta
 1. [ ] 运行 package 根 `scripts/cap-status.mjs <target-repo> --json`，完成客户端/Git/STATE 预检
 2. [ ] 调用 `create_or_attach_task` 创建或复用平台 Task；失败时明确报告本地降级，不得静默跳过
 3. [ ] 重跑 `cap-status.mjs` 并输出平台、仓库、分支、Task、当前阶段、下一动作的握手快报
-4. [ ] 边界自检(cap-guard),再判定入口；只有真实分歧或人工门禁才要求确认
+4. [ ] 边界自检(cap-guard) + 分支意图 Gate；确认当前分支属于本任务并记录基线后再判定入口
 5. [ ] 若进改动阶段(implement/test/review):`git diff` → 解析角色+验证项 → 漂移检测
 6. [ ] 装载活跃角色卡 + 选定验证项，路由到对应内部阶段
 7. [ ] 阶段返回后写回 `STATE.md`、登记 Artifact，并再次运行 `cap-status.mjs`

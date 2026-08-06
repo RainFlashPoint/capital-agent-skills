@@ -67,6 +67,14 @@ checks: [...]
 active-roles: [...]
 changed-files:
 - <path>
+branch-intent:
+  purpose: <feature/fix/hotfix/maintenance/fork + intent>
+  base-branch: <default or maintenance branch>
+  base-commit: <full Git SHA>
+commit-scope:
+  include: [<path>]
+  confirm: [<path>]
+  exclude: [<path>]
 gates-passed:
 - <gate>
 decisions:

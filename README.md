@@ -4,7 +4,7 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.4.8，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.4.9，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
 
 ## 它解决什么问题
 
