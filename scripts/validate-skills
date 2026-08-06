@@ -107,6 +107,23 @@ grep -q 'ENV_BLOCKED.*绝不能改写为代码失败或 PASS' "$REF/harness-acti
 grep -q 'cap-local-test-provider.mjs' "$ROOT/cap/SKILL.md" || err "cap 未唤醒本地 Test Provider"
 ok "Harness Action 与独立 Gate 边界检查完成"
 
+echo "== 4.3.2 Git 分支意图与提交范围 Gate =="
+COLLAB="$REF/collaboration-discipline.md"
+grep -q '## 0. 任务入口：分支意图 Gate' "$COLLAB" || err "collaboration-discipline 缺分支意图 Gate"
+grep -q '### 3.1 提交范围 Gate' "$COLLAB" || err "collaboration-discipline 缺提交范围 Gate"
+grep -q '## 分支意图 Gate' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未在新任务入口执行分支意图 Gate"
+grep -q 'branch-purpose / base-branch / base-commit' "$ROOT/cap-implement/SKILL.md" || err "cap-implement 未校验分支意图字段"
+grep -q '### 3.9 提交范围 Gate' "$ROOT/cap-implement/SKILL.md" || err "cap-implement 缺提交范围 Gate"
+grep -q '## Commit scope' "$REF/templates/STATE.md" || err "STATE 未保存提交范围快照"
+grep -q 'branch-purpose:' "$REF/templates/STATE.md" || err "STATE 缺 branch-purpose"
+grep -q 'base-branch:' "$REF/templates/STATE.md" || err "STATE 缺 base-branch"
+grep -q 'base-commit:' "$REF/templates/STATE.md" || err "STATE 缺 base-commit"
+grep -q '禁止 `git add \.` / `git add -A`' "$ROOT/cap-implement/SKILL.md" || err "cap-implement 未禁止整脏区暂存"
+grep -q 'branch-intent:' "$REF/runtime-adapters/codex.md" || err "Codex HANDOFF 未透传分支意图"
+grep -q 'commit-scope:' "$REF/runtime-adapters/codex.md" || err "Codex HANDOFF 未透传提交范围"
+grep -q 'commit-scope:' "$ROOT/cap-implement/SKILL.md" || err "cap-implement HANDOFF 未透传提交范围"
+ok "Git 分支意图与提交范围 Gate 检查完成"
+
 echo "== 4.4 external integration safety invariants =="
 SERVER_ROLE="$REF/roles/server-dev.md"
 for invariant in '环境选择 fail-closed' '配置值保持真实作用域' '真实外部调用必须显式启用' '新配置默认不产生业务流量'; do

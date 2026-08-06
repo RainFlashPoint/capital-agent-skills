@@ -236,7 +236,7 @@ predicted_files:
 - [ ] Step 2: 跑测试确认失败  (贴出命令 + 期望 FAIL 信息)
 - [ ] Step 3: 写最小实现      (贴出真实实现代码)
 - [ ] Step 4: 跑测试确认通过  (贴出命令 + 期望 PASS)
-- [ ] Step 5: 提交            (贴出 git add/commit 命令)
+- [ ] Step 5: 提交范围确认 + 提交（列出 include/confirm/exclude；只对明确路径给出 git add/commit，禁止 `git add .` / `git add -A`）
 ```
 
 非 TDD 任务(UI 布局 / 样式、纯配置、胶水代码、一次性脚本、无业务逻辑的简单 CRUD):不强求五步,但仍要

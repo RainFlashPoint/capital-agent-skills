@@ -31,6 +31,9 @@ stage: understand | define | plan | implement | test | review | release | done
 status: in-progress | gated | blocked
 work-type: feature | remediation | hotfix     # 流程画像(中央旋钮):各阶段读它自适应走多重。见下方说明
 branch: <写 STATE 时记 `git rev-parse --abbrev-ref HEAD`>     # 并发边界戳:cap-guard 据此防串台
+branch-purpose: <feature/fix/hotfix/maintenance/fork + 本任务一句话意图>  # 分支意图 Gate 的结论
+base-branch: <本任务基于的默认主干或维护分支，例如 origin/main>
+base-commit: <进入本任务时基线的完整 Git SHA>   # 分支/基线/意图变化时重新过 Gate
 worktree: <写 STATE 时记 `git rev-parse --show-toplevel`>     # 同上(worktree 隔离)
 source-leaf: <若本特性源自 requirements 树则记叶 id，否则 (none)>   # Retire 据此回写源叶 status=shipped（见 cap-flow §2 退场前置）
 parent-task-id: <历史需求续作时记录父 Task，否则 (none)>
@@ -104,6 +107,7 @@ follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
 - [ ] understand：PROFILE.md 已建立 / 已确认无漂移
 - [ ] define：spec.md 已获批（含 AI 工作的 eval 标准，若适用）
 - [ ] context：task-context.md 已基于当前任务与代码 HEAD 刷新
+- [ ] git：分支意图 Gate 已通过，当前分支与本任务匹配
 - [ ] plan：plan.md 已拆分（阶段含依赖、任务含三字段）
 - [ ] implement：tests written (red) — 测试先行且确认失败
 - [ ] implement：implementation (green) — 实现使测试通过
@@ -111,6 +115,7 @@ follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
 - [ ] test：journey 通过（用户旅程，若有可见面变更）
 - [ ] test：model 通过（达 rubric/阈值，若有 AI 变更）
 - [ ] review：多角色评审无 CRITICAL/未决项
+- [ ] git：Commit scope 已确认，未混入本机配置或其他任务改动
 - [ ] release：晋级完成 / 收口通过
 
 ## Active roles (from last diff scan)
@@ -135,6 +140,22 @@ follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
 
 - <填写，例如：services/api/orders.py>
 - <填写，例如：tests/test_orders.py>
+
+## Commit scope
+
+<!--
+  提交前从完整 git status 动态重算；diff 变化即过期。每条路径附一句理由。
+  include = 本任务交付物；confirm = 归属或影响需用户确认；exclude = 明确不提交。
+-->
+
+### Include
+- <path> — <为什么属于本任务>
+
+### Confirm
+- none
+
+### Exclude
+- <path> — <本机配置 / 临时产物 / 其他任务改动等原因>
 
 ## Decisions log
 

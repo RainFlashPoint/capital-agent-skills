@@ -93,7 +93,7 @@ Codex 运行时的具体 fan-out / 降级规则见 `cap-flow/references/runtime-
 | 条件 | 要确认的事 | 不满足时 |
 |---|---|---|
 | 有已批准的 `plan.md` | `<repo>/.cap/plan.md` 存在 | 回 `cap-plan`(无计划不实现) |
-| 在 git 仓库且非 main/master 直写 | 当前在特性分支,不是直写主干 | 提示先切特性分支(编号文本确认) |
+| 分支意图 Gate 已通过 | STATE 有 `branch-purpose / base-branch / base-commit`，且当前分支与本任务匹配 | 回 cap-flow 执行分支意图 Gate；不能只因“不是 main”就放行历史分支 |
 | 已 resolve 出 active 角色 + 验证项 | 读 `STATE.md` 的 `## Active roles`;若空则现做(§2) | 现场 resolve |
 | spec 已批准(SDD 前置) | `STATE.md` 中 spec 状态为 approved | 回 `cap-define` |
 
@@ -254,15 +254,18 @@ git -C <repo> status --porcelain           # 含 untracked
 6. 只有以下情况允许结束当前回合:当前任务完成并有验证证据、遇到真实 BLOCKED、触发 3-strike / blast-radius 等明确门控,或所有计划任务完成。
 7. 如果连续一轮只有文字输出、没有工具动作,必须自检并立即恢复执行,不得再次要求用户输入“继续”。
 
-### 3.9 提交前 `.cap/` 产物检查
+### 3.9 提交范围 Gate（Commit scope manifest）
 
-准备提交任务代码前,检查 `.cap/` 是否包含本任务需要共享的流程产物:
+准备暂存或提交前，按 `cap-flow/references/collaboration-discipline.md §3.1` 重算提交范围，不能只检查 `.cap/`：
 
-- 通常可提交:`PROFILE.md`、`spec.md`、`plan.md`、`STATE.md`、`verify/`、`review/`;
-- 不得提交:密钥、缓存、临时笔记、运行时产物和本地工具配置;
-- 根据项目版本管理策略决定是否纳入版本库,并在进度中明确列出选择与原因;
-- **不得**因为这条纪律自动执行 `git add` / `git commit`;只有用户或明确的提交指令授权后才能提交;
-- 若提交 `.cap/` 产物,提交后必须检查 Commit 是否包含自动追加的 `Task:` / `Session:` trailer。
+1. 读取完整 `git status`，对照本任务开始时已有脏改动、plan 预测面和当前 diff。
+2. 输出三组路径：`必须提交 / 需要确认 / 明确排除`，每条附一句归属理由，并写入 STATE 的 `## Commit scope`。
+3. 回归测试、必要迁移、共享配置和对外契约文档默认属于交付；`docs/` 或测试目录不能按名称整体排除。
+4. 仓库级测试 / lint / build 配置、lockfile、生成物、删除文件、超出 plan 的路径和既有脏改动进入“需要确认”。本机 `.env`、密钥、缓存、日志、临时调试与其他任务改动进入“明确排除”。
+5. “需要确认”非空或用户尚未授权提交 → 用编号文本确认；无歧义且已有明确提交授权 → 展示 manifest 后继续。
+6. 只暂存 manifest 明确列入的路径，**禁止 `git add .` / `git add -A`**。diff 一变就重算，不能复用旧清单。
+
+本 Gate 不自动取得提交授权：只有用户或上游明确指令授权后才能执行 `git add` / `git commit`。若提交 `.cap/` 产物，提交后还要确认 Commit 带有自动追加的 `Task:` / `Session:` trailer。
 
 ---
 
@@ -420,6 +423,14 @@ verify-checks: [logic, journey:Web, ...]      # §2 本次 resolve 出的,留给
 active-roles: [server-dev, client-dev, qa]
 changed-files:
 - <本次 git diff 的路径>
+branch-intent:
+  purpose: <STATE 中已确认的分支用途 + 本任务意图>
+  base-branch: <默认主干或维护分支>
+  base-commit: <本任务基线完整 SHA>
+commit-scope:
+  include: [<本任务必须提交的路径>]
+  confirm: [<仍需确认的路径；无则 []>]
+  exclude: [<明确不提交的路径>]
 gates-passed:
 - spec approved
 - tests written (red)            # 每任务都先红
