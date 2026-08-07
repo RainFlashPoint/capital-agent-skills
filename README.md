@@ -4,7 +4,7 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.4.9，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.5.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
 
 ## 它解决什么问题
 
@@ -76,17 +76,22 @@ Cap Server 是可选的团队增强层，不是运行 Skills 的前置条件。
 
 ### 本地模式：没有 Cap Server
 
-克隆仓库并把 Skills 安装到使用的 Coding Agent 即可，不需要配置 MCP、平台地址或个人凭据：
+克隆仓库后运行本地安装命令，不需要配置 MCP、平台地址或个人凭据：
 
 ```bash
 git clone https://github.com/RainFlashPoint/capital-agent-skills.git
-
-# Claude Code：作为 plugin 加载，或把 skills/* 链接到 ~/.claude/skills/
-# Codex：把 skills/* 链接到 ~/.agents/skills/
-# Cursor：把 cap 链接到 ~/.cursor/skills/
+cd capital-agent-skills
+bash scripts/setup.sh --local
 ```
 
-安装后直接在任意 Git 项目中描述研发任务，Skills 会以本地模式运行。经验注入、平台 Task 和独立 Harness 会自动跳过，不影响项目了解、需求确认、计划、实现、本地验证、评审和发布流程。
+升级和诊断：
+
+```bash
+bash scripts/setup.sh --local --upgrade
+bash scripts/setup.sh --local --doctor
+```
+
+安装后直接在任意 Git 项目中描述研发任务，Skills 会以显式本地模式运行。平台握手、经验注入、Task、MCP、独立 Harness、Delivery 和 Outbox 会主动跳过，不影响项目了解、需求确认、计划、实现、本地验证、评审和发布流程。
 
 ### 团队增强模式：接入 Cap Server
 

@@ -12,6 +12,8 @@ allowed-tools:
 
 前置：MCP server `capital-agent` 已在本 CLI 注册（提供 `enrich_context`、`record_experience`、`search_knowledge` 等工具）。若工具临时不可用，正常编码继续，但本轮已经形成的 Task/Artifact/Delivery/Experience/Skill Event 元数据必须进入 `.cap/outbox.jsonl`，不能静默丢失。
 
+若 `scripts/cap-status.mjs` 返回 `mode=local_explicit`（配置 `CAPITAL_AGENT_MODE=local`），本 Skill 整体跳过：不登记平台会话、不调用 MCP、不创建 Task / Artifact / Delivery / Experience 事件，也不写或重放 Outbox。`.cap/` 文件与 Git 历史仍作为本地项目记忆；本地测试和评审结论不得包装成 Server Gate。
+
 ## 1. 会话开始 —— 登记 + 注入
 
 若当前目录属于 Git 仓库，开始实质工作前静默运行仓库自带的 `scripts/install-git-governance.mjs`（从本 skill 所属 package 根定位）。它幂等安装 `prepare-commit-msg`，保留并先执行项目原 Hook，把 `.cap/STATE.md` 中有效的 Task/Session 自动追加到 Commit，并在代码提交时检查 `.cap` 研发产物没有被遗漏或本地 exclude；安装失败时降级，不阻塞编码。不要要求用户手工安装或理解 Hook。

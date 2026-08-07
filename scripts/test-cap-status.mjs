@@ -51,6 +51,20 @@ test('offline handshake exposes missing platform and task instead of silently su
   assert.ok(result.reasons.includes('task_not_attached'))
 })
 
+test('explicit local mode skips all platform and outbox work even with stale server credentials', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-local-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=local\nCAPITAL_AGENT_SERVER_URL=https://stale.example.test\nCAPITAL_AGENT_USER_KEY=stale-key\n')
+  await writeFile(join(repo, '.cap/outbox.jsonl'), `${JSON.stringify({ id: 'old', type: 'task.attach', payload: {} })}\n`)
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: {}, fetchImpl: async () => { throw new Error('fetch must not run') } })
+  assert.equal(result.mode, 'local_explicit')
+  assert.equal(result.platform.configured, false)
+  assert.equal(result.platform.connected, null)
+  assert.equal(result.platform.outbox.pending, 0)
+  assert.deepEqual(result.reasons, [])
+})
+
 test('offline handshake exposes queued outbox work without claiming platform completion', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-outbox-'))
   await mkdir(join(repo, '.cap'), { recursive: true })

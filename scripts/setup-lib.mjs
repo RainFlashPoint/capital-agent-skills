@@ -4,17 +4,25 @@ import { basename, dirname, join } from 'path'
 export const publicSkillNames = ['cap']
 export const legacySkillNames = ['cap-map', 'cap-shape', 'cap-build', 'cap-verify']
 export const minimumMcpNodeVersion = '20.18.1'
+export const minimumLocalNodeVersion = '18.0.0'
 
-export function isCompatibleMcpNode(version = '') {
+function isCompatibleNode(version = '', minimum = [18, 0, 0]) {
   const parts = String(version).replace(/^v/, '').split('.').map(Number)
   if (parts.length < 3 || parts.some(Number.isNaN)) return false
   const [major, minor, patch] = parts
-  return major > 20 || (major === 20 && (minor > 18 || (minor === 18 && patch >= 1)))
+  const [minimumMajor, minimumMinor, minimumPatch] = minimum
+  return major > minimumMajor || (major === minimumMajor && (minor > minimumMinor || (minor === minimumMinor && patch >= minimumPatch)))
 }
+
+export function isCompatibleMcpNode(version = '') {
+  return isCompatibleNode(version, [20, 18, 1])
+}
+
+export const isCompatibleLocalNode = version => isCompatibleNode(version, [18, 0, 0])
 
 export function parseSetupArgs(argv = []) {
   const value = flag => { const index = argv.indexOf(flag); return index >= 0 ? argv[index + 1] || '' : '' }
-  return { server: value('--server'), project: argv.includes('--project'), doctor: argv.includes('--doctor'), upgrade: argv.includes('--upgrade'), configOnly: argv.includes('--config-only'), codexOnly: argv.includes('--codex-only'), claudeOnly: argv.includes('--claude-only') }
+  return { server: value('--server'), local: argv.includes('--local'), project: argv.includes('--project'), doctor: argv.includes('--doctor'), upgrade: argv.includes('--upgrade'), configOnly: argv.includes('--config-only'), codexOnly: argv.includes('--codex-only'), claudeOnly: argv.includes('--claude-only') }
 }
 
 export const skillTargets = home => ({ codex: join(home, '.agents/skills'), claude: join(home, '.claude/skills'), cursor: join(home, '.cursor/skills') })
@@ -27,7 +35,7 @@ const ACTIVATION_END = '<!-- capital-agent:auto-activation:end -->'
 export const activationRuleBlock = `${ACTIVATION_START}
 ## Capital Agent 自动研发入口
 
-当当前目录位于 Git 仓库中，且用户意图是实现功能、修复问题、重构、补测试、代码评审或发布交付时，必须在实质分析或修改前加载已安装的 \`cap\` Skill，并按其要求完成平台握手、创建或绑定统一 Task、代码侦察、实现和证据回写。不要等待用户显式输入 \`$cap\` 或 \`/cap\`。
+当当前目录位于 Git 仓库中，且用户意图是实现功能、修复问题、重构、补测试、代码评审或发布交付时，必须在实质分析或修改前加载已安装的 \`cap\` Skill。若 \`CAPITAL_AGENT_MODE=local\`，按纯本地流程完成代码侦察、实现和本地证据，不连接平台、不创建 Task、不写 Outbox；否则按 Skill 要求完成平台握手、创建或绑定统一 Task、实现和证据回写。不要等待用户显式输入 \`$cap\` 或 \`/cap\`。
 
 纯问答、概念讨论、调研、翻译、状态查询，以及明确不需要代码或仓库变更的请求，不创建平台 Task。无法连接平台时必须明确报告本地降级及影响，不得宣称已经同步。用户的显式指令始终优先。
 ${ACTIVATION_END}`
@@ -52,6 +60,14 @@ export async function installActivationRule(filePath, block = activationRuleBloc
 export async function hasActivationRule(filePath) {
   const content = await readFile(filePath, 'utf8').catch(() => '')
   return content.includes(ACTIVATION_START) && content.includes(ACTIVATION_END)
+}
+
+export async function hasSkillLink(sourceDir, targetDir, name = 'cap') {
+  try {
+    const target = join(targetDir, name)
+    const stat = await lstat(target)
+    return stat.isSymbolicLink() && await readlink(target) === join(sourceDir, name)
+  } catch { return false }
 }
 
 export async function installCursorActivationRule(filePath) {

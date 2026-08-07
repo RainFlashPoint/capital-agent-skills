@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- 新增显式本地安装、升级与诊断入口：`setup.sh --local`、`--local --upgrade`、`--local --doctor`，自动安装公开 Skill 与三种客户端激活规则。
+- `CAPITAL_AGENT_MODE=local` 成为一等运行模式：主动跳过平台握手、Task / Session、MCP、Harness、Delivery、Experience 与 Outbox，不再把无 Server 用户误报为平台故障。
+- 本地模式支持 Node.js 18+；接入 Server 的 MCP Runtime 继续严格要求 Node.js 20.18.1+。本地测试与评审保留为本地证据，不冒充 Server Gate。
+
 ## 0.4.9
 
 - 新增任务入口“分支意图 Gate”：不再只检查是否直写主干，还会识别历史功能、维护、release、客户变体和其他 Task 分支；分支不匹配时要求新建、续用或切换基线，并记录 branch purpose 与 base commit。

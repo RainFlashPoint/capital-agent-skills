@@ -124,6 +124,14 @@ grep -q 'commit-scope:' "$REF/runtime-adapters/codex.md" || err "Codex HANDOFF �
 grep -q 'commit-scope:' "$ROOT/cap-implement/SKILL.md" || err "cap-implement HANDOFF 未透传提交范围"
 ok "Git 分支意图与提交范围 Gate 检查完成"
 
+echo "== 4.3.3 显式本地运行模式 =="
+grep -q 'mode=local_explicit' "$ROOT/cap/SKILL.md" || err "cap 未识别显式本地模式"
+grep -q 'CAPITAL_AGENT_MODE=local' "$ROOT/harvest-experience/SKILL.md" || err "经验闭环未跳过显式本地模式"
+grep -q 'CAPITAL_AGENT_MODE=local' scripts/setup.mjs || err "setup 未持久化显式本地模式"
+grep -q 'local_explicit' scripts/cap-status.mjs || err "cap-status 未实现显式本地状态"
+grep -q -- '--local' README.md || err "README 未公开本地安装命令"
+ok "显式本地运行模式检查完成"
+
 echo "== 4.4 external integration safety invariants =="
 SERVER_ROLE="$REF/roles/server-dev.md"
 for invariant in '环境选择 fail-closed' '配置值保持真实作用域' '真实外部调用必须显式启用' '新配置默认不产生业务流量'; do

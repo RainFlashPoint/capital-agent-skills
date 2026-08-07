@@ -123,11 +123,12 @@ export function stageLabel(stage = '') {
   return ({ understand: '项目了解', define: '需求确认', plan: '开发计划', implement: '编码实现', test: '测试验证', review: '代码评审', release: '交付收口', done: '完成退场' })[stage] || '项目了解'
 }
 
-export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fetchImpl = fetch, offline = false } = {}) {
+export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fetchImpl = fetch, offline = false, environment = process.env } = {}) {
   const repo = resolve(repoRoot)
   const configPath = join(homeDir, '.config/capital-agent/env')
   const configText = await readFile(configPath, 'utf8').catch(() => '')
   const config = Object.fromEntries(configText.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1], match[2]]))
+  const explicitLocal = text(environment.CAPITAL_AGENT_MODE || config.CAPITAL_AGENT_MODE).toLowerCase() === 'local'
   let serverUrl = ''
   try { serverUrl = normalizeServerUrl(config.CAPITAL_AGENT_SERVER_URL || '') } catch {}
   const userKey = text(config.CAPITAL_AGENT_USER_KEY)
@@ -150,15 +151,15 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     spec: await exists(join(repo, '.cap/spec.md')),
     plan: await exists(join(repo, '.cap/plan.md')),
   }
-  const handshake = offline ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
+  const handshake = offline || explicitLocal ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
   const platform = offline || handshake?.reason === 'direct_probe_unavailable' ? null : Boolean(handshake?.ok)
   const stateTask = platform ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
   const followUpTaskId = activeFollowUpId(stateTask)
   const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
   const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
   const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
-  const pendingDeliveries = gitRoot && !offline ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
-  const outbox = gitRoot ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
+  const pendingDeliveries = gitRoot && !offline && !explicitLocal ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
+  const outbox = gitRoot && !explicitLocal ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
   const localNext = resolveNextAction({ stateText, artifacts, dirty })
   const next = switchingTask
     ? nextFromPlatformTask(remoteTask, localNext)
@@ -175,19 +176,21 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const reconciliation = reconcileRepositoryState({ head, upstreamHead, deliveredHead, stateHead, commits })
   const reasons = []
   if (!gitRoot) reasons.push('not_git_repository')
-  if (!serverUrl) reasons.push('missing_server_url')
-  if (!userKey) reasons.push('missing_user_key')
-  if (!offline && serverUrl && userKey && handshake?.reason === 'direct_probe_unavailable') reasons.push('direct_probe_unavailable_needs_mcp_confirmation')
-  else if (!offline && serverUrl && userKey && platform === false) reasons.push('platform_handshake_rejected_needs_mcp_confirmation')
-  if (!taskId) reasons.push('task_not_attached')
-  if (reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
+  if (!explicitLocal && !serverUrl) reasons.push('missing_server_url')
+  if (!explicitLocal && !userKey) reasons.push('missing_user_key')
+  if (!explicitLocal && !offline && serverUrl && userKey && handshake?.reason === 'direct_probe_unavailable') reasons.push('direct_probe_unavailable_needs_mcp_confirmation')
+  else if (!explicitLocal && !offline && serverUrl && userKey && platform === false) reasons.push('platform_handshake_rejected_needs_mcp_confirmation')
+  if (!explicitLocal && !taskId) reasons.push('task_not_attached')
+  if (!explicitLocal && reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
   return {
-    mode: !gitRoot || !serverUrl || !userKey
+    mode: explicitLocal
+      ? 'local_explicit'
+      : !gitRoot || !serverUrl || !userKey
       ? 'local_degraded'
       : platform === true
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
-    platform: { configured: Boolean(serverUrl && userKey), connected: platform, serverUrl: serverUrl || '', handshake, pendingDeliveries, outbox },
+    platform: { configured: !explicitLocal && Boolean(serverUrl && userKey), connected: explicitLocal ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, pendingDeliveries, outbox },
     repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty },
     task: {
       id: remoteTask?.id || taskId,
@@ -212,7 +215,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
 }
 
 function render(result) {
-  const connected = result.platform.connected === true ? '已连接' : result.platform.handshake?.reason === 'direct_probe_unavailable' ? '直接探测不可用，等待 MCP 确认' : result.platform.connected === false ? '握手未通过，等待 MCP 确认' : result.platform.configured ? '未探测' : '未配置'
+  const explicitLocal = result.mode === 'local_explicit'
+  const connected = explicitLocal ? '本地模式主动跳过' : result.platform.connected === true ? '已连接' : result.platform.handshake?.reason === 'direct_probe_unavailable' ? '直接探测不可用，等待 MCP 确认' : result.platform.connected === false ? '握手未通过，等待 MCP 确认' : result.platform.configured ? '未探测' : '未配置'
   const task = result.task.id || (result.mode === 'platform_ready' ? '待创建' : '未关联')
   return [
     'CAP CLIENT HANDSHAKE',
@@ -228,8 +232,8 @@ function render(result) {
     `当前：${stageLabel(result.workflow.currentStage || result.workflow.stage)}`,
     `下一步：${result.workflow.action}`,
     `原因：${result.workflow.reason}`,
-    result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
-    result.reconciliation.pushRequired ? `远程验证门禁：当前 HEAD ${result.repository.head.slice(0, 12)} 尚未与上游分支对齐；创建 Test/Review Action 前需要明确授权并推送当前分支` : '远程验证门禁：当前 HEAD 已在上游分支可见',
+    explicitLocal ? '证据：测试与评审结果仅保留在本地' : result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
+    explicitLocal ? '' : result.reconciliation.pushRequired ? `远程验证门禁：当前 HEAD ${result.repository.head.slice(0, 12)} 尚未与上游分支对齐；创建 Test/Review Action 前需要明确授权并推送当前分支` : '远程验证门禁：当前 HEAD 已在上游分支可见',
     result.platform.pendingDeliveries?.total ? `待发送补报：本次发送 ${result.platform.pendingDeliveries.sent}，剩余 ${result.platform.pendingDeliveries.pending}` : '',
     result.platform.outbox?.pending ? `离线待同步：${result.platform.outbox.pending} 条（可重放 ${result.platform.outbox.ready}，阻塞 ${result.platform.outbox.blocked}）${result.platform.outbox.next ? `；下一条 ${result.platform.outbox.next.type}` : ''}` : '',
     result.reasons.length ? `降级原因：${result.reasons.join(', ')}` : '',

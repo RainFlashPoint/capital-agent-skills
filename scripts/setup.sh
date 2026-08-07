@@ -3,10 +3,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_BIN="${CAPITAL_AGENT_NODE_BIN:-}"
-MIN_NODE_VERSION="20.18.1"
+LOCAL_MODE=false
+for argument in "$@"; do
+  if [[ "$argument" == "--local" ]]; then LOCAL_MODE=true; fi
+done
+MIN_NODE_VERSION=$([[ "$LOCAL_MODE" == true ]] && echo "18.0.0" || echo "20.18.1")
+INSTALL_EXAMPLE=$([[ "$LOCAL_MODE" == true ]] && echo "--local" || echo '--server "https://your-server"')
 
 node_is_compatible() {
-  [[ -x "$1" ]] && "$1" -p 'const [a,b,c]=process.versions.node.split(".").map(Number); Number(a>20||(a===20&&(b>18||(b===18&&c>=1))))' 2>/dev/null | grep -qx 1
+  [[ -x "$1" ]] && "$1" -p "const [a,b,c]=process.versions.node.split('.').map(Number); const [x,y,z]='${MIN_NODE_VERSION}'.split('.').map(Number); Number(a>x||(a===x&&(b>y||(b===y&&c>=z))))" 2>/dev/null | grep -qx 1
 }
 
 if [[ -n "$NODE_BIN" ]] && ! node_is_compatible "$NODE_BIN"; then
@@ -30,14 +35,14 @@ if [[ -z "$NODE_BIN" ]]; then
 fi
 
 if [[ -z "$NODE_BIN" || ! -x "$NODE_BIN" ]]; then
-  cat >&2 <<'EOF'
-Capital Agent 的 MCP Runtime 需要 Node.js 20.18.1 或更高版本，但当前机器未找到兼容版本。
+  cat >&2 <<EOF
+Capital Agent 当前安装模式需要 Node.js ${MIN_NODE_VERSION} 或更高版本，但当前机器未找到兼容版本。
 
 macOS 可执行：
   brew install node
 
 如果 Node 已安装但不在 PATH，请这样运行：
-  CAPITAL_AGENT_NODE_BIN=/Node/绝对路径 bash scripts/setup.sh --server "https://your-server" --upgrade
+  CAPITAL_AGENT_NODE_BIN=/Node/绝对路径 bash scripts/setup.sh ${INSTALL_EXAMPLE} --upgrade
 EOF
   exit 127
 fi
