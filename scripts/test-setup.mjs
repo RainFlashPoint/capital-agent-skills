@@ -3,12 +3,19 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleMcpNode, legacySkillNames, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
+  assert.equal(parseSetupArgs(['--local','--upgrade']).local, true)
   assert.equal(normalizeServerUrl('https://example.test/'), 'https://example.test')
   assert.throws(() => normalizeServerUrl('file:///tmp/a'))
+})
+test('local mode supports Node 18 without relaxing the MCP runtime', () => {
+  assert.equal(minimumLocalNodeVersion, '18.0.0')
+  assert.equal(isCompatibleLocalNode('18.0.0'), true)
+  assert.equal(isCompatibleLocalNode('16.20.2'), false)
+  assert.equal(isCompatibleMcpNode('18.20.8'), false)
 })
 test('requires the Node version needed by the fixed MCP runtime', () => {
   assert.equal(minimumMcpNodeVersion,'20.18.1')
@@ -92,6 +99,7 @@ test('installs only the cap public entry without replacing an existing directory
   assert.deepEqual(publicSkillNames, ['cap'])
   assert.deepEqual(await installSkillLinks(source,target), ['cap'])
   assert.equal(await readlink(join(target,'cap')), join(source,'cap'))
+  assert.equal(await hasSkillLink(source,target), true)
   assert.equal((await lstat(join(target,'harvest-experience'))).isDirectory(), true)
   await assert.rejects(readlink(join(target,'cap-flow')))
 })

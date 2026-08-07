@@ -6,17 +6,21 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleMcpNode, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
+import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
 const mcpRuntimeDir = join(homedir(), '.capital-agent', 'mcp-runtime')
 const mcpRuntimePackage = join(mcpRuntimeDir, 'node_modules', 'mcp-remote', 'package.json')
 const MCP_REMOTE_VERSION = '0.1.38'
-if (!isCompatibleMcpNode(process.versions.node)) throw new Error(`Capital Agent MCP Runtime 需要 Node.js ${minimumMcpNodeVersion}+，当前为 ${process.version}。请改用 bash scripts/setup.sh，让安装器自动选择兼容 Node。`)
+if (args.local && args.server) throw new Error('--local 与 --server 不能同时使用')
+const compatibleNode = args.local ? isCompatibleLocalNode(process.versions.node) : isCompatibleMcpNode(process.versions.node)
+const minimumNodeVersion = args.local ? minimumLocalNodeVersion : minimumMcpNodeVersion
+if (!compatibleNode) throw new Error(`Capital Agent ${args.local ? '本地模式' : 'MCP Runtime'} 需要 Node.js ${minimumNodeVersion}+，当前为 ${process.version}。请改用 bash scripts/setup.sh，让安装器自动选择兼容 Node。`)
 const existing = await readFile(configFile, 'utf8').catch(() => '')
 const config = Object.fromEntries(existing.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1],match[2]]))
-let serverUrl = normalizeServerUrl(args.server || process.env.CAPITAL_AGENT_SERVER_URL || config.CAPITAL_AGENT_SERVER_URL || '')
+let serverUrl = ''
+if (!args.local) serverUrl = normalizeServerUrl(args.server || process.env.CAPITAL_AGENT_SERVER_URL || config.CAPITAL_AGENT_SERVER_URL || '')
 let userKey = String(process.env.CAPITAL_AGENT_USER_KEY || config.CAPITAL_AGENT_USER_KEY || '').trim()
 let clientId = String(process.env.CAPITAL_AGENT_CLIENT_ID || config.CAPITAL_AGENT_CLIENT_ID || '').trim()
 if (!clientId) clientId = `client_${randomUUID()}`
@@ -27,6 +31,20 @@ function openBrowser(url) {
   const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'
   const values = process.platform === 'win32' ? ['/c','start','',url] : [url]
   try { spawn(command,values,{detached:true,stdio:'ignore'}).unref() } catch {}
+}
+
+if (args.doctor && args.local) {
+  const targets = skillTargets(homedir())
+  const rules = activationRuleTargets(homedir())
+  const codexSkill = await hasSkillLink(join(root, 'skills'), targets.codex)
+  const claudeSkill = await hasSkillLink(join(root, 'skills'), targets.claude)
+  const cursorSkill = await hasSkillLink(join(root, 'skills'), targets.cursor)
+  const codexActivation = await hasActivationRule(rules.codex)
+  const claudeActivation = await hasActivationRule(rules.claude)
+  const cursorActivation = await hasActivationRule(rules.cursor)
+  process.stdout.write(`运行模式: 本地（显式）\nCodex Skill: ${codexSkill?'PASS':'未安装'}\nClaude Skill: ${claudeSkill?'PASS':'未安装'}\nCursor Skill: ${cursorSkill?'PASS':'未安装'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n平台 / MCP / Test Provider: 本地模式跳过\n`)
+  if ((!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode = 1
+  process.exit()
 }
 
 if (args.doctor) {
@@ -48,6 +66,24 @@ if (args.doctor) {
 }
 
 if (args.upgrade) run('git',['pull','--ff-only'],{cwd:root})
+if (args.local) {
+  await mkdir(configDir,{recursive:true,mode:0o700})
+  const retainedConfig = existing.split(/\r?\n/).filter(line => line && !line.startsWith('CAPITAL_AGENT_MODE=')).join('\n')
+  await writeFile(configFile,`CAPITAL_AGENT_MODE=local\n${retainedConfig}${retainedConfig ? '\n' : ''}`,{mode:0o600})
+  await chmod(configFile,0o600)
+  const installed = []
+  const targets = skillTargets(homedir())
+  const rules = activationRuleTargets(homedir())
+  await installActivationRule(rules.codex)
+  await installActivationRule(rules.claude)
+  await installCursorActivationRule(rules.cursor)
+  if (!args.claudeOnly) installed.push(`Codex: ${(await installSkillLinks(join(root,'skills'),targets.codex)).length}`)
+  if (!args.codexOnly) installed.push(`Claude: ${(await installSkillLinks(join(root,'skills'),targets.claude)).length}`)
+  if (!args.codexOnly && !args.claudeOnly) installed.push(`Cursor: ${(await installSkillLinks(join(root,'skills'),targets.cursor)).length}`)
+  if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
+  process.stdout.write(`Capital Agent 本地模式安装完成。${installed.join('，')}。不会连接平台、创建 Task、调用 MCP/Harness 或累积 Outbox；测试与评审证据保留在本地。配置保存在 ${configFile}。\n`)
+  process.exit()
+}
 if (!userKey) {
   const response = await fetch(`${serverUrl}/api/device-auth/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
   const body = await response.json(); if (!response.ok) throw new Error(body.msg || '无法启动设备授权')
@@ -56,7 +92,7 @@ if (!userKey) {
   userKey = await pollDeviceAuthorization(serverUrl,data.deviceSecret,{expiresIn:data.expiresIn,interval:data.interval})
 }
 if (/\r|\n/.test(serverUrl) || /\r|\n/.test(userKey)) throw new Error('平台配置不能包含换行符')
-await mkdir(configDir,{recursive:true,mode:0o700}); await writeFile(configFile,`CAPITAL_AGENT_SERVER_URL=${serverUrl}\nCAPITAL_AGENT_USER_KEY=${userKey}\nCAPITAL_AGENT_CLIENT_ID=${clientId}\n`,{mode:0o600}); await chmod(configFile,0o600)
+await mkdir(configDir,{recursive:true,mode:0o700}); await writeFile(configFile,`CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=${serverUrl}\nCAPITAL_AGENT_USER_KEY=${userKey}\nCAPITAL_AGENT_CLIENT_ID=${clientId}\n`,{mode:0o600}); await chmod(configFile,0o600)
 
 const registration = await bootstrapLocalTestProvider(serverUrl,userKey,{clientId,clientName:hostname()})
 const localProvider = await installLocalTestProvider({ home: homedir(), source: join(root,'runtime','local-test-provider.mjs'), serverUrl, registration, clientId })
