@@ -37,7 +37,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
    若待同步项属于历史 Task，快报必须标记“等待历史元数据补报授权”，不能直接执行，也不能含糊描述成普通连接恢复。
 6. 调用中心知识层注入与本需求相关的历史经验。
 7. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
-   当前 Delivery 成功后，只要精确 Commit 已在远端可见且没有人工门禁，必须在同一会话自动创建并有界等待 Test Action；Test 成功后由 Server 自动创建 Review Action，客户端继续读取/等待新的 Action，直到成功、明确阻塞或达到等待上限。历史 Outbox 永远不能打断这条当前 Task 主线。
+   普通开发 Commit 和入口对账只登记 Delivery，不触发 Test Action。编码实现完成、精确 Commit 已在远端可见且没有人工门禁时，必须对同一 Commit 再调用一次 `record_task_delivery(delivery_candidate=true)` 提交最终候选版本；Server 幂等创建 Test Action，客户端有界等待。Test 成功后由 Server 自动创建 Review Action，客户端继续读取/等待新的 Action，直到成功、明确阻塞或达到等待上限。历史 Outbox 永远不能打断这条当前 Task 主线。
 8. 按阶段使用唯一 Action 协议，禁止双写：
    - 编码实现：由当前 Skills Session 或受控执行 Provider 完成；通过 Artifact + Delivery 回写真实 Commit，不创建阶段 Action，不写 Test/Review PASS。
    - 测试验证：强制 `create_task_action(action_type=test) → wait_task_action/get_task_action`；Server 决定 Gate，客户端不得自行写验证 PASS。
