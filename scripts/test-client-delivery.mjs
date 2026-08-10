@@ -16,6 +16,7 @@ test('post-commit payload carries task, commit and changed paths without code co
   const item = await buildCommitDelivery(repo)
   assert.equal(item.taskId, 'task_demo')
   assert.deepEqual(item.payload.changed_files, ['a.txt'])
+  assert.equal(item.payload.delivery_candidate, undefined)
   assert.doesNotMatch(JSON.stringify(item), /secret body/)
 })
 

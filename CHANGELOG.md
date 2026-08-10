@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+
+- 收紧 Delivery 候选协议：普通开发 Commit 只登记交付事实，不再自动创建独立 Test Action；仅最终候选 Commit 以 `delivery_candidate=true` 进入 Test → Review 门禁链路。
+- 明确候选 Commit 必须已推送到任务声明的远程分支，并保持同一 Task 内幂等补报，减少中间 Commit 造成的 Action 取消风暴。
+
 ## 0.5.0
 
 - 新增显式本地安装、升级与诊断入口：`setup.sh --local`、`--local --upgrade`、`--local --doctor`，自动安装公开 Skill 与三种客户端激活规则。
