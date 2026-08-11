@@ -73,6 +73,7 @@ follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
 - scope: <已授权动作与最小影响范围摘要，或 not-applicable>
 - granted-by: <用户/既有项目规则/不需要授权；不得写敏感身份资料>
 - invalidates-on: <环境、动作范围、影响或可逆性变化时失效>
+- authorization-fingerprint: <仅保存 repo+task+branch+commit 的 SHA-256；任一项变化立即失效，不保存凭据>
 
 <!--
   字段取值说明：

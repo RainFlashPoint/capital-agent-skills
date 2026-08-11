@@ -112,11 +112,31 @@ test('completed platform task overrides stale local test stage', async () => {
   await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_1\nsession-id: session_1\nstage: test\nstatus: in-progress\n')
   const fetchImpl = async url => url.endsWith('/api/auth/handshake')
     ? { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    : url.endsWith('/api/health')
+      ? { ok: true, status: 200, json: async () => ({ build: { commit: 'server123' }, schemaRevision: '006_product_truth_convergence', taskStoreMode: 'postgres_authoritative', database: 'available' }) }
     : { ok: true, status: 200, json: async () => ({ data: { id: 'task_1', status: 'done', currentStage: 'done', gates: { ready: true }, nextAction: { kind: 'complete' } } }) }
   const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl })
   assert.equal(result.task.remoteStatus, 'done')
   assert.equal(result.workflow.stage, 'done')
   assert.equal(result.task.retirementStatus, 'pending')
+  assert.equal(result.correction.required, true)
+  assert.equal(result.platform.runtime.taskStoreMode, 'postgres_authoritative')
+})
+
+test('canonical blocker and current commit override generic local waiting copy', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-blocker-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_1\nstage: test\nstatus: in-progress\n')
+  const fetchImpl = async url => url.endsWith('/api/auth/handshake')
+    ? { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    : url.endsWith('/api/health')
+      ? { ok: true, status: 200, json: async () => ({ schemaRevision: '006_product_truth_convergence', taskStoreMode: 'postgres_authoritative' }) }
+      : { ok: true, status: 200, json: async () => ({ data: { id: 'task_1', status: 'active', currentStage: 'test', currentCommit: 'a'.repeat(40), currentGate: 'quality', currentAction: { id: 'action_1', type: 'test', status: 'waiting' }, blocker: { code: 'source_commit_not_remote', detail: 'Commit 尚未推送', remediation: '推送当前分支后重试' }, gates: { ready: false }, nextAction: { kind: 'blocker', label: '推送当前分支后重试' } } }) }
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl })
+  assert.equal(result.task.currentCommit, 'a'.repeat(40))
+  assert.equal(result.task.blocker.code, 'source_commit_not_remote')
+  assert.equal(result.workflow.action, '推送当前分支后重试')
 })
 
 test('history manifest marks task snapshot as completed without scanning history', async () => {

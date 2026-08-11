@@ -42,6 +42,15 @@ async function fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) {
   } catch { return null }
 }
 
+async function fetchPlatformHealth(serverUrl, fetchImpl) {
+  if (!serverUrl) return null
+  try {
+    const response = await fetchImpl(`${serverUrl}/api/health`)
+    if (!response.ok) return await response.json().catch(() => null)
+    return await response.json()
+  } catch { return null }
+}
+
 function activeFollowUpId(task = {}) {
   if (task?.status !== 'done') return ''
   const nextId = text(task?.nextAction?.taskId)
@@ -54,6 +63,9 @@ function nextFromPlatformTask(task = {}, fallback = {}) {
   const action = task?.nextAction || {}
   const executionMode = text(task?.executionMode || task?.taskContract?.executionMode)
   const stage = executionMode === 'verify_only' ? 'test' : canonicalStage(task?.currentStage) || fallback.stage || 'test'
+  if (task?.blocker?.remediation) {
+    return { stage, action: text(task.blocker.remediation), reason: `${text(task.blocker.code) || 'platform_blocker'}：${text(task.blocker.detail) || '平台返回结构化阻塞'}`, blocker: task.blocker }
+  }
   if (action.kind === 'action' && action.actionId) {
     const actionStage = action.actionType === 'review' ? 'review' : action.actionType === 'verify' ? 'test' : stage
     return { stage: actionStage, action: text(action.label) || '认领平台待执行动作', reason: `平台 Action ${text(action.actionStatus) || 'ready'}`, platformAction: action }
@@ -154,6 +166,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const handshake = offline || explicitLocal ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
   const platform = offline || handshake?.reason === 'direct_probe_unavailable' ? null : Boolean(handshake?.ok)
   const stateTask = platform ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
+  const runtime = platform ? await fetchPlatformHealth(serverUrl, fetchImpl) : null
   const followUpTaskId = activeFollowUpId(stateTask)
   const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
   const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
@@ -161,6 +174,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const pendingDeliveries = gitRoot && !offline && !explicitLocal ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
   const outbox = gitRoot && !explicitLocal ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
   const localNext = resolveNextAction({ stateText, artifacts, dirty })
+  const localStage = canonicalStage(field(stateText, 'stage'))
   const next = switchingTask
     ? nextFromPlatformTask(remoteTask, localNext)
     : remoteTask?.status === 'done'
@@ -182,6 +196,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   else if (!explicitLocal && !offline && serverUrl && userKey && platform === false) reasons.push('platform_handshake_rejected_needs_mcp_confirmation')
   if (!explicitLocal && !taskId) reasons.push('task_not_attached')
   if (!explicitLocal && reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
+  const correction = remoteTask && (canonicalStage(remoteTask.currentStage) !== localStage || (remoteTask.status === 'done' && field(stateText, 'status').toLowerCase() !== 'done'))
+    ? { required: true, reason: 'server_canonical_state_overrides_local_state', localStage, remoteStage: canonicalStage(remoteTask.currentStage), remoteStatus: remoteTask.status }
+    : { required: false, reason: '' }
   return {
     mode: explicitLocal
       ? 'local_explicit'
@@ -190,7 +207,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       : platform === true
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
-    platform: { configured: !explicitLocal && Boolean(serverUrl && userKey), connected: explicitLocal ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, pendingDeliveries, outbox },
+    platform: { configured: !explicitLocal && Boolean(serverUrl && userKey), connected: explicitLocal ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, runtime: runtime ? { buildCommit: runtime.build?.commit || '', schemaRevision: runtime.schemaRevision || '', taskStoreMode: runtime.taskStoreMode || '', database: runtime.database || '' } : null, pendingDeliveries, outbox },
     repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty },
     task: {
       id: remoteTask?.id || taskId,
@@ -201,6 +218,10 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       remoteStatus: remoteTask?.status || '',
       remoteStage: remoteTask?.currentStage || '',
       gatesReady: remoteTask?.gates?.ready === true,
+      currentCommit: remoteTask?.currentCommit || remoteTask?.gates?.currentCommit || '',
+      currentGate: remoteTask?.currentGate || remoteTask?.gates?.current || '',
+      currentAction: remoteTask?.currentAction || null,
+      blocker: remoteTask?.blocker || null,
       nextAction: remoteTask?.nextAction || null,
       executionMode: remoteTask?.executionMode || remoteTask?.taskContract?.executionMode || '',
       verificationCommands: remoteTask?.verificationCommands || remoteTask?.taskContract?.verificationCommands || [],
@@ -209,6 +230,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       historyArtifactRoot,
     },
     reconciliation,
+    correction,
     workflow: { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
     reasons,
   }
@@ -227,6 +249,11 @@ function render(result) {
     `Task：${task}`,
     result.task.requiresNewSession ? `任务接续：${result.task.previousId} → ${result.task.id}（必须新建 Session）` : '',
     result.task.remoteStatus ? `平台 Task：${result.task.remoteStatus}${result.task.gatesReady ? ' · Gate 已通过' : ''}` : '',
+    result.task.currentCommit ? `当前候选 Commit：${result.task.currentCommit.slice(0, 12)}` : '',
+    result.task.currentAction?.id ? `当前 Action：${result.task.currentAction.type || '-'} · ${result.task.currentAction.status || '-'} · ${result.task.currentAction.id}` : '',
+    result.task.blocker ? `阻塞：${result.task.blocker.detail || result.task.blocker.code}；处理：${result.task.blocker.remediation || '查看技术详情'}` : '',
+    result.platform.runtime?.taskStoreMode ? `平台真值：${result.platform.runtime.taskStoreMode} · schema ${result.platform.runtime.schemaRevision || '-'}` : '',
+    result.correction.required ? `状态纠偏：本地 ${result.correction.localStage || '-'} → 平台 ${result.correction.remoteStage || result.task.remoteStage || '-'}（${result.correction.remoteStatus}）` : '',
     result.task.parentTaskId ? `父 Task：${result.task.parentTaskId}` : '',
     result.task.retirementStatus ? `历史快照：${result.task.retirementStatus}${result.task.historyArtifactRoot ? ` · ${result.task.historyArtifactRoot}` : ''}` : '',
     `当前：${stageLabel(result.workflow.currentStage || result.workflow.stage)}`,

@@ -2,6 +2,8 @@
 
 Skills 是 Harness Client，不是可信 Gate 内核。STATE 是游标，不是 Gate 真值；`.cap/STATE.md` 只保存阶段游标、Action 引用和人类可读摘要，不能自行证明 Test、Review 或 Safety 已通过。
 
+当前交付对象由 Server 的 `currentCommit` 决定。普通 Delivery 只登记工程事实，不能改变 current candidate；只有显式 `delivery_candidate=true` 才能提名最终候选。`currentAction.sourceCommit`、Test/Review Evidence 与 Gate 必须始终等于 `currentCommit`，旧 Commit 的 PASS 在新候选出现后立即失效。Session finished ≠ Task finished，local PASS ≠ Server Gate PASS。
+
 ## 唯一路由矩阵
 
 | 阶段 | 允许的 Action 协议 | 禁止事项 |
@@ -18,6 +20,8 @@ Skills 是 Harness Client，不是可信 Gate 内核。STATE 是游标，不是 
 当本轮已有精确 Commit 且 MCP 暴露 `create_task_action` 时，测试验证阶段必须：
 
 1. 先确认精确 Commit 已在 Task 指定远程分支可见。若 `cap-status.reconciliation.pushRequired=true`，先进入 Push 门禁；得到当前 Task 范围授权后执行 Push 和当前 Delivery 补报，再用 `task_id + commit_sha + required_checks` 创建 `action_type=test`。默认由 Server Test Provider 异步执行。
+
+Push 授权必须绑定 `repo + task + branch + commit` 的 fingerprint；计算前先移除 remote URL 中的账号/Token，任一身份变化授权立即失效并重新询问。候选 Delivery 只能在本次授权下实时发送，发送失败不得写入自动重放 Outbox；历史 Outbox 不继承当前 Task 的 Push/发送授权，也不能抢占当前候选的 Test → Review 主线。
 2. 把返回的 `action_id/run_id` 写入 STATE 的 `Harness actions`，状态记为 `ready/running`，不得提前勾选质量 Gate。
 3. Action 进入 `ready` 后，若目标仓本机存在已注册的 Capital Agent Runner，立即执行 package 根 `scripts/cap-local-test-provider.mjs <target-repo> <action-id>` 唤醒一次本地独立 Test Provider。必须传本次 Action ID，Provider 只能领取这一条，不能领取同仓库其他工作。该 Provider 继承研发机的 Maven/npm/SDK 配置，在隔离 worktree 验证精确 Commit；它只领取 Harness Action，不得顺带领取编码任务。未安装、未授权当前仓库或认证失败时，明确报告 `local_provider_unavailable`，不得回退到 Server 猜测本地依赖环境。
 4. 用 `wait_task_action` 做有界等待；超时后保存当前状态并允许新会话用 `get_task_action` 续接，禁止无限轮询。

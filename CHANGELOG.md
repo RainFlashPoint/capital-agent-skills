@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- 客户端改为消费 Server 的当前 Commit、Gate、Action、结构化阻塞和下一动作；平台与 STATE 冲突时明确纠偏，不再让本地游标覆盖业务真值。
+- post-commit 永远登记普通 Delivery；最终候选必须绑定精确 repo、Task、branch、HEAD 与一次授权 fingerprint，并确认已推送和本地验证通过。
+- 候选 Delivery 只允许在当前授权下实时发送，不进入历史 Outbox 自动重放；remote URL 凭据会在计算授权指纹前移除。
+- 固化 Session/Task、local PASS/Server Gate、历史 Outbox/当前授权边界，并增加结构 lint 防止协议回退。
+- 状态诊断展示部署 Commit、Schema revision 与 Task store mode，无法证明线上版本时不再宣称已部署。
+
 ## 0.5.1
 
 - 收紧 Delivery 候选协议：普通开发 Commit 只登记交付事实，不再自动创建独立 Test Action；仅最终候选 Commit 以 `delivery_candidate=true` 进入 Test → Review 门禁链路。

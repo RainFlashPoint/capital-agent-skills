@@ -18,6 +18,8 @@
 
 Server/MCP 返回预检失败时，优先展示结构化 `reason/preflight.code/detail/remediation`。至少区分 `source_commit_not_remote`、`repo_auth_failed`、`repo_branch_missing`、`provider_not_healthy/provider_at_capacity`、`verification_commands_missing`；不得统一翻译成“环境问题”或“执行失败”。
 
+平台可用时，客户端只消费 Server 的 canonical projection：`currentCommit/currentGate/currentAction/blocker/nextAction`。平台状态与本地 STATE 冲突时，必须输出 `server_canonical_state_overrides_local_state` 并修正本地游标；Session finished、本地 PASS 或 Execution success 都不能越权把 Task 判定为 done。健康接口同时展示 `build.commit/schemaRevision/taskStoreMode`，无法证明运行版本时不得声称新逻辑已部署。
+
 “准备执行”“接下来调用”或一份执行计划不算执行证据。外部操作预检通过后，必须在当前会话真实调用可用工具并取得可观察结果，再以脱敏的命令/请求标识、状态码、终态或错误归因更新验证产物与 STATE；工具不可用或调用失败则据实标为 `ENV_BLOCKED` / `INCONCLUSIVE`，不得停在口头承诺或伪报完成。
 
 ## 阶段进入

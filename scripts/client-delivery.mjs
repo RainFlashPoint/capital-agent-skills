@@ -2,6 +2,7 @@ import { readFile, rename, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { acknowledgeOutboxEvent, enqueueOutboxEvent, inspectOutbox, markOutboxAttempt } from './cap-outbox.mjs'
 
 const text = value => String(value || '').trim()
@@ -29,8 +30,41 @@ export async function buildCommitDelivery(repoRoot) {
       commit_sha: commitSha,
       branch: git(repoRoot, ['branch', '--show-current']),
       changed_files: changedFiles,
+      delivery_candidate: false,
       verification: { source: 'client_post_commit', pending: true },
     },
+  }
+}
+
+export function buildPushAuthorizationFingerprint({ repoUrl = '', taskId = '', branch = '', commitSha = '' } = {}) {
+  let safeRepoUrl = text(repoUrl)
+  try {
+    const parsed = new URL(safeRepoUrl)
+    parsed.username = ''
+    parsed.password = ''
+    safeRepoUrl = parsed.toString()
+  } catch {
+    safeRepoUrl = safeRepoUrl.replace(/(https?:\/\/)[^@\s]+@/i, '$1')
+  }
+  const identity = [safeRepoUrl, text(taskId), text(branch), text(commitSha)].join('\n')
+  return createHash('sha256').update(identity).digest('hex')
+}
+
+export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '' } = {}) {
+  const item = await buildCommitDelivery(repoRoot)
+  if (!item) return { ok: false, reason: 'delivery_identity_missing' }
+  const repoUrl = git(repoRoot, ['remote', 'get-url', 'origin'])
+  const upstream = git(repoRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+  const upstreamHead = upstream ? git(repoRoot, ['rev-parse', upstream]) : ''
+  const expectedFingerprint = buildPushAuthorizationFingerprint({ repoUrl, taskId: item.taskId, branch: item.payload.branch, commitSha: item.payload.commit_sha })
+  if (!upstreamHead || upstreamHead !== item.payload.commit_sha) return { ok: false, reason: 'source_commit_not_remote', expectedFingerprint, item }
+  if (!authorizedFingerprint || authorizedFingerprint !== expectedFingerprint) return { ok: false, reason: 'push_authorization_required', expectedFingerprint, item }
+  const outcome = text(verification.outcome || verification.status).toUpperCase()
+  if (verification.passed !== true || !['PASS', 'PASSED', 'SUCCESS'].includes(outcome)) return { ok: false, reason: 'local_verification_not_passed', expectedFingerprint, item }
+  return {
+    ok: true,
+    expectedFingerprint,
+    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}`, delivery_candidate: true, verification } },
   }
 }
 
@@ -45,6 +79,7 @@ export async function sendCommitDelivery({ serverUrl, userKey, taskId, payload, 
 }
 
 export async function queueCommitDelivery(repoRoot, item) {
+  if (item?.payload?.delivery_candidate === true) throw new Error('candidate_delivery_requires_live_authorization')
   return enqueueOutboxEvent(repoRoot, {
     type: 'delivery.record',
     idempotencyKey: item?.payload?.idempotency_key || `delivery:${item?.taskId || 'unknown'}:${item?.payload?.commit_sha || 'unknown'}`,
@@ -69,6 +104,10 @@ export async function flushPendingDeliveries(repoRoot, { fetchImpl = fetch, home
   let sent = 0
   for (const event of deliveries) {
     const item = event.payload || {}
+    if (item?.payload?.delivery_candidate === true) {
+      await markOutboxAttempt(repoRoot, event.id, 'candidate_delivery_requires_fresh_authorization')
+      continue
+    }
     const ok = await sendCommitDelivery({ serverUrl: config.CAPITAL_AGENT_SERVER_URL, userKey: config.CAPITAL_AGENT_USER_KEY, taskId: item.taskId, payload: item.payload, fetchImpl })
     if (ok) { await acknowledgeOutboxEvent(repoRoot, event.id); sent += 1 }
     else await markOutboxAttempt(repoRoot, event.id, 'delivery_replay_failed')

@@ -14,6 +14,8 @@
 
 重复进入 `$cap` 必须安全重试，同一幂等键不得产生重复 Task、Artifact、Delivery、Action 或经验。旧 `.cap/pending-deliveries.jsonl` 会在下一次 `cap-status` 自动迁入 Outbox，新 post-commit 失败直接写 Outbox。
 
+历史 Outbox 永不继承新会话的授权。普通 Delivery 可按幂等协议自动重放；候选 Delivery 不进入自动重放 Outbox，发送失败后必须按当前 Task、repo、branch、Commit 重新取得授权并实时发送。
+
 ## 开始
 
 1. 读取 `git remote get-url origin`、当前 branch、`git rev-parse HEAD`、upstream HEAD 和仓库根目录。
@@ -33,6 +35,8 @@ Test/Review/Patch 的 Harness 契约见 `../../cap-flow/references/harness-actio
 真实 Commit Delivery 和经验。普通开发 Delivery 只累积工程证据；仅当实现收敛并准备进入测试验证时，客户端把同一
 Commit 作为 `delivery_candidate=true` 再次幂等回写，Server 才基于该候选创建 Test/Review Harness Action。这样
 Task、Session、Action、Delivery 各自只有一种职责，不再存在两套 Review/Test 队列。
+
+Server 的 canonical projection 是状态单一事实源：Task 只由当前候选 Commit 的必需 Gate 收口；Session 结束、Execution 成功和客户端本地 PASS 均不能直接完成 Task。客户端读取 `currentCommit/currentGate/currentAction/blocker/nextAction`，并按结构化 `code/detail/remediation` 展示不同修复动作，不得自行 reverse/find 历史 Action 猜“当前状态”。
 
 ## Artifact 元数据
 
