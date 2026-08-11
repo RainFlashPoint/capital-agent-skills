@@ -65,6 +65,24 @@ test('project hook blocks code commit when cap delivery artifacts are not staged
   assert.throws(() => run(repo, 'git', ['commit', '-m', 'small change']), /\.cap 研发产物/)
 })
 
+test('project hook allows recommended ignored in-flight state while preserving task trailers', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-hook-ignored-state-'))
+  run(repo, 'git', ['init', '-b', 'main'])
+  run(repo, 'git', ['config', 'user.name', 'test'])
+  run(repo, 'git', ['config', 'user.email', 'test@example.com'])
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n!.cap/archive/\n!.cap/EVOLUTION.md\n!.cap/PROFILE.md\n')
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo123\nsession-id: session_demo456\n')
+  await writeFile(join(repo, '.cap/spec.md'), '# local in-flight spec\n')
+  await writeFile(join(repo, 'sample.txt'), 'ok\n')
+  run(repo, 'git', ['add', '.gitignore', 'sample.txt'])
+  run(repo, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
+  run(repo, 'git', ['commit', '-m', 'small change'])
+  const message = run(repo, 'git', ['log', '-1', '--pretty=%B'])
+  assert.match(message, /Task: task_demo123/)
+  assert.match(message, /Session: session_demo456/)
+})
+
 test('pre-push allows development branch while environment verification is pending', async () => {
   const repo = await fixtureRepo('cap-pre-push-dev-')
   const output = runPrePush(repo, 'feature/example', 'task-id: task_demo\nstatus: gated\ndelivery-status: ENV_PENDING\ncap-gate: BLOCK\n')

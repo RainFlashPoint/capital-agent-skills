@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1
+
+- 修复从 Git worktree 运行 Doctor 时误报 Codex MCP 未注册：已安装的 Capital Agent MCP 可位于另一份有效 checkout，不再要求配置路径必须等于当前 worktree。
+- 修复提交 Hook 与 `.cap` 二分策略冲突：允许 `STATE/spec/plan/verify/review` 保持本地忽略，同时继续阻止应跟踪的 `PROFILE/EVOLUTION/archive` 产物遗漏提交。
+
 ## 0.6.0
 
 - 客户端改为消费 Server 的当前 Commit、Gate、Action、结构化阻塞和下一动作；平台与 STATE 冲突时明确纠偏，不再让本地游标覆盖业务真值。

@@ -15,12 +15,6 @@ const stagedFiles = git(['diff', '--cached', '--name-only', '--diff-filter=ACMR'
   .split(/\r?\n/).map(item => item.trim()).filter(Boolean)
 const stagedCode = stagedFiles.some(item => !item.startsWith('.cap/'))
 if (stagedCode) {
-  let stateIgnored = false
-  try { git(['check-ignore', '-q', '.cap/STATE.md']); stateIgnored = true } catch {}
-  if (stateIgnored) {
-    process.stderr.write('✗ cap: .cap/STATE.md 被 Git ignore/exclude，研发产物无法随代码交付。\n  请从 .gitignore 或 .git/info/exclude 移除 .cap 规则后，执行 git add .cap。\n')
-    process.exit(1)
-  }
   const pendingCap = git(['status', '--porcelain', '--untracked-files=all', '--', '.cap'])
     .split(/\r?\n/).filter(Boolean)
     .filter(item => item.startsWith('??') || item[1] !== ' ')

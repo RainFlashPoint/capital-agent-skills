@@ -104,7 +104,27 @@ export async function installCodexMcpConfig(filePath, nodePath, wrapperPath) {
 
 export async function hasCodexMcpConfig(filePath, wrapperPath = '') {
   const content = await readFile(filePath, 'utf8').catch(() => '')
-  return content.includes('[mcp_servers.capital-agent]') && (!wrapperPath || content.includes(JSON.stringify(wrapperPath)))
+  const marker = '[mcp_servers.capital-agent]'
+  const start = content.indexOf(marker)
+  if (start < 0) return false
+  const remainder = content.slice(start + marker.length)
+  const nextSection = remainder.search(/^\s*\[/m)
+  const section = nextSection >= 0 ? remainder.slice(0, nextSection) : remainder
+  if (!wrapperPath || section.includes(JSON.stringify(wrapperPath))) return true
+
+  const argsLiteral = section.match(/^\s*args\s*=\s*(\[[^\r\n]*\])/m)?.[1]
+  if (!argsLiteral) return false
+  try {
+    const configuredArgs = JSON.parse(argsLiteral)
+    const configuredWrapper = Array.isArray(configuredArgs)
+      ? configuredArgs.find(value => typeof value === 'string' && basename(value) === basename(wrapperPath))
+      : ''
+    if (!configuredWrapper) return false
+    const stat = await lstat(configuredWrapper)
+    return stat.isFile() || stat.isSymbolicLink()
+  } catch {
+    return false
+  }
 }
 
 export async function installCursorMcpConfig(filePath, nodePath, wrapperPath) {
