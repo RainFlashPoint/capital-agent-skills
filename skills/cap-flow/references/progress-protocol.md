@@ -10,7 +10,9 @@
 
 同时读取 `platform.outbox`。有待同步事件时必须展示：总数、可重放数、阻塞数和下一事件类型。属于当前 Task 的事件按 `scripts/cap-outbox.mjs replay-plan` 补报；历史 Task/旧 Session 事件必须先显示“等待历史元数据补报授权”，说明发送目的地与元数据类型，不能静默发送，也不能阻塞当前新需求。某条失败时记录 attempt/lastError，不得跳过依赖链，也不得把“已写入 Outbox”表述为“平台已完成”。
 
-权限与风险拒绝必须使用真实错误归因。看到 `rejected due to unacceptable risk`、`approval required`、`not authorized` 等结果时，报告“需要用户授权该数据发送/外部动作”，不得猜测成工具超时、宿主卡顿或网络异常。多个外部写操作必须串行；首条被拒后立即停止，不再发起同批后续调用。
+权限与风险拒绝必须使用真实错误归因。`create_or_attach_task` 因 `rejected due to unacceptable risk` 或敏感元数据策略被拒时属于特殊的可恢复入口：用 `scripts/cap-task-request.mjs` 将具体商户、公司、账号和凭据值替换为“仅本地配置”，保留业务意图与验证命令，串行重试一次；成功后继续，第二次失败则 `task_creation_blocked`，禁止降级后编码。其它 `approval required`、`not authorized` 或外部动作风险拒绝仍报告“需要用户授权该数据发送/外部动作”，不得猜测成工具超时、宿主卡顿或网络异常。多个外部写操作必须串行；首条被拒后立即停止同批无关调用。
+
+`cap-status.mode=boundary_blocked` 是高于阶段路由的硬门禁。STATE 的 branch/worktree 与当前 Git 边界不一致时，不读取旧 Task 推断下一动作、不补报旧 Delivery、不进入任何研发阶段；先用 `scripts/cap-task-state-switch.mjs` 原子移动旧活动态到 `.cap/local-state/stale/<old-task>/...`，再为已经创建成功的新 Task 初始化 STATE。同一分支上显式开始新 Task 时，切换调用还必须传 STATE 中的精确旧 Task ID，禁止无条件覆盖。移动或初始化任一步失败必须回滚并保持阻断，业务源码、暂存区和现有 Commit 不得被修改。
 
 下一动作不是提示语。若 `status=in-progress` 且没有人工门禁，当前会话必须立即路由并执行该动作；只有 `gated/blocked`、不可逆操作或用户明确要求暂停时才能停下。Artifact 登记和 STATE 更新只是证据，不构成阶段完成。
 

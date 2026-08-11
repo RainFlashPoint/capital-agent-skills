@@ -148,8 +148,7 @@ Test/Review 的最终可信状态来自 Server Action。STATE 中的阶段结论
 sh <cap-flow 目录>/scripts/cap-guard    # 脚本自包含;确定性比对 STATE 记录的 branch/worktree 与当前
 ```
 
-- **守卫报错(串台)** → 按提示停下:要么切回原分支续接,要么给新工作**开 worktree 或新分支**(各自独立 `.cap`)。
-  串台状态下不要继续推进。
+- **守卫报错(串台)** → `cap-status` 必须投影为 `mode=boundary_blocked`。要续接旧任务就切回原分支/worktree；要执行已创建的新 Task，就用 package 根 `scripts/cap-task-state-switch.mjs` 先原子保存旧活动态、初始化新 STATE，再重跑守卫。串台状态下不要继续推进，不能只写一句说明后绕过。
 - **守卫通过、但本次意图是"开新特性"而 STATE 里还有进行中的特性** → 用编号文本警告:
   ```
   ⚠ 当前分支已有进行中特性 '<F1>'(stage=<x>)。同分支再开一个会文件冲突 + STATE 互相覆盖。

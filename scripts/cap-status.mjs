@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile, stat } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -95,6 +96,27 @@ export function reconcileRepositoryState({ head = '', upstreamHead = '', deliver
   }
 }
 
+export function inspectTaskBoundary({ stateText = '', branch = '', worktree = '' } = {}) {
+  if (!stateText) return { blocked: false, code: '', mismatches: [], state: {}, current: { branch: text(branch), worktree: text(worktree) } }
+  const stateBranch = field(stateText, 'branch')
+  const stateWorktree = field(stateText, 'worktree')
+  const usable = value => value && value !== '(none)' && !value.startsWith('<')
+  const mismatches = []
+  if (usable(stateBranch) && branch && stateBranch !== branch) mismatches.push('branch')
+  const canonicalPath = value => { try { return realpathSync.native(resolve(value)) } catch { return resolve(value) } }
+  if (usable(stateWorktree) && worktree && canonicalPath(stateWorktree) !== canonicalPath(worktree)) mismatches.push('worktree')
+  const blocked = mismatches.length > 0
+  return {
+    blocked,
+    code: blocked ? `task_state_${mismatches.join('_and_')}_mismatch` : '',
+    mismatches,
+    state: { taskId: field(stateText, 'task-id'), sessionId: field(stateText, 'session-id'), branch: stateBranch, worktree: stateWorktree },
+    current: { branch: text(branch), worktree: text(worktree) },
+    detail: blocked ? `活动 STATE 属于 ${mismatches.join('、')} 边界之外的旧任务` : '',
+    remediation: blocked ? '先安全保存旧 .cap 活动态并为本次 Task 初始化新 STATE；完成前禁止需求确认、计划、编码、测试或评审' : '',
+  }
+}
+
 export function resolveNextAction({ stateText = '', artifacts = {}, dirty = false } = {}) {
   if (!stateText) {
     return artifacts.profile
@@ -153,6 +175,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const dirty = Boolean(git(repo, ['status', '--porcelain']))
   const statePath = join(repo, '.cap/STATE.md')
   const stateText = await readFile(statePath, 'utf8').catch(() => '')
+  const boundary = inspectTaskBoundary({ stateText, branch, worktree: gitRoot || repo })
   const taskId = field(stateText, 'task-id')
   const sessionId = field(stateText, 'session-id')
   const parentTaskId = field(stateText, 'parent-task-id')
@@ -165,13 +188,13 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   }
   const handshake = offline || explicitLocal ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
   const platform = offline || handshake?.reason === 'direct_probe_unavailable' ? null : Boolean(handshake?.ok)
-  const stateTask = platform ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
+  const stateTask = platform && !boundary.blocked ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
   const runtime = platform ? await fetchPlatformHealth(serverUrl, fetchImpl) : null
   const followUpTaskId = activeFollowUpId(stateTask)
   const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
   const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
   const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
-  const pendingDeliveries = gitRoot && !offline && !explicitLocal ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
+  const pendingDeliveries = gitRoot && !offline && !explicitLocal && !boundary.blocked ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
   const outbox = gitRoot && !explicitLocal ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
   const localNext = resolveNextAction({ stateText, artifacts, dirty })
   const localStage = canonicalStage(field(stateText, 'stage'))
@@ -189,6 +212,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     : head ? [git(repo, ['log', '-1', '--format=%H%x09%s', head])].filter(Boolean) : []
   const reconciliation = reconcileRepositoryState({ head, upstreamHead, deliveredHead, stateHead, commits })
   const reasons = []
+  if (boundary.blocked) reasons.push(boundary.code)
   if (!gitRoot) reasons.push('not_git_repository')
   if (!explicitLocal && !serverUrl) reasons.push('missing_server_url')
   if (!explicitLocal && !userKey) reasons.push('missing_user_key')
@@ -200,7 +224,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     ? { required: true, reason: 'server_canonical_state_overrides_local_state', localStage, remoteStage: canonicalStage(remoteTask.currentStage), remoteStatus: remoteTask.status }
     : { required: false, reason: '' }
   return {
-    mode: explicitLocal
+    mode: boundary.blocked
+      ? 'boundary_blocked'
+      : explicitLocal
       ? 'local_explicit'
       : !gitRoot || !serverUrl || !userKey
       ? 'local_degraded'
@@ -221,7 +247,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       currentCommit: remoteTask?.currentCommit || remoteTask?.gates?.currentCommit || '',
       currentGate: remoteTask?.currentGate || remoteTask?.gates?.current || '',
       currentAction: remoteTask?.currentAction || null,
-      blocker: remoteTask?.blocker || null,
+      blocker: boundary.blocked ? { code: boundary.code, detail: boundary.detail, remediation: boundary.remediation } : remoteTask?.blocker || null,
       nextAction: remoteTask?.nextAction || null,
       executionMode: remoteTask?.executionMode || remoteTask?.taskContract?.executionMode || '',
       verificationCommands: remoteTask?.verificationCommands || remoteTask?.taskContract?.verificationCommands || [],
@@ -230,8 +256,11 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       historyArtifactRoot,
     },
     reconciliation,
+    boundary,
     correction,
-    workflow: { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
+    workflow: boundary.blocked
+      ? { currentStage: canonicalStage(field(stateText, 'stage')), status: 'blocked', stage: canonicalStage(field(stateText, 'stage')) || 'understand', action: '安全切换本次 Task 状态', reason: boundary.detail, gated: true }
+      : { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
     reasons,
   }
 }
@@ -247,6 +276,7 @@ function render(result) {
     `仓库：${result.repository.remote || result.repository.root}`,
     `分支：${result.repository.branch || '-'}`,
     `Task：${task}`,
+    result.boundary?.blocked ? `边界阻断：${result.boundary.code}；STATE 分支 ${result.boundary.state.branch || '-'} / 当前分支 ${result.boundary.current.branch || '-'}` : '',
     result.task.requiresNewSession ? `任务接续：${result.task.previousId} → ${result.task.id}（必须新建 Session）` : '',
     result.task.remoteStatus ? `平台 Task：${result.task.remoteStatus}${result.task.gatesReady ? ' · Gate 已通过' : ''}` : '',
     result.task.currentCommit ? `当前候选 Commit：${result.task.currentCommit.slice(0, 12)}` : '',

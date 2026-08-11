@@ -105,6 +105,23 @@ test('unavailable direct probe remains unknown until MCP confirmation', async ()
   assert.ok(result.reasons.includes('direct_probe_unavailable_needs_mcp_confirmation'))
 })
 
+test('stale branch and worktree STATE hard-blocks workflow before old Task delivery replay', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-boundary-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_old\nsession-id: session_old\nbranch: feature/old\nworktree: /tmp/old-worktree\nstage: implement\nstatus: in-progress\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async url => url.endsWith('/api/auth/handshake')
+    ? { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true } } }) }
+    : { ok: true, status: 200, json: async () => ({}) } })
+  assert.equal(result.mode, 'boundary_blocked')
+  assert.equal(result.boundary.blocked, true)
+  assert.deepEqual(result.boundary.mismatches, ['branch', 'worktree'])
+  assert.equal(result.task.blocker.code, 'task_state_branch_and_worktree_mismatch')
+  assert.equal(result.workflow.status, 'blocked')
+  assert.equal(result.workflow.action, '安全切换本次 Task 状态')
+  assert.equal(result.platform.pendingDeliveries.total, 0)
+})
+
 test('completed platform task overrides stale local test stage', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-done-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })

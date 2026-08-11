@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+
+- Task 创建因敏感测试元数据被策略拒绝时，客户端改为确定性移除具体配置值并仅重试一次；仍失败则硬阻断，不再静默降级后继续编码。
+- `cap-status` 新增 `boundary_blocked`：STATE 与当前 branch/worktree 串台时停止旧 Delivery 补报和所有研发阶段，并返回结构化修复动作。
+- 新增原子化 Task 状态切换：旧 `.cap` 活动态先保存到本地 stale 快照，初始化失败自动回滚，业务源码与 Git 状态保持不变。
+
 ## 0.6.1
 
 - 修复从 Git worktree 运行 Doctor 时误报 Codex MCP 未注册：已安装的 Capital Agent MCP 可位于另一份有效 checkout，不再要求配置路径必须等于当前 worktree。
