@@ -26,6 +26,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 用户显式调用 `$cap` 后：
 
 1. 先运行 package 根的 `scripts/cap-status.mjs <target-repo> --json`，获得 Git、平台配置、Task 和确定性下一动作。若返回 `mode=boundary_blocked`，立即停止需求确认、计划、编码、测试和评审；只能按 blocker 调用 `scripts/cap-task-state-switch.mjs`，先保存旧 `.cap` 活动态并初始化本次 Task，随后重跑状态检查。不得在解释“这是旧任务”后继续编码。
+   同时读取 `repository.harnessMode`。`local-only` 表示 Skills、工具链或流程维护仓：仍创建 Task、记录普通 Commit、本地验证和经验，但禁止 `delivery_candidate=true`，禁止创建 Server Test/Review Action；本地测试与维护评审是该仓的交付证据。只有 `server` 仓库进入业务 Harness。不得按 GitHub/GitLab 域名推断。
    若返回 `mode=local_explicit`，这是用户主动选择的完整本地运行模式，不是平台故障：跳过平台握手、Task / Session、MCP、Harness Action、Delivery、Experience 与 Outbox，直接继续代码侦察和本地阶段流程。测试、评审与发布结论只能表述为本地证据，不得声称 Server Gate PASS。
 2. 若 MCP 提供 `create_or_attach_task`，立即创建/复用 Task 并写回 `.cap/STATE.md`；随后重跑 `cap-status.mjs`。若首次创建因 `unacceptable risk` / 敏感元数据策略被拒，必须用 `scripts/cap-task-request.mjs` 的确定性规则移除商户号、公司名、账号、凭据等具体值，仅保留业务意图和验证边界，然后**只重试一次**。重试成功时明确说明“Task 已用脱敏摘要创建，具体配置仅保留本地”；重试仍失败时标记 `task_creation_blocked` 并停止编码，禁止宣布“仅本地研发”后继续。非敏感风险拒绝不得套用脱敏重试。
    若 `cap-status` 返回 `task.requiresNewSession=true`，说明已完成父 Task 存在活动 follow-up：必须把 `task.id` 作为显式 `task_id` 绑定，**不得传旧 session_id**，让平台为 follow-up 创建新 Skills Session；同时按本轮需求重新传 `verification_commands`，不得继承父 Task 的验证命令。若工具缺失或普通连接失败，必须明确报告 `仅本地执行 + 原因 + 影响 + 修复命令`，禁止静默降级；这条普通离线降级不适用于上面的敏感风险拒绝。
@@ -39,7 +40,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
    若待同步项属于历史 Task，快报必须标记“等待历史元数据补报授权”，不能直接执行，也不能含糊描述成普通连接恢复。
 6. 调用中心知识层注入与本需求相关的历史经验。
 7. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
-   普通开发 Commit 和入口对账只登记 Delivery，不触发 Test Action。编码实现完成、精确 Commit 已在远端可见且没有人工门禁时，必须对同一 Commit 再调用一次 `record_task_delivery(delivery_candidate=true)` 提交最终候选版本；Server 幂等创建 Test Action，客户端有界等待。Test 成功后由 Server 自动创建 Review Action，客户端继续读取/等待新的 Action，直到成功、明确阻塞或达到等待上限。历史 Outbox 永远不能打断这条当前 Task 主线。
+   普通开发 Commit 和入口对账只登记 Delivery，不触发 Test Action。仅当 `repository.harnessMode=server`，编码实现完成、精确 Commit 已在远端可见且没有人工门禁时，才对同一 Commit 再调用一次 `record_task_delivery(delivery_candidate=true)` 提交最终候选版本；Server 幂等创建 Test Action，客户端有界等待。Test 成功后由 Server 自动创建 Review Action，客户端继续读取/等待新的 Action，直到成功、明确阻塞或达到等待上限。`local-only` 仓库到本地验证与维护评审 PASS 即进入发布收口，不创建 Action。历史 Outbox 永远不能打断当前 Task 主线。
 8. 按阶段使用唯一 Action 协议，禁止双写：
    - 编码实现：由当前 Skills Session 或受控执行 Provider 完成；通过 Artifact + Delivery 回写真实 Commit，不创建阶段 Action，不写 Test/Review PASS。
    - 测试验证：强制 `create_task_action(action_type=test) → wait_task_action/get_task_action`；Server 决定 Gate，客户端不得自行写验证 PASS。

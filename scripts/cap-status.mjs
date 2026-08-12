@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkPlatformHandshake, normalizeServerUrl } from './setup-lib.mjs'
-import { flushPendingDeliveries } from './client-delivery.mjs'
+import { flushPendingDeliveries, readHarnessMode } from './client-delivery.mjs'
 import { inspectOutbox } from './cap-outbox.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
@@ -175,6 +175,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const dirty = Boolean(git(repo, ['status', '--porcelain']))
   const statePath = join(repo, '.cap/STATE.md')
   const stateText = await readFile(statePath, 'utf8').catch(() => '')
+  const harnessMode = await readHarnessMode(repo)
   const boundary = inspectTaskBoundary({ stateText, branch, worktree: gitRoot || repo })
   const taskId = field(stateText, 'task-id')
   const sessionId = field(stateText, 'session-id')
@@ -234,7 +235,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
     platform: { configured: !explicitLocal && Boolean(serverUrl && userKey), connected: explicitLocal ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, runtime: runtime ? { buildCommit: runtime.build?.commit || '', schemaRevision: runtime.schemaRevision || '', taskStoreMode: runtime.taskStoreMode || '', database: runtime.database || '' } : null, pendingDeliveries, outbox },
-    repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty },
+    repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty, harnessMode, harnessEligible: harnessMode === 'server' },
     task: {
       id: remoteTask?.id || taskId,
       previousId: switchingTask ? taskId : '',
@@ -275,6 +276,7 @@ function render(result) {
     `平台：${connected}`,
     `仓库：${result.repository.remote || result.repository.root}`,
     `分支：${result.repository.branch || '-'}`,
+    `验证模式：${result.repository.harnessMode === 'local-only' ? '本地维护验证（不进入 Server Harness）' : 'Server Harness'}`,
     `Task：${task}`,
     result.boundary?.blocked ? `边界阻断：${result.boundary.code}；STATE 分支 ${result.boundary.state.branch || '-'} / 当前分支 ${result.boundary.current.branch || '-'}` : '',
     result.task.requiresNewSession ? `任务接续：${result.task.previousId} → ${result.task.id}（必须新建 Session）` : '',

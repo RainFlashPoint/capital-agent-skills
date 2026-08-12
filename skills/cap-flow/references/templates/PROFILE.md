@@ -23,6 +23,8 @@
 
 # Project Profile: <项目名>
 
+harness-mode: server | local-only   # 业务交付仓用 server；Skills/工具/流程维护仓用 local-only。不可按 Git 托管域名推断。
+
 <!--
   顶部元数据：技术栈用列表；带"原因"列的展开形式见下方 ## Tech stack 表。
   test-commands 是语言无关的命令抽象，verify/logic 据此发现并运行套件。

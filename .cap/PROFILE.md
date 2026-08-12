@@ -1,5 +1,7 @@
 # Project Profile: capital-agent-skills
 
+harness-mode: local-only
+
 tech-stack: [markdown skills, node.js scripts, python utilities, shell validation]
 test-commands: { unit: "node --test scripts/test-*.mjs && python3 -m unittest scripts/test_intake.py scripts/test_contrast_check.py", coverage: "none — 纯文件协议未配置覆盖率门", e2e: "bash scripts/validate-skills", typecheck: "node --check <changed-js-file>", build: "none — 纯文件 Skill 与脚本无需构建" }
 

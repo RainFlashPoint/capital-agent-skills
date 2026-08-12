@@ -2,6 +2,15 @@
 
 Skills 是 Harness Client，不是可信 Gate 内核。STATE 是游标，不是 Gate 真值；`.cap/STATE.md` 只保存阶段游标、Action 引用和人类可读摘要，不能自行证明 Test、Review 或 Safety 已通过。
 
+## 仓库适用边界
+
+先读取 `.cap/PROFILE.md` 的 `harness-mode`：
+
+- `server`（默认）：真实业务交付仓，使用本协议的 Server Test/Review Gate。
+- `local-only`：Skills、工具链、流程定义等维护仓，只保留 Task、普通 Delivery、本地测试、维护评审和经验；禁止提名 Delivery Candidate，禁止创建 Harness Action。本地 PASS 只证明该维护仓自身，不得复用于业务仓。
+
+这是仓库用途契约，不按 GitHub/GitLab、公开/私有或语言类型推断。真实业务仓即使位于 GitHub 也可使用 `server`；工具仓即使位于 GitLab 也可使用 `local-only`。
+
 当前交付对象由 Server 的 `currentCommit` 决定。普通 Delivery 只登记工程事实，不能改变 current candidate；只有显式 `delivery_candidate=true` 才能提名最终候选。`currentAction.sourceCommit`、Test/Review Evidence 与 Gate 必须始终等于 `currentCommit`，旧 Commit 的 PASS 在新候选出现后立即失效。Session finished ≠ Task finished，local PASS ≠ Server Gate PASS。
 
 ## 唯一路由矩阵

@@ -89,7 +89,7 @@ git diff-tree --no-commit-id --name-only -r HEAD
 date -u +%Y-%m-%dT%H:%M:%SZ
 ```
 
-先补登记尚未上报的 Artifact 元数据，再调用 `record_task_delivery`，同时传本项目实际执行成功的 `verification_commands`。普通开发提交和历史对账不传 `delivery_candidate`（或传 `false`）；只有编码实现完成、当前精确 Commit 已推送且确定进入测试验证时才传 `delivery_candidate=true`。验证对象至少包含：
+先补登记尚未上报的 Artifact 元数据，再调用 `record_task_delivery`，同时传本项目实际执行成功的 `verification_commands`。普通开发提交和历史对账不传 `delivery_candidate`（或传 `false`）；只有 `.cap/PROFILE.md` 的 `harness-mode=server`、编码实现完成、当前精确 Commit 已推送且确定进入测试验证时才传 `delivery_candidate=true`。`local-only` 维护仓禁止候选与 Harness Action，只登记普通 Delivery 和本地维护证据。验证对象至少包含：
 
 - `passed` 与 `status`；
 - `outcome`: `PASS | CODE_FAILED | ENV_BLOCKED | INCONCLUSIVE`；

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildCandidateDelivery, buildCommitDelivery, buildPushAuthorizationFingerprint, flushPendingDeliveries, queueCommitDelivery } from './client-delivery.mjs'
+import { buildCandidateDelivery, buildCommitDelivery, buildPushAuthorizationFingerprint, flushPendingDeliveries, queueCommitDelivery, readHarnessMode } from './client-delivery.mjs'
 
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
 
@@ -37,6 +37,17 @@ test('candidate delivery is bound to exact task repo branch HEAD and passed loca
   const stale = await buildCandidateDelivery(repo, { authorizedFingerprint: 'stale', verification: { passed: true, status: 'PASS' } })
   assert.equal(stale.reason, 'push_authorization_required')
   await assert.rejects(queueCommitDelivery(repo, candidate.item), /candidate_delivery_requires_live_authorization/)
+})
+
+test('local-only maintenance repository cannot become a Server Harness candidate', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-local-only-candidate-'))
+  git(repo, ['init', '-b', 'main']); git(repo, ['config', 'user.name', 'test']); git(repo, ['config', 'user.email', 'test@example.com'])
+  await mkdir(join(repo, '.cap')); await writeFile(join(repo, '.cap/PROFILE.md'), '# Profile\nharness-mode: local-only\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_tools\nsession-id: skill_tools\n')
+  await writeFile(join(repo, 'tool.txt'), 'body\n'); git(repo, ['add', 'tool.txt']); git(repo, ['commit', '-m', 'tool change'])
+  assert.equal(await readHarnessMode(repo), 'local-only')
+  const candidate = await buildCandidateDelivery(repo, { authorizedFingerprint: 'irrelevant', verification: { passed: true, status: 'PASS' } })
+  assert.deepEqual(candidate, { ok: false, reason: 'repository_harness_local_only', harnessMode: 'local-only' })
 })
 
 test('push authorization fingerprint ignores credentials embedded in an HTTPS remote', () => {

@@ -65,6 +65,17 @@ test('explicit local mode skips all platform and outbox work even with stale ser
   assert.deepEqual(result.reasons, [])
 })
 
+test('repository profile exposes local-only Harness eligibility without disabling Task metadata', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-harness-local-'))
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: local-only\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_tools\nstage: test\nstatus: in-progress\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true })
+  assert.equal(result.repository.harnessMode, 'local-only')
+  assert.equal(result.repository.harnessEligible, false)
+  assert.equal(result.task.id, 'task_tools')
+})
+
 test('offline handshake exposes queued outbox work without claiming platform completion', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-outbox-'))
   await mkdir(join(repo, '.cap'), { recursive: true })

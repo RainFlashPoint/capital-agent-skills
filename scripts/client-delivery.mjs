@@ -9,6 +9,11 @@ const text = value => String(value || '').trim()
 const git = (repo, args) => { try { return text(execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] })) } catch { return '' } }
 const field = (markdown, name) => text(String(markdown || '').match(new RegExp(`^${name}:\\s*(.+)$`, 'mi'))?.[1]).replace(/\s+#.*$/, '')
 
+export async function readHarnessMode(repoRoot) {
+  const profile = await readFile(join(repoRoot, '.cap/PROFILE.md'), 'utf8').catch(() => '')
+  return field(profile, 'harness-mode').toLowerCase() === 'local-only' ? 'local-only' : 'server'
+}
+
 export async function readClientConfig(homeDir = homedir()) {
   const raw = await readFile(join(homeDir, '.config/capital-agent/env'), 'utf8').catch(() => '')
   return Object.fromEntries(raw.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1], match[2]]))
@@ -51,6 +56,8 @@ export function buildPushAuthorizationFingerprint({ repoUrl = '', taskId = '', b
 }
 
 export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '' } = {}) {
+  const harnessMode = await readHarnessMode(repoRoot)
+  if (harnessMode === 'local-only') return { ok: false, reason: 'repository_harness_local_only', harnessMode }
   const item = await buildCommitDelivery(repoRoot)
   if (!item) return { ok: false, reason: 'delivery_identity_missing' }
   const repoUrl = git(repoRoot, ['remote', 'get-url', 'origin'])

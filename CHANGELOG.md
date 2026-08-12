@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.3
+
+- 新增仓库级 `harness-mode`：真实业务仓使用 `server`，Skills、工具链和流程维护仓可声明 `local-only`，不再按 GitHub/GitLab 推断验证方式。
+- `local-only` 仓库仍保留 Task、普通 Commit Delivery、本地验证、维护评审和经验闭环，但客户端确定性拒绝 Delivery Candidate 与 Server Test/Review Action。
+- capital-agent-skills 自身标记为 `local-only`，避免再次被公司业务 Harness 当作测试项目。
+
 ## 0.6.2
 
 - Task 创建因敏感测试元数据被策略拒绝时，客户端改为确定性移除具体配置值并仅重试一次；仍失败则硬阻断，不再静默降级后继续编码。
