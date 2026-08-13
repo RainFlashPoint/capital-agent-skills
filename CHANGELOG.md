@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.10
+
+- 修复 macOS 上 Node.js DNS 单一路径异常导致的本地 Skills 假离线：鉴权握手与本地 Test Provider 探测在 Node 网络失败时复用系统网络解析，并继续校验真实权限能力。
+- Doctor 将“Codex MCP 已注册”和“运行来源是否为当前安装目录”分开判断；旧 worktree 安装不再误报未注册，同时明确提示升级时统一来源。
+- MCP 本地运行时增加系统 DNS 解析降级，避免服务实际可连接时 `tools/list` 仍被误判不可用。
+
 ## 0.4.9
 
 - 新增任务入口“分支意图 Gate”：不再只检查是否直写主干，还会识别历史功能、维护、release、客户变体和其他 Task 分支；分支不匹配时要求新建、续用或切换基线，并记录 branch purpose 与 base commit。

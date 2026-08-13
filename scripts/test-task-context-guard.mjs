@@ -73,6 +73,48 @@ ${includeTests ? '- `test/payment.test.js` — 支付测试入口' : '- 尚未�
 `)
 }
 
+function writeWorkingTreeContext(repo) {
+  const branch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+  writeFileSync(join(repo, '.cap/task-context.md'), `# Task Context
+
+- intent: 初始化新项目
+- branch: ${branch}
+- head: working-tree
+- inspected-at: 2026-08-13T00:00:00Z
+- profile-used-as: index-only
+
+## Entry points
+- \`src/payment-controller.js\` — 初始入口
+
+## Call chain and data flow
+- \`src/payment-controller.js\` → \`src/payment-service.js\` — 初始调用关系
+
+## Similar implementations
+- \`src/payment-service.js\` — 当前工作区模式
+
+## Tests and environment
+- \`test/payment.test.js\` — 初始测试入口
+
+## Evidence sources
+- \`test/payment.test.js\` — 工作区测试资产
+
+## External operation boundary
+- environment: local
+- authorization: not-needed
+- minimum-impact: 当前工作区
+- recovery: 删除未提交文件
+- invalidates-on: 产生首个 Commit
+
+## Impact surface
+- modify: \`src/payment-service.js\` — 初始实现
+- inspect-only: \`src/payment-controller.js\` — 初始入口
+- out-of-scope: \`src/settlement/**\` — 不修改结算
+
+## Profile drift
+- none
+`)
+}
+
 test('PROFILE alone cannot unlock planning', () => {
   const repo = fixture()
   const result = run(repo, '--stage', 'plan')
@@ -83,6 +125,19 @@ test('PROFILE alone cannot unlock planning', () => {
 test('fresh repository evidence unlocks implementation', () => {
   const repo = fixture(); writeContext(repo)
   const result = run(repo, '--intent', '接入新的支付渠道', '--stage', 'implement')
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /PASS/)
+})
+
+test('repository without a first commit uses working-tree as its stable context head', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'cap-context-empty-'))
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+  mkdirSync(join(repo, 'src'), { recursive: true }); mkdirSync(join(repo, 'test'), { recursive: true }); mkdirSync(join(repo, '.cap'), { recursive: true })
+  writeFileSync(join(repo, 'src/payment-controller.js'), 'export const pay = service => service.pay()\n')
+  writeFileSync(join(repo, 'src/payment-service.js'), 'export const paymentService = { pay: () => "ok" }\n')
+  writeFileSync(join(repo, 'test/payment.test.js'), '/* fixture */\n')
+  writeWorkingTreeContext(repo)
+  const result = run(repo, '--intent', '初始化新项目', '--stage', 'implement')
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /PASS/)
 })

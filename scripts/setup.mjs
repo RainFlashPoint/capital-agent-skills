@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleMcpNode, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
+import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCursorMcpConfig, inspectCodexMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleMcpNode, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -31,7 +31,8 @@ function openBrowser(url) {
 
 if (args.doctor) {
   const health = await checkPlatformHandshake(serverUrl,userKey,fetch,{clientId,clientName:hostname(),clientVersion:'setup',mcpReachable:true,capabilities:{doctor:true}})
-  const codexMcp = await hasCodexMcpConfig(codexConfigPath(homedir()),join(here,'mcp-remote.mjs'))
+  const codexMcpState = await inspectCodexMcpConfig(codexConfigPath(homedir()),join(here,'mcp-remote.mjs'))
+  const codexMcp = codexMcpState.registered
   const cursorMcp = await hasCursorMcpConfig(cursorMcpConfigPath(homedir()),join(here,'mcp-remote.mjs'))
   const claudeMcp = commandExists('claude') ? (() => { try { return /capital-agent/.test(execFileSync('claude',['mcp','list'],{encoding:'utf8'})) } catch { return false } })() : false
   const mcpRuntime = await readFile(mcpRuntimePackage,'utf8').then(value=>JSON.parse(value).version===MCP_REMOTE_VERSION).catch(()=>false)
@@ -42,7 +43,8 @@ if (args.doctor) {
   const codexActivation = await hasActivationRule(rules.codex)
   const claudeActivation = await hasActivationRule(rules.claude)
   const cursorActivation = await hasActivationRule(rules.cursor)
-  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${codexMcp?'PASS':'未注册'}\nClaude MCP: ${claudeMcp?'PASS':'未注册'}\nCursor MCP: ${cursorMcp?'PASS':'未注册'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n`)
+  const codexMcpLabel = !codexMcp ? '未注册' : codexMcpState.current ? 'PASS' : 'PASS（已注册，运行来源与当前目录不同；升级时会自动统一）'
+  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${codexMcpLabel}\nClaude MCP: ${claudeMcp?'PASS':'未注册'}\nCursor MCP: ${cursorMcp?'PASS':'未注册'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n`)
   if (!health.ok || !mcpRuntime || !mcpTools || (!codexMcp && !claudeMcp && !cursorMcp) || !provider.ok || !providerAuth.ok || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode=1
   process.exit()
 }

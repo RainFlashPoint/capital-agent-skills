@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleMcpNode, legacySkillNames, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, inspectCodexMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleMcpNode, legacySkillNames, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -40,6 +40,12 @@ test('installs Codex MCP config without requiring the codex CLI or replacing oth
   assert.doesNotMatch(content,/command = "old"|args = \["old"\]/)
   assert.equal(content.split('args = ["/repo/mcp-remote.mjs"]').length-1,1)
   assert.equal(await hasCodexMcpConfig(target,'/repo/mcp-remote.mjs'),true)
+  assert.deepEqual(await inspectCodexMcpConfig(target,'/repo/mcp-remote.mjs'),{registered:true,wrapperPath:'/repo/mcp-remote.mjs',current:true})
+})
+test('recognizes an existing Codex MCP registration while reporting source drift separately', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-codex-drift-')); const target = codexConfigPath(home)
+  await mkdir(join(home,'.codex'),{recursive:true}); await writeFile(target,'[mcp_servers.capital-agent]\ncommand = "/opt/node"\nargs = ["/old-worktree/scripts/mcp-remote.mjs"]\n')
+  assert.deepEqual(await inspectCodexMcpConfig(target,'/current/scripts/mcp-remote.mjs'),{registered:true,wrapperPath:'/old-worktree/scripts/mcp-remote.mjs',current:false})
 })
 test('installs Cursor MCP config idempotently without replacing other servers or fields', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-cursor-config-'))

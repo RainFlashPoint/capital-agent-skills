@@ -65,6 +65,21 @@ test('project hook blocks code commit when cap delivery artifacts are not staged
   assert.throws(() => run(repo, 'git', ['commit', '-m', 'small change']), /\.cap 研发产物/)
 })
 
+test('project hook allows code commit when only active cap state is intentionally ignored', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-hook-active-state-'))
+  run(repo, 'git', ['init', '-b', 'main'])
+  run(repo, 'git', ['config', 'user.name', 'test'])
+  run(repo, 'git', ['config', 'user.email', 'test@example.com'])
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo123\nsession-id: session_demo456\n')
+  await writeFile(join(repo, 'sample.txt'), 'ok\n')
+  run(repo, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
+  run(repo, 'git', ['add', '.gitignore', 'sample.txt'])
+  run(repo, 'git', ['commit', '-m', 'small change'])
+  assert.match(run(repo, 'git', ['log', '-1', '--pretty=%B']), /Task: task_demo123/)
+})
+
 test('pre-push allows development branch while environment verification is pending', async () => {
   const repo = await fixtureRepo('cap-pre-push-dev-')
   const output = runPrePush(repo, 'feature/example', 'task-id: task_demo\nstatus: gated\ndelivery-status: ENV_PENDING\ncap-gate: BLOCK\n')
