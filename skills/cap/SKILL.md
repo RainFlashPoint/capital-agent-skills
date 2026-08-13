@@ -26,7 +26,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 用户显式调用 `$cap` 后：
 
 1. 先运行 package 根的 `scripts/cap-status.mjs <target-repo> --json`，获得 Git、平台配置、Task 和确定性下一动作。若返回 `mode=boundary_blocked`，立即停止需求确认、计划、编码、测试和评审；只能按 blocker 调用 `scripts/cap-task-state-switch.mjs`，先保存旧 `.cap` 活动态并初始化本次 Task，随后重跑状态检查。不得在解释“这是旧任务”后继续编码。
-   同时读取 `repository.harnessMode`。`local-only` 表示 Skills、工具链或流程维护仓：仍创建 Task、记录普通 Commit、本地验证和经验，但禁止 `delivery_candidate=true`，禁止创建 Server Test/Review Action；本地测试与维护评审是该仓的交付证据。只有 `server` 仓库进入业务 Harness。不得按 GitHub/GitLab 域名推断。
+   同时读取 `repository.harnessMode`。`local-only` 表示 Skills、工具链或流程维护仓：创建 Task 时传 `completion_mode=evidence_only`，仍记录普通 Commit、本地验证和经验，但禁止 `delivery_candidate=true`，禁止创建 Server Test/Review Action；本地测试与维护评审是该仓的交付证据。只有 `server` 仓库使用 `completion_mode=code_change` 并进入业务 Harness。不得按 GitHub/GitLab 域名推断。
    若返回 `mode=local_explicit`，这是用户主动选择的完整本地运行模式，不是平台故障：跳过平台握手、Task / Session、MCP、Harness Action、Delivery、Experience 与 Outbox，直接继续代码侦察和本地阶段流程。测试、评审与发布结论只能表述为本地证据，不得声称 Server Gate PASS。
 2. 若 MCP 提供 `create_or_attach_task`，立即创建/复用 Task 并写回 `.cap/STATE.md`；随后重跑 `cap-status.mjs`。若首次创建因 `unacceptable risk` / 敏感元数据策略被拒，必须用 `scripts/cap-task-request.mjs` 的确定性规则移除商户号、公司名、账号、凭据等具体值，仅保留业务意图和验证边界，然后**只重试一次**。重试成功时明确说明“Task 已用脱敏摘要创建，具体配置仅保留本地”；重试仍失败时标记 `task_creation_blocked` 并停止编码，禁止宣布“仅本地研发”后继续。非敏感风险拒绝不得套用脱敏重试。
    若 `cap-status` 返回 `task.requiresNewSession=true`，说明已完成父 Task 存在活动 follow-up：必须把 `task.id` 作为显式 `task_id` 绑定，**不得传旧 session_id**，让平台为 follow-up 创建新 Skills Session；同时按本轮需求重新传 `verification_commands`，不得继承父 Task 的验证命令。若工具缺失或普通连接失败，必须明确报告 `仅本地执行 + 原因 + 影响 + 修复命令`，禁止静默降级；这条普通离线降级不适用于上面的敏感风险拒绝。

@@ -1,5 +1,10 @@
 import { chmod, copyFile, lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'fs/promises'
 import { basename, dirname, join } from 'path'
+import { execFileSync } from 'child_process'
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
+export const { resolveSystemAddresses } = require('./system-dns.cjs')
 
 export const publicSkillNames = ['cap']
 export const legacySkillNames = ['cap-map', 'cap-shape', 'cap-build', 'cap-verify']
@@ -103,27 +108,36 @@ export async function installCodexMcpConfig(filePath, nodePath, wrapperPath) {
 }
 
 export async function hasCodexMcpConfig(filePath, wrapperPath = '') {
+  const state = await inspectCodexMcpConfig(filePath, wrapperPath)
+  return state.registered && state.valid
+}
+
+function parseStdioEntry(entry = {}) {
+  const command = String(entry.command || '').trim()
+  const args = Array.isArray(entry.args) ? entry.args.filter(value => typeof value === 'string') : []
+  const wrapperPath = args.find(value => basename(value) === 'mcp-remote.mjs') || ''
+  return { registered: Boolean(command && wrapperPath), command, args, wrapperPath }
+}
+
+async function withEntryValidity(entry = {}, expectedWrapperPath = '') {
+  const valid = entry.registered ? await lstat(entry.wrapperPath).then(stat => stat.isFile() || stat.isSymbolicLink()).catch(() => false) : false
+  return { ...entry, ...(expectedWrapperPath ? { current: entry.wrapperPath === expectedWrapperPath } : {}), valid }
+}
+
+export async function inspectCodexMcpConfig(filePath, expectedWrapperPath = '') {
   const content = await readFile(filePath, 'utf8').catch(() => '')
   const marker = '[mcp_servers.capital-agent]'
   const start = content.indexOf(marker)
-  if (start < 0) return false
+  if (start < 0) return withEntryValidity({}, expectedWrapperPath)
   const remainder = content.slice(start + marker.length)
   const nextSection = remainder.search(/^\s*\[/m)
   const section = nextSection >= 0 ? remainder.slice(0, nextSection) : remainder
-  if (!wrapperPath || section.includes(JSON.stringify(wrapperPath))) return true
-
+  const command = section.match(/^\s*command\s*=\s*("(?:\\.|[^"])*")/m)?.[1]
   const argsLiteral = section.match(/^\s*args\s*=\s*(\[[^\r\n]*\])/m)?.[1]
-  if (!argsLiteral) return false
   try {
-    const configuredArgs = JSON.parse(argsLiteral)
-    const configuredWrapper = Array.isArray(configuredArgs)
-      ? configuredArgs.find(value => typeof value === 'string' && basename(value) === basename(wrapperPath))
-      : ''
-    if (!configuredWrapper) return false
-    const stat = await lstat(configuredWrapper)
-    return stat.isFile() || stat.isSymbolicLink()
+    return withEntryValidity(parseStdioEntry({ command: command ? JSON.parse(command) : '', args: argsLiteral ? JSON.parse(argsLiteral) : [] }), expectedWrapperPath)
   } catch {
-    return false
+    return withEntryValidity({}, expectedWrapperPath)
   }
 }
 
@@ -143,11 +157,22 @@ export async function installCursorMcpConfig(filePath, nodePath, wrapperPath) {
 }
 
 export async function hasCursorMcpConfig(filePath, wrapperPath = '') {
+  const state = await inspectCursorMcpConfig(filePath)
+  return state.registered && state.valid && (!wrapperPath || state.wrapperPath === wrapperPath)
+}
+
+export async function inspectCursorMcpConfig(filePath) {
   try {
     const config = JSON.parse(await readFile(filePath, 'utf8'))
-    const entry = config?.mcpServers?.['capital-agent']
-    return Boolean(entry?.command && Array.isArray(entry.args) && (!wrapperPath || entry.args.includes(wrapperPath)))
-  } catch { return false }
+    return withEntryValidity(parseStdioEntry(config?.mcpServers?.['capital-agent']))
+  } catch { return withEntryValidity({}) }
+}
+
+export async function inspectClaudeMcpConfig(filePath) {
+  try {
+    const config = JSON.parse(await readFile(filePath, 'utf8'))
+    return withEntryValidity(parseStdioEntry(config?.mcpServers?.['capital-agent']))
+  } catch { return withEntryValidity({}) }
 }
 
 export async function installSkillLinks(sourceDir, targetDir, skillNames = publicSkillNames) {
@@ -224,8 +249,32 @@ export async function checkPlatformHandshake(serverUrl, userKey, fetchImpl = fet
     const data = body.data || {}
     return { ok: response.ok && data.capabilities?.taskWrite === true && data.capabilities?.commitReconcile === true, status: response.status, reason: response.ok ? '' : 'http_rejected', ...data }
   } catch (error) {
+    const fallback = systemCurlJson(`${serverUrl}/api/auth/handshake`, {
+      method: 'PUT', headers: { 'x-user-key': userKey, 'Content-Type': 'application/json' }, body: JSON.stringify(client && typeof client === 'object' ? client : {}),
+    })
+    if (fallback) {
+      const data = fallback.body?.data || {}
+      return { ok: fallback.ok && data.capabilities?.taskWrite === true && data.capabilities?.commitReconcile === true, status: fallback.status, reason: fallback.ok ? '' : 'http_rejected', transport: 'system_curl', ...data }
+    }
     return { ok: false, reason: 'direct_probe_unavailable', errorCode: String(error?.cause?.code || error?.code || '').slice(0, 80) }
   }
+}
+
+function curlConfigValue(value = '') { return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '') }
+
+export function systemCurlJson(url, { method = 'GET', headers = {}, body = '' } = {}, { platform = process.platform, execFileSyncImpl = execFileSync } = {}) {
+  try {
+    const target = new URL(url); const address = resolveSystemAddresses(target.hostname, { platform, execFileSyncImpl })[0]
+    const lines = ['silent', 'show-error', 'connect-timeout = 5', 'max-time = 15', `url = "${curlConfigValue(url)}"`, `request = "${curlConfigValue(method)}"`]
+    if (address) lines.push(`resolve = "${curlConfigValue(target.hostname)}:${target.port || (target.protocol === 'https:' ? '443' : '80')}:${curlConfigValue(address)}"`)
+    for (const [name, value] of Object.entries(headers)) lines.push(`header = "${curlConfigValue(name)}: ${curlConfigValue(value)}"`)
+    if (body) lines.push(`data = "${curlConfigValue(body)}"`)
+    lines.push('write-out = "\\n%{http_code}"')
+    const output = execFileSyncImpl(platform === 'win32' ? 'curl.exe' : 'curl', ['--config', '-'], { input: `${lines.join('\n')}\n`, encoding: 'utf8', timeout: 20_000, stdio: ['pipe', 'pipe', 'ignore'] })
+    const split = output.lastIndexOf('\n'); if (split < 0) return null
+    const status = Number(output.slice(split + 1).trim()); const rawBody = output.slice(0, split)
+    return { ok: status >= 200 && status < 300, status, body: JSON.parse(rawBody || '{}') }
+  } catch { return null }
 }
 
 export async function bootstrapLocalTestProvider(serverUrl, userKey, client = {}, fetchImpl = fetch) {
@@ -282,6 +331,11 @@ export async function checkLocalTestProvider(config = {}, fetchImpl = fetch) {
     })
     return { ok: response.ok, status: response.status }
   } catch {
+    const fallback = systemCurlJson(`${config.serverUrl}/api/execution/runner/heartbeat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-runner-id': config.runnerId, 'x-runner-token': config.runnerCredential },
+      body: JSON.stringify({ capabilities: { doctor: true, test: true, patch: false } }),
+    })
+    if (fallback) return { ok: fallback.ok, status: fallback.status, transport: 'system_curl' }
     return { ok: false, reason: 'network_error' }
   }
 }

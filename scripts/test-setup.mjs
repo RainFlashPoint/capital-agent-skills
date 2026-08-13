@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, skillTargets } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -35,18 +35,19 @@ test('uses the current Codex user skill discovery directory', () => {
 })
 test('installs Codex MCP config without requiring the codex CLI or replacing other config', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-codex-config-'))
+  const wrapper = join(home,'repo','mcp-remote.mjs'); await mkdir(join(home,'repo'),{recursive:true}); await writeFile(wrapper,'// fixture\n')
   const target = codexConfigPath(home); await mkdir(join(home,'.codex'),{recursive:true})
   await writeFile(target,'model = "example"\n\n[mcp_servers.other]\ncommand = "other"\n\n[mcp_servers.capital-agent]\ncommand = "old"\nargs = ["old"]\n')
-  await installCodexMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs')
-  await installCodexMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs')
+  await installCodexMcpConfig(target,'/opt/node',wrapper)
+  await installCodexMcpConfig(target,'/opt/node',wrapper)
   const content=await readFile(target,'utf8')
   assert.match(content,/model = "example"/)
   assert.match(content,/\[mcp_servers\.other\]/)
   assert.equal(content.split('[mcp_servers.capital-agent]').length-1,1)
   assert.equal(content.split('capital-agent:mcp:start').length-1,1)
   assert.doesNotMatch(content,/command = "old"|args = \["old"\]/)
-  assert.equal(content.split('args = ["/repo/mcp-remote.mjs"]').length-1,1)
-  assert.equal(await hasCodexMcpConfig(target,'/repo/mcp-remote.mjs'),true)
+  assert.equal(content.split(`args = [${JSON.stringify(wrapper)}]`).length-1,1)
+  assert.equal(await hasCodexMcpConfig(target,wrapper),true)
 })
 test('doctor accepts an existing Codex MCP wrapper installed from another checkout', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-codex-doctor-'))
@@ -58,20 +59,43 @@ test('doctor accepts an existing Codex MCP wrapper installed from another checko
   await writeFile(installedWrapper,'// fixture\n')
   await writeFile(target,`[mcp_servers.capital-agent]\ncommand = "/opt/node"\nargs = [${JSON.stringify(installedWrapper)}]\n`)
   assert.equal(await hasCodexMcpConfig(target,worktreeWrapper),true)
+  assert.deepEqual(await inspectCodexMcpConfig(target,worktreeWrapper),{registered:true,command:'/opt/node',args:[installedWrapper],wrapperPath:installedWrapper,current:false,valid:true})
   await writeFile(target,`[mcp_servers.capital-agent]\ncommand = "/opt/node"\nargs = [${JSON.stringify(join(home,'missing','mcp-remote.mjs'))}]\n`)
   assert.equal(await hasCodexMcpConfig(target,worktreeWrapper),false)
 })
+test('doctor reads the actual Cursor and Claude MCP commands instead of probing the current checkout', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-installed-clients-')); const wrapper = join(home,'installed','mcp-remote.mjs')
+  await mkdir(join(home,'installed'),{recursive:true}); await writeFile(wrapper,'// fixture\n')
+  const cursor = join(home,'.cursor','mcp.json'); await mkdir(join(home,'.cursor'),{recursive:true})
+  await writeFile(cursor,JSON.stringify({mcpServers:{'capital-agent':{command:'/opt/node',args:[wrapper]}}}))
+  const claude = join(home,'.claude.json'); await writeFile(claude,JSON.stringify({mcpServers:{'capital-agent':{type:'stdio',command:'/opt/node',args:[wrapper],env:{}}}}))
+  assert.deepEqual(await inspectCursorMcpConfig(cursor),{registered:true,command:'/opt/node',args:[wrapper],wrapperPath:wrapper,valid:true})
+  assert.deepEqual(await inspectClaudeMcpConfig(claude),{registered:true,command:'/opt/node',args:[wrapper],wrapperPath:wrapper,valid:true})
+})
+test('system DNS fallback parses platform resolvers and gives curl the resolved address without changing TLS hostname', () => {
+  const calls=[]
+  const execFileSyncImpl=(command,args,options)=>{
+    calls.push({command,args,options})
+    if (command === '/usr/bin/dscacheutil') return 'name: capital-agent.example\nip_address: 100.12.0.1\n'
+    return '{"data":{"capabilities":{"taskWrite":true,"commitReconcile":true}}}\n200'
+  }
+  assert.deepEqual(resolveSystemAddresses('capital-agent.example',{platform:'darwin',execFileSyncImpl}),['100.12.0.1'])
+  const result=systemCurlJson('https://capital-agent.example/api/auth/handshake',{method:'PUT',headers:{'x-user-key':'key'},body:'{}'},{platform:'darwin',execFileSyncImpl})
+  assert.equal(result.status,200)
+  assert.match(calls.at(-1).options.input,/resolve = "capital-agent\.example:443:100\.12\.0\.1"/)
+})
 test('installs Cursor MCP config idempotently without replacing other servers or fields', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-cursor-config-'))
+  const wrapper = join(home,'repo','mcp-remote.mjs'); await mkdir(join(home,'repo'),{recursive:true}); await writeFile(wrapper,'// fixture\n')
   const target = cursorMcpConfigPath(home); await mkdir(join(home,'.cursor'),{recursive:true})
   await writeFile(target,JSON.stringify({version:1,mcpServers:{other:{command:'other'},'capital-agent':{command:'old',args:['old']}}},null,2))
-  await installCursorMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs')
-  await installCursorMcpConfig(target,'/opt/node','/repo/mcp-remote.mjs')
+  await installCursorMcpConfig(target,'/opt/node',wrapper)
+  await installCursorMcpConfig(target,'/opt/node',wrapper)
   const config=JSON.parse(await readFile(target,'utf8'))
   assert.equal(config.version,1)
   assert.equal(config.mcpServers.other.command,'other')
-  assert.deepEqual(config.mcpServers['capital-agent'],{command:'/opt/node',args:['/repo/mcp-remote.mjs']})
-  assert.equal(await hasCursorMcpConfig(target,'/repo/mcp-remote.mjs'),true)
+  assert.deepEqual(config.mcpServers['capital-agent'],{command:'/opt/node',args:[wrapper]})
+  assert.equal(await hasCursorMcpConfig(target,wrapper),true)
 })
 test('refuses to overwrite invalid Cursor MCP JSON', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-cursor-invalid-'))

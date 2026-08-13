@@ -4,7 +4,9 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
 const wrapper = join(dirname(fileURLToPath(import.meta.url)), 'mcp-remote.mjs')
-const child = spawn(process.execPath, [wrapper], { stdio: ['pipe', 'pipe', 'pipe'], env: process.env })
+const command = process.argv[2] || process.execPath
+const args = process.argv.length > 3 ? process.argv.slice(3) : [wrapper]
+const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: process.env })
 let buffer = ''; let stderr = ''; let finished = false
 
 function send(message) { child.stdin.write(`${JSON.stringify(message)}\n`) }

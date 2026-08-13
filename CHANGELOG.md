@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.4
+
+- 本地与团队模式保持同一最新基线：显式 `--local` 诊断不再被 Server 探测覆盖，未产生首个 Commit 的新仓库可用 `working-tree` 进入研发流程。
+- macOS、Linux 与 Windows 的 Node.js 直连探测增加系统 DNS 解析降级；仍执行真实鉴权能力握手与 TLS 主机校验，不以端口连通伪造 PASS。
+- Doctor 改为逐个调用 Codex、Claude、Cursor 配置中实际注册的 MCP command/args，旧路径损坏时明确失败，不再由当前 checkout 代测。
+- `local-only` Skills、工具链和流程仓创建 Task 时使用 `evidence_only`，只登记普通 Delivery 与本地维护证据，禁止业务 Harness Candidate。
+
 ## 0.6.3
 
 - 新增仓库级 `harness-mode`：真实业务仓使用 `server`，Skills、工具链和流程维护仓可声明 `local-only`，不再按 GitHub/GitLab 推断验证方式。

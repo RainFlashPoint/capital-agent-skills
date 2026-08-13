@@ -50,6 +50,17 @@ test('local-only maintenance repository cannot become a Server Harness candidate
   assert.deepEqual(candidate, { ok: false, reason: 'repository_harness_local_only', harnessMode: 'local-only' })
 })
 
+test('local-only maintenance repository still records an ordinary evidence-only delivery', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-local-only-delivery-'))
+  git(repo, ['init', '-b', 'main']); git(repo, ['config', 'user.name', 'test']); git(repo, ['config', 'user.email', 'test@example.com'])
+  await mkdir(join(repo, '.cap')); await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: local-only\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_tools\nsession-id: skill_tools\n')
+  await writeFile(join(repo, 'tool.txt'), 'body\n'); git(repo, ['add', 'tool.txt']); git(repo, ['commit', '-m', 'tool change'])
+  const item = await buildCommitDelivery(repo)
+  assert.equal(item.payload.delivery_candidate, false)
+  assert.equal(await readHarnessMode(repo), 'local-only')
+})
+
 test('push authorization fingerprint ignores credentials embedded in an HTTPS remote', () => {
   const plain = buildPushAuthorizationFingerprint({ repoUrl: 'https://git.example/team/app.git', taskId: 'task_1', branch: 'feature/x', commitSha: 'a'.repeat(40) })
   const credentialed = buildPushAuthorizationFingerprint({ repoUrl: 'https://user:secret@git.example/team/app.git', taskId: 'task_1', branch: 'feature/x', commitSha: 'a'.repeat(40) })
