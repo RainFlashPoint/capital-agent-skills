@@ -19,13 +19,18 @@ function stableKey(input = {}) {
 function normalizeEvent(input = {}, now = new Date().toISOString()) {
   const type = text(input.type, 100)
   if (!OUTBOX_TYPES.has(type)) throw new Error(`unsupported_outbox_type:${type || 'empty'}`)
+  const idempotencyKey = stableKey(input)
+  const rawPayload = input.payload && typeof input.payload === 'object' ? input.payload : {}
+  const payload = type === 'experience.record'
+    ? { ...rawPayload, idempotency_key: idempotencyKey }
+    : rawPayload
   return {
     id: text(input.id, 200) || `evt_${randomUUID()}`,
-    idempotencyKey: stableKey(input),
+    idempotencyKey,
     type,
     localTaskRef: text(input.localTaskRef || input.local_task_ref, 300),
     dependsOn: [...new Set((Array.isArray(input.dependsOn) ? input.dependsOn : []).map(item => text(item, 200)).filter(Boolean))],
-    payload: input.payload && typeof input.payload === 'object' ? input.payload : {},
+    payload,
     createdAt: text(input.createdAt, 100) || now,
     attempt: Math.max(0, Number(input.attempt) || 0),
     lastAttemptAt: text(input.lastAttemptAt, 100),

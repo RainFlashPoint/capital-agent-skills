@@ -23,7 +23,7 @@
 3. 若 `cap-status.task.requiresNewSession=true`，说明 STATE 指向的父 Task 已完成、平台已给出活动 follow-up Task：调用 `create_or_attach_task` 时显式传 `task_id=cap-status.task.id`，省略旧 `session_id`，并用本轮意图生成新的稳定幂等键。否则按常规创建/复用 Task。两种情况都传需求原文、repo、branch、base commit、leaf、worktree；`repository.harnessMode=local-only` 时固定传 `completion_mode=evidence_only`，业务 `server` 仓传 `completion_mode=code_change`。
 4. follow-up 必须重新计算并传入本轮 `verification_commands`；禁止照搬父 Task 的接口、测试或发布命令。平台返回新 Session 后，旧 session-id 仅作历史记录，不得继续写事件。
 5. 把返回的 `task_id`、`session_id`、Skill/知识快照 ID 写入 `.cap/STATE.md` 顶层元数据，覆盖父 Task/Session 指针。
-6. 后续 `enrich_context`、`record_skill_event`、`record_experience` 始终复用同一 repo URL 和新 session ID。
+6. 后续 `enrich_context`、`record_skill_event`、`record_experience` 始终复用同一 repo URL 和新 session ID；`record_experience` 同时使用绑定 repo + Task + Commit + 意图的稳定 `idempotency_key`，Outbox 重放不得换键。
 
 ## 平台 Action 接力
 
@@ -101,7 +101,7 @@ date -u +%Y-%m-%dT%H:%M:%SZ
 只上传 Commit、文件路径、验证和 Review 结构化结论，不上传代码正文。平台只把与当前 Commit 匹配的证据用于 Gate；旧 Commit 的通过证据不得替新提交放行。
 `record_task_delivery` 成功后把该 Commit 写入 STATE 的 `delivery-head`；下次入口发现 HEAD/upstream 与之不同时必须补对账。平台查询能力可用时，以平台最近 Delivery 为准并修正本地缓存；STATE 不是最终真值。
 
-IDE、人工或其它 Agent 直接 Commit 时，由项目 `post-commit` Hook 调用同一幂等 Delivery 协议，但 Hook 永远只登记普通 Delivery，不得自行设置 `delivery_candidate=true`。网络失败写入 `.cap/outbox.jsonl` 的 `delivery.record`，下次 `$cap` / `cap-status` 自动重试；历史 `.cap/pending-deliveries.jsonl` 自动迁移，不再产生新记录。知识快照存在时，最终验证回写还应携带 `knowledge_outcome`（直接采用、修改采用、未采用、拒绝）及可选原因，平台据此计算真实采纳与误导率。
+IDE、人工或其它 Agent 直接 Commit 时，由项目 `post-commit` Hook 调用同一幂等 Delivery 协议，但 Hook 永远只登记普通 Delivery，不得自行设置 `delivery_candidate=true`。网络失败写入 `.cap/outbox.jsonl` 的 `delivery.record`，下次 `$cap` / `cap-status` 自动重试；历史 `.cap/pending-deliveries.jsonl` 自动迁移，不再产生新记录。知识快照存在时，最终验证回写还应携带 `knowledge_outcome`（直接采用、修改采用、未采用、拒绝）及可选原因；采用或拒绝必须额外携带快照子集 `knowledge_used_ids`。平台把未传精确 ID 的旧调用标为 `coarse_legacy`，不得把整个快照伪装成每条经验都被采用。
 
 经验沉淀必须携带 `task_id + commit_sha`。权威 PASS 来自 Server 对同一 Task、同一 Commit 的 Gate 校验；Task 一旦达到 `done`，Server 同步把关联的活动 Skills Session 收口到 `done/finished`。本地 STATE 若仍停在测试或评审阶段，`cap-status` 以平台 Task 为权威提示退场，不再让用户误以为流程卡住。
 

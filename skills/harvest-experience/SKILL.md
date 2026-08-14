@@ -47,6 +47,7 @@ git diff --name-only HEAD    # 未提交改动
 - `intent`: 本次会话的意图/需求。**优先用你对本次会话的总结**（比 commit message 信息量大）；若要用 commit message，先确认它不是 "fix bug" 这类空话，否则用总结。
 - `changed_files`: 上一步 `git diff --name-only` 得到的文件路径数组（**只传路径，绝不传代码内容**）
 - `repo_url`: 当前仓库地址（必须与第 1 步一致，否则闭环归因会断）
+- `idempotency_key`: 本轮沉淀的稳定身份，至少绑定 `repo_url + task_id + commit_sha + 经验意图`；同一经验重试和 Outbox 重放必须逐字符复用，禁止每次生成新键。
 - `experience`: 结构化经验，不得让服务端只凭需求标题和文件路径猜：
   - `problem`: 本轮遇到的真实问题或原方案为何不成立。
   - `solution`: 最终采用且被证据支持的解决方法。
@@ -54,6 +55,8 @@ git diff --name-only HEAD    # 未提交改动
   - `counterexamples`: 不适用场景或禁区。
   - `evidence_refs`: Commit、测试报告、Review 报告或 `.cap` 证据路径，只传引用不传代码正文。
   - `outcome`: 最终结果，例如 `tests_passed + review_passed + adopted`。
+
+结构化 `experience` 是权威输入：Server 应直接校验并入库，不再强制依赖模型二次萃取。旧客户端没有结构化字段时，Server 可以有限重试模型补全；仍失败只能保存为 candidate draft 并返回结构化失败原因，不能把整条经验丢弃。客户端只有在知识文档写入真正失败时才进入 Outbox。
 
 **归因字段(可选)**：
 - `session_id`: 会话标识
@@ -81,7 +84,7 @@ git diff --name-only HEAD    # 未提交改动
 
 沉淀成功后工具会返回经验摘要与文档 ID。
 
-若调用失败，使用 `scripts/cap-outbox.mjs enqueue <repo> '<event-json>'` 写入 `experience.record` 事件。payload 只保留本节允许的结构化字段与文件路径；幂等键至少绑定 `repo_url + task_id + commit_sha + intent 摘要`。服务恢复后由 `$cap` 按 replay-plan 调用原 `record_experience`，成功后 ack；Outbox 自身不是“已沉淀”的证明。
+若调用失败，使用 `scripts/cap-outbox.mjs enqueue <repo> '<event-json>'` 写入 `experience.record` 事件。payload 只保留本节允许的结构化字段与文件路径；事件 envelope 的 `idempotencyKey` 与 payload 的 `idempotency_key` 必须相同。服务恢复后由 `$cap` 按 replay-plan 调用原 `record_experience`，成功后 ack；Outbox 自身不是“已沉淀”的证明。
 
 随后若 MCP 提供 `record_skill_event`：
 - 记录 `experience_recorded`，artifact_refs 只放知识文档 ID。
@@ -92,7 +95,9 @@ Task 完成并严格退场后，额外登记 `.cap/history/<task-id>` 的历史�
 
 若已有有效 Git Commit 且 MCP 提供 `record_task_delivery`，按 `references/platform-task-loop.md` 自动回写 Commit、改动文件路径、verify/review。HEAD 已推送且门禁满足时，再调用 `request_docker_verification`；不得上传未提交工作区或代码正文。
 
-回写 Delivery 时，若 Task 绑定过知识快照，必须基于本轮真实使用情况填写 `knowledge_outcome`：直接照用为 `direct_adopted`，经过实质修正后使用为 `modified_adopted`，看过但未使用为 `not_used`，确认不适用或产生误导为 `rejected`。不得因为“检索到了知识”就默认声称采用；误导时在 `knowledge_reasons` 中加入 `knowledge_misled`，并用 `knowledge_note` 写一句脱敏原因。
+回写 Delivery 时，若 Task 绑定过知识快照，必须基于本轮真实使用情况填写 `knowledge_outcome`：直接照用为 `direct_adopted`，经过实质修正后使用为 `modified_adopted`，看过但未使用为 `not_used`，确认不适用或产生误导为 `rejected`。对于采用或拒绝，同时传 `knowledge_used_ids`，只列本轮实际使用/判错的知识文档 ID；它必须是 Task 创建时冻结知识快照的子集，Server 会拒绝快照外 ID。不得因为“检索到了知识”就默认声称采用；误导时在 `knowledge_reasons` 中加入 `knowledge_misled`，并用 `knowledge_note` 写一句脱敏原因。旧客户端未传 ID 时只按 `coarse_legacy` 兼容统计，不能作为精确复用证明。
+
+一条可证明的复用链必须同时具备：来源经验引用原 Task、后续 Task 的知识快照包含该文档、Delivery 以 `knowledge_used_ids` 精确采用、最终 Commit Gate 成功。若后续 Task 仅一次 Delivery 即通过，Server 记录 `first_pass=true`，形成“第一次踩坑，第二次避开”的可核验案例，而不是只看页面上的曝光次数。
 
 阶段流转时由 cap-flow 在 HANDOFF 后记录 `stage_entered` / `gate_passed` / `stage_blocked` / `verify_completed` / `review_completed`。
 

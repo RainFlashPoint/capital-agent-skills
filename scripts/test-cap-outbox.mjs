@@ -31,3 +31,23 @@ test('failed attempt remains pending and ack removes only completed event', asyn
   assert.equal((await inspectOutbox(repo)).pending, 0)
   assert.equal(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), '')
 })
+
+test('experience replay payload carries the same stable idempotency key as the outbox envelope', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-'))
+  const key = 'experience:task-1:commit-1'
+  const { event } = await enqueueOutboxEvent(repo, { type: 'experience.record', idempotencyKey: key, payload: { intent: '沉淀经验', changed_files: ['a.js'] } })
+  assert.equal(event.idempotencyKey, key)
+  assert.equal(event.payload.idempotency_key, key)
+  const replay = (await inspectOutbox(repo)).events[0]
+  assert.equal(replay.payload.idempotency_key, key)
+})
+
+test('experience replay replaces a mismatched payload key with the envelope key', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-'))
+  const { event } = await enqueueOutboxEvent(repo, {
+    type: 'experience.record',
+    idempotencyKey: 'experience:authoritative',
+    payload: { intent: '沉淀经验', changed_files: ['a.js'], idempotency_key: 'experience:stale' },
+  })
+  assert.equal(event.payload.idempotency_key, 'experience:authoritative')
+})

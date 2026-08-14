@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.5
+
+- `record_experience` 增加稳定 `idempotency_key`：结构化经验由 Server 直接入库，旧客户端模型补全失败时降为 candidate，不再整条丢失。
+- Outbox 的 `experience.record` envelope 与 payload 共享同一幂等键，恢复重放不会重复累计文档、harvest 事件或数据点。
+- Delivery 增加 `knowledge_used_ids` 精确采用集合，只允许引用 Task 冻结知识快照；旧调用标记为 `coarse_legacy`，不得把整个快照当成全部采用。
+- 经验结果证据关联来源 Task、后续 Task、实际使用文档、终态成功和首轮通过，支持验证“第一次踩坑，第二次避开”。
+
 ## 0.6.4
 
 - 本地与团队模式保持同一最新基线：显式 `--local` 诊断不再被 Server 探测覆盖，未产生首个 Commit 的新仓库可用 `working-tree` 进入研发流程。
