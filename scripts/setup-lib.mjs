@@ -10,6 +10,7 @@ export const publicSkillNames = ['cap']
 export const legacySkillNames = ['cap-map', 'cap-shape', 'cap-build', 'cap-verify']
 export const minimumMcpNodeVersion = '20.18.1'
 export const minimumLocalNodeVersion = '18.0.0'
+export const clientRestartNotice = () => '重要：已经打开的客户端不会热加载新 Skill/MCP。请完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，然后新建任务继续；现有分支和工作区改动不会丢失。'
 
 function isCompatibleNode(version = '', minimum = [18, 0, 0]) {
   const parts = String(version).replace(/^v/, '').split('.').map(Number)
@@ -40,9 +41,9 @@ const ACTIVATION_END = '<!-- capital-agent:auto-activation:end -->'
 export const activationRuleBlock = `${ACTIVATION_START}
 ## Capital Agent 自动研发入口
 
-当当前目录位于 Git 仓库中，且用户意图是实现功能、修复问题、重构、补测试、代码评审或发布交付时，必须在实质分析或修改前加载已安装的 \`cap\` Skill。若 \`CAPITAL_AGENT_MODE=local\`，按纯本地流程完成代码侦察、实现和本地证据，不连接平台、不创建 Task、不写 Outbox；否则按 Skill 要求完成平台握手、创建或绑定统一 Task、实现和证据回写。不要等待用户显式输入 \`$cap\` 或 \`/cap\`。
+当当前目录位于 Git 仓库中，且用户意图是实现功能、修复问题、重构、补测试、代码评审或发布交付时，必须在实质分析或修改前加载已安装的 \`cap\` Skill。检查当前宿主是否实际暴露 Capital Agent MCP 工具，并把结果作为 \`loaded\` / \`missing\` 传给 \`scripts/cap-status.mjs --mcp-runtime\`。若返回 \`restart_required\`，先提示用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；用户选择本地继续后，使用 \`--allow-local-once\` 重跑状态检查，本任务不创建平台 Task、不回写经验或 Server Gate，但不修改机器的团队模式配置。若 \`CAPITAL_AGENT_MODE=local\`，按纯本地流程完成代码侦察、实现和本地证据，不连接平台、不创建 Task、不写 Outbox；否则按 Skill 要求完成平台握手、创建或绑定统一 Task、实现和证据回写。不要等待用户显式输入 \`$cap\` 或 \`/cap\`。
 
-纯问答、概念讨论、调研、翻译、状态查询，以及明确不需要代码或仓库变更的请求，不创建平台 Task。无法连接平台时必须明确报告本地降级及影响，不得宣称已经同步。用户的显式指令始终优先。
+纯问答、概念讨论、调研、翻译、状态查询，以及明确不需要代码或仓库变更的请求，不创建平台 Task。MCP 已加载但远端调用临时失败时，必须明确报告离线降级及影响，不得宣称已经同步；MCP 未加载且团队模式已配置时，必须先取得用户“本次本地继续”的明确选择，不能静默降级。用户的显式指令始终优先。
 ${ACTIVATION_END}`
 
 export const cursorActivationRuleBlock = activationRuleBlock

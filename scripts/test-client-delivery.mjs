@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildCandidateDelivery, buildCommitDelivery, buildPushAuthorizationFingerprint, flushPendingDeliveries, queueCommitDelivery, readHarnessMode } from './client-delivery.mjs'
+import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
 
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
 
@@ -18,6 +19,14 @@ test('post-commit payload carries task, commit and changed paths without code co
   assert.deepEqual(item.payload.changed_files, ['a.txt'])
   assert.equal(item.payload.delivery_candidate, false)
   assert.doesNotMatch(JSON.stringify(item), /secret body/)
+})
+
+test('task-scoped local fallback is visible to post-commit and does not leak to another task', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-local-fallback-'))
+  await activateLocalFallback(repo, { branch: 'feature/test', taskId: 'task_local' })
+  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_local' }), true)
+  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_next' }), false)
+  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/other', taskId: 'task_local' }), false)
 })
 
 test('candidate delivery is bound to exact task repo branch HEAD and passed local verification', async () => {

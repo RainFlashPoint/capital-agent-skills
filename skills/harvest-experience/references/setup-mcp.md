@@ -1,6 +1,6 @@
 # 接入 capital-agent MCP server
 
-`harvest-experience` 依赖一个名为 `capital-agent` 的 MCP server，它提供 `enrich_context`（注入经验）、`record_experience`（沉淀经验）、`search_knowledge` 等工具，背后是一个中心知识库。你需要先注册它，skill 才会生效；否则 skill 会自动跳过，不影响正常编码。
+`harvest-experience` 依赖一个名为 `capital-agent` 的 MCP server，它提供 `enrich_context`（注入经验）、`record_experience`（沉淀经验）、`search_knowledge` 等工具，背后是一个中心知识库。团队模式下需要先注册并让当前客户端会话实际加载它；配置已经写入但当前会话没有工具时，Cap 会在编码前要求重启客户端，不会伪装成纯本地模式继续。
 
 > 把下面的 `<YOUR_SERVER>` 换成你自己的 capital-agent-server 地址，`<YOUR_KEY>` 换成管理员发给你的 `x-user-key`（用于复用率按人归因）。本仓库不内置任何服务器地址或密钥。
 
@@ -39,7 +39,7 @@ claude mcp add capital-agent -- node /path/to/capital-agent-skills/scripts/mcp-r
 
 也可以运行一次 `scripts/setup.mjs` 自动保存为 `~/.config/capital-agent/env`（权限 `0600`）并注册 Codex、Claude Code 与 Cursor。该文件只在研发本机，不属于任何 Git 仓库。
 
-Cursor 使用 `~/.cursor/mcp.json` 的 `mcpServers.capital-agent` 条目，并通过 `~/.cursor/rules/capital-agent.mdc` 自动识别真实 Git 研发请求。安装器只幂等维护自己的 MCP 条目和规则文件，不覆盖其它 Cursor MCP Server 或个人规则；安装或升级后需完全退出并重新打开 Cursor。
+Cursor 使用 `~/.cursor/mcp.json` 的 `mcpServers.capital-agent` 条目，并通过 `~/.cursor/rules/capital-agent.mdc` 自动识别真实 Git 研发请求。安装器只幂等维护自己的 MCP 条目和规则文件，不覆盖其它 Cursor MCP Server 或个人规则。Codex、ChatGPT、Claude Code 与 Cursor 都不能保证在已打开会话中热加载新 Skill/MCP；安装或升级后需完全退出并重新打开客户端，再新建任务继续，现有 Git 分支和工作区改动不会丢失。
 
 ## 方式 B：直接配置远程 HTTP
 

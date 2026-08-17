@@ -180,7 +180,7 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 4. 写一份**阶段汇总**(可放 `.cap/verify/summary.md` 或直接体现在 STATE),列每个验证项的结果、归因分类与去向。
 5. **输出 `## HANDOFF` → 回写 STATE.md**(经 cap-flow / 单写者,见 §6):更新 stage / status / gates /
    verify-checks / next。
-6. 若 MCP 暴露 `create_task_action`，以当前 Task、精确 Commit 和真实执行命令创建 `action_type=test`，把 `action_id/run_id` 写入 STATE；用 `wait_task_action` 有界等待。未完成时 next 指向“续查 Action”，不得伪报 PASS。若 API 不可用，明确标记 `LOCAL_PASS_ONLY` 或真实失败归因。
+6. 若 MCP 暴露 `create_task_action`，以当前 Task、精确 Commit 和真实执行命令创建 `action_type=test`，把 `action_id/run_id` 写入 STATE；用 `wait_task_action` 有界等待。未完成时 next 指向“续查 Action”，不得伪报 PASS。已经通过入口握手后 API 临时不可用，明确标记 `LOCAL_PASS_ONLY` 或真实失败归因；团队模式完整 MCP 工具集未加载时必须先完成入口选择，只有用户明确选择本次本地继续才能使用本地证据，且不得包装成 Server Gate。
 
 延期只允许用于“当前核心结果已可独立验收”的项目，例如等待次日账单、厂商脱敏样本或独立兼容性矩阵。代码失败、
 安全问题、数据一致性风险、当前需求的核心行为未通过，均不得标记延期。每个延期项必须包含稳定 ID、标题、原因和

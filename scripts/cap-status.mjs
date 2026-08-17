@@ -9,11 +9,16 @@ import { pathToFileURL } from 'node:url'
 import { checkPlatformHandshake, normalizeServerUrl } from './setup-lib.mjs'
 import { flushPendingDeliveries, readHarnessMode } from './client-delivery.mjs'
 import { inspectOutbox } from './cap-outbox.mjs'
+import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
 
 function text(value = '') { return String(value || '').trim() }
+function normalizeMcpRuntime(value = '') {
+  const normalized = text(value).toLowerCase()
+  return ['loaded', 'missing'].includes(normalized) ? normalized : 'unknown'
+}
 function canonicalStage(value = '') {
   const normalized = text(value).replace(/^cap-/, '').toLowerCase()
   return LEGACY_STAGE[normalized] || (STAGES.includes(normalized) ? normalized : '')
@@ -157,15 +162,17 @@ export function stageLabel(stage = '') {
   return ({ understand: '项目了解', define: '需求确认', plan: '开发计划', implement: '编码实现', test: '测试验证', review: '代码评审', release: '交付收口', done: '完成退场' })[stage] || '项目了解'
 }
 
-export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fetchImpl = fetch, offline = false, environment = process.env } = {}) {
+export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fetchImpl = fetch, offline = false, environment = process.env, mcpRuntime = 'unknown', allowLocalFallback = false } = {}) {
   const repo = resolve(repoRoot)
   const configPath = join(homeDir, '.config/capital-agent/env')
   const configText = await readFile(configPath, 'utf8').catch(() => '')
   const config = Object.fromEntries(configText.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1], match[2]]))
   const explicitLocal = text(environment.CAPITAL_AGENT_MODE || config.CAPITAL_AGENT_MODE).toLowerCase() === 'local'
+  const mcpRuntimeState = normalizeMcpRuntime(mcpRuntime)
   let serverUrl = ''
   try { serverUrl = normalizeServerUrl(config.CAPITAL_AGENT_SERVER_URL || '') } catch {}
   const userKey = text(config.CAPITAL_AGENT_USER_KEY)
+  const teamConfigured = !explicitLocal && Boolean(serverUrl && userKey)
   const gitRoot = git(repo, ['rev-parse', '--show-toplevel'])
   const branch = git(repo, ['branch', '--show-current'])
   const head = git(repo, ['rev-parse', 'HEAD'])
@@ -179,6 +186,12 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const boundary = inspectTaskBoundary({ stateText, branch, worktree: gitRoot || repo })
   const taskId = field(stateText, 'task-id')
   const sessionId = field(stateText, 'session-id')
+  if (teamConfigured && mcpRuntimeState === 'missing' && allowLocalFallback === true) {
+    await activateLocalFallback(repo, { branch, taskId })
+  }
+  const explicitLocalFallback = teamConfigured && mcpRuntimeState === 'missing' && await isLocalFallbackActive(repo, { branch, taskId })
+  const localRun = explicitLocal || explicitLocalFallback
+  const restartRequired = teamConfigured && mcpRuntimeState === 'missing' && !explicitLocalFallback
   const parentTaskId = field(stateText, 'parent-task-id')
   const retirementStatus = field(stateText, 'retirement-status') || (stateText ? 'active' : '')
   const historyArtifactRoot = field(stateText, 'history-artifact-root') || (taskId && await exists(join(repo, `.cap/history/${taskId}/manifest.json`)) ? `.cap/history/${taskId}` : '')
@@ -187,16 +200,16 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     spec: await exists(join(repo, '.cap/spec.md')),
     plan: await exists(join(repo, '.cap/plan.md')),
   }
-  const handshake = offline || explicitLocal ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
-  const platform = offline || handshake?.reason === 'direct_probe_unavailable' ? null : Boolean(handshake?.ok)
+  const handshake = offline || localRun || restartRequired ? null : (serverUrl && userKey ? await checkPlatformHandshake(serverUrl, userKey, fetchImpl) : null)
+  const platform = offline || restartRequired || handshake?.reason === 'direct_probe_unavailable' ? null : Boolean(handshake?.ok)
   const stateTask = platform && !boundary.blocked ? await fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) : null
   const runtime = platform ? await fetchPlatformHealth(serverUrl, fetchImpl) : null
   const followUpTaskId = activeFollowUpId(stateTask)
   const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
   const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
   const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
-  const pendingDeliveries = gitRoot && !offline && !explicitLocal && !boundary.blocked ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
-  const outbox = gitRoot && !explicitLocal ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
+  const pendingDeliveries = gitRoot && !offline && !localRun && !restartRequired && !boundary.blocked ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
+  const outbox = gitRoot && !localRun ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
   const localNext = resolveNextAction({ stateText, artifacts, dirty })
   const localStage = canonicalStage(field(stateText, 'stage'))
   const next = switchingTask
@@ -213,28 +226,35 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     : head ? [git(repo, ['log', '-1', '--format=%H%x09%s', head])].filter(Boolean) : []
   const reconciliation = reconcileRepositoryState({ head, upstreamHead, deliveredHead, stateHead, commits })
   const reasons = []
-  if (boundary.blocked) reasons.push(boundary.code)
-  if (!gitRoot) reasons.push('not_git_repository')
-  if (!explicitLocal && !serverUrl) reasons.push('missing_server_url')
-  if (!explicitLocal && !userKey) reasons.push('missing_user_key')
-  if (!explicitLocal && !offline && serverUrl && userKey && handshake?.reason === 'direct_probe_unavailable') reasons.push('direct_probe_unavailable_needs_mcp_confirmation')
-  else if (!explicitLocal && !offline && serverUrl && userKey && platform === false) reasons.push('platform_handshake_rejected_needs_mcp_confirmation')
-  if (!explicitLocal && !taskId) reasons.push('task_not_attached')
-  if (!explicitLocal && reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
+  if (restartRequired) reasons.push('mcp_runtime_missing_restart_required')
+  else if (boundary.blocked) reasons.push(boundary.code)
+  else if (!localRun) {
+    if (!gitRoot) reasons.push('not_git_repository')
+    if (!serverUrl) reasons.push('missing_server_url')
+    if (!userKey) reasons.push('missing_user_key')
+    if (!offline && serverUrl && userKey && handshake?.reason === 'direct_probe_unavailable') reasons.push('direct_probe_unavailable_needs_mcp_confirmation')
+    else if (!offline && serverUrl && userKey && platform === false) reasons.push('platform_handshake_rejected_needs_mcp_confirmation')
+    if (!taskId) reasons.push('task_not_attached')
+    if (reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
+  }
   const correction = remoteTask && (canonicalStage(remoteTask.currentStage) !== localStage || (remoteTask.status === 'done' && field(stateText, 'status').toLowerCase() !== 'done'))
     ? { required: true, reason: 'server_canonical_state_overrides_local_state', localStage, remoteStage: canonicalStage(remoteTask.currentStage), remoteStatus: remoteTask.status }
     : { required: false, reason: '' }
   return {
-    mode: boundary.blocked
-      ? 'boundary_blocked'
-      : explicitLocal
+    mode: explicitLocal
       ? 'local_explicit'
+      : restartRequired
+      ? 'restart_required'
+      : boundary.blocked
+      ? 'boundary_blocked'
+      : explicitLocalFallback
+      ? 'local_fallback_explicit'
       : !gitRoot || !serverUrl || !userKey
       ? 'local_degraded'
       : platform === true
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
-    platform: { configured: !explicitLocal && Boolean(serverUrl && userKey), connected: explicitLocal ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, runtime: runtime ? { buildCommit: runtime.build?.commit || '', schemaRevision: runtime.schemaRevision || '', taskStoreMode: runtime.taskStoreMode || '', database: runtime.database || '' } : null, pendingDeliveries, outbox },
+    platform: { configured: teamConfigured, connected: localRun ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, mcpRuntime: mcpRuntimeState, localFallback: explicitLocalFallback, runtime: runtime ? { buildCommit: runtime.build?.commit || '', schemaRevision: runtime.schemaRevision || '', taskStoreMode: runtime.taskStoreMode || '', database: runtime.database || '' } : null, pendingDeliveries, outbox },
     repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty, harnessMode, harnessEligible: harnessMode === 'server' },
     task: {
       id: remoteTask?.id || taskId,
@@ -248,7 +268,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       currentCommit: remoteTask?.currentCommit || remoteTask?.gates?.currentCommit || '',
       currentGate: remoteTask?.currentGate || remoteTask?.gates?.current || '',
       currentAction: remoteTask?.currentAction || null,
-      blocker: boundary.blocked ? { code: boundary.code, detail: boundary.detail, remediation: boundary.remediation } : remoteTask?.blocker || null,
+      blocker: restartRequired
+        ? { code: 'mcp_runtime_missing_restart_required', detail: 'Capital Agent 已配置，但当前会话没有加载 MCP 工具', remediation: '选择重启恢复团队模式，或明确本次改用本地模式继续' }
+        : boundary.blocked ? { code: boundary.code, detail: boundary.detail, remediation: boundary.remediation } : remoteTask?.blocker || null,
       nextAction: remoteTask?.nextAction || null,
       executionMode: remoteTask?.executionMode || remoteTask?.taskContract?.executionMode || '',
       verificationCommands: remoteTask?.verificationCommands || remoteTask?.taskContract?.verificationCommands || [],
@@ -259,7 +281,12 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     reconciliation,
     boundary,
     correction,
-    workflow: boundary.blocked
+    workflow: restartRequired
+      ? { currentStage: localStage, status: 'gated', stage: localStage || 'understand', action: '选择：重启恢复团队模式，或本次明确改用本地模式继续', reason: '当前会话未加载已配置的 Capital Agent MCP；不会静默丢失团队证据，也不会强制中断本地研发', gated: true, options: [
+          { id: 'restart', label: '重启后使用团队模式' },
+          { id: 'local_once', label: '本次明确改用本地模式继续' },
+        ] }
+      : boundary.blocked
       ? { currentStage: canonicalStage(field(stateText, 'stage')), status: 'blocked', stage: canonicalStage(field(stateText, 'stage')) || 'understand', action: '安全切换本次 Task 状态', reason: boundary.detail, gated: true }
       : { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
     reasons,
@@ -268,7 +295,10 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
 
 function render(result) {
   const explicitLocal = result.mode === 'local_explicit'
-  const connected = explicitLocal ? '本地模式主动跳过' : result.platform.connected === true ? '已连接' : result.platform.handshake?.reason === 'direct_probe_unavailable' ? '直接探测不可用，等待 MCP 确认' : result.platform.connected === false ? '握手未通过，等待 MCP 确认' : result.platform.configured ? '未探测' : '未配置'
+  const explicitLocalFallback = result.mode === 'local_fallback_explicit'
+  const localRun = explicitLocal || explicitLocalFallback
+  const restartRequired = result.mode === 'restart_required'
+  const connected = explicitLocal ? '本地模式主动跳过' : explicitLocalFallback ? '本次已明确改用本地模式（团队配置保持不变）' : restartRequired ? '已配置，当前会话未加载 MCP' : result.platform.connected === true ? '已连接' : result.platform.handshake?.reason === 'direct_probe_unavailable' ? '直接探测不可用，等待 MCP 确认' : result.platform.connected === false ? '握手未通过，等待 MCP 确认' : result.platform.configured ? '未探测' : '未配置'
   const task = result.task.id || (result.mode === 'platform_ready' ? '待创建' : '未关联')
   return [
     'CAP CLIENT HANDSHAKE',
@@ -278,31 +308,45 @@ function render(result) {
     `分支：${result.repository.branch || '-'}`,
     `验证模式：${result.repository.harnessMode === 'local-only' ? '本地维护验证（不进入 Server Harness）' : 'Server Harness'}`,
     `Task：${task}`,
+    restartRequired ? '当前状态：等待选择运行方式' : '',
+    restartRequired ? '代码修改：尚未开始' : '',
+    restartRequired ? '现有分支和工作区改动不会丢失' : '',
+    restartRequired ? '选项 1（推荐）：完全退出并重新打开客户端，新建任务后使用团队模式' : '',
+    restartRequired ? '选项 2：回复“本次本地继续”，本任务不创建平台 Task、不回写经验或 Server Gate' : '',
     result.boundary?.blocked ? `边界阻断：${result.boundary.code}；STATE 分支 ${result.boundary.state.branch || '-'} / 当前分支 ${result.boundary.current.branch || '-'}` : '',
     result.task.requiresNewSession ? `任务接续：${result.task.previousId} → ${result.task.id}（必须新建 Session）` : '',
     result.task.remoteStatus ? `平台 Task：${result.task.remoteStatus}${result.task.gatesReady ? ' · Gate 已通过' : ''}` : '',
     result.task.currentCommit ? `当前候选 Commit：${result.task.currentCommit.slice(0, 12)}` : '',
     result.task.currentAction?.id ? `当前 Action：${result.task.currentAction.type || '-'} · ${result.task.currentAction.status || '-'} · ${result.task.currentAction.id}` : '',
-    result.task.blocker ? `阻塞：${result.task.blocker.detail || result.task.blocker.code}；处理：${result.task.blocker.remediation || '查看技术详情'}` : '',
+    result.task.blocker ? `${restartRequired ? '提示' : '阻塞'}：${result.task.blocker.detail || result.task.blocker.code}；处理：${result.task.blocker.remediation || '查看技术详情'}` : '',
     result.platform.runtime?.taskStoreMode ? `平台真值：${result.platform.runtime.taskStoreMode} · schema ${result.platform.runtime.schemaRevision || '-'}` : '',
     result.correction.required ? `状态纠偏：本地 ${result.correction.localStage || '-'} → 平台 ${result.correction.remoteStage || result.task.remoteStage || '-'}（${result.correction.remoteStatus}）` : '',
     result.task.parentTaskId ? `父 Task：${result.task.parentTaskId}` : '',
     result.task.retirementStatus ? `历史快照：${result.task.retirementStatus}${result.task.historyArtifactRoot ? ` · ${result.task.historyArtifactRoot}` : ''}` : '',
-    `当前：${stageLabel(result.workflow.currentStage || result.workflow.stage)}`,
+    restartRequired ? '' : `当前：${stageLabel(result.workflow.currentStage || result.workflow.stage)}`,
     `下一步：${result.workflow.action}`,
     `原因：${result.workflow.reason}`,
-    explicitLocal ? '证据：测试与评审结果仅保留在本地' : result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
-    explicitLocal ? '' : result.reconciliation.pushRequired ? `远程验证门禁：当前 HEAD ${result.repository.head.slice(0, 12)} 尚未与上游分支对齐；创建 Test/Review Action 前需要明确授权并推送当前分支` : '远程验证门禁：当前 HEAD 已在上游分支可见',
+    localRun ? '证据：测试与评审结果仅保留在本地' : restartRequired ? '' : result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
+    localRun || restartRequired ? '' : result.reconciliation.pushRequired ? `远程验证门禁：当前 HEAD ${result.repository.head.slice(0, 12)} 尚未与上游分支对齐；创建 Test/Review Action 前需要明确授权并推送当前分支` : '远程验证门禁：当前 HEAD 已在上游分支可见',
     result.platform.pendingDeliveries?.total ? `待发送补报：本次发送 ${result.platform.pendingDeliveries.sent}，剩余 ${result.platform.pendingDeliveries.pending}` : '',
     result.platform.outbox?.pending ? `离线待同步：${result.platform.outbox.pending} 条（可重放 ${result.platform.outbox.ready}，阻塞 ${result.platform.outbox.blocked}）${result.platform.outbox.next ? `；下一条 ${result.platform.outbox.next.type}` : ''}` : '',
-    result.reasons.length ? `降级原因：${result.reasons.join(', ')}` : '',
+    result.reasons.length ? `${restartRequired ? '状态原因' : '降级原因'}：${result.reasons.join(', ')}` : '',
   ].filter(Boolean).join('\n')
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
-  const json = process.argv.includes('--json')
-  const offline = process.argv.includes('--offline')
-  const repoArg = process.argv.slice(2).find(arg => !arg.startsWith('-')) || '.'
-  const result = await inspectCapStatus({ repoRoot: repoArg, offline })
+  const argv = process.argv.slice(2)
+  const json = argv.includes('--json')
+  const offline = argv.includes('--offline')
+  const allowLocalFallback = argv.includes('--allow-local-once')
+  const runtimeFlag = argv.find(arg => arg.startsWith('--mcp-runtime='))?.split('=')[1]
+  const runtimeIndex = argv.indexOf('--mcp-runtime')
+  const mcpRuntime = runtimeFlag || (runtimeIndex >= 0 ? argv[runtimeIndex + 1] : 'unknown')
+  let repoArg = '.'
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === '--mcp-runtime') { index += 1; continue }
+    if (!argv[index].startsWith('-')) { repoArg = argv[index]; break }
+  }
+  const result = await inspectCapStatus({ repoRoot: repoArg, offline, mcpRuntime, allowLocalFallback })
   process.stdout.write(json ? `${JSON.stringify(result, null, 2)}\n` : `${render(result)}\n`)
 }

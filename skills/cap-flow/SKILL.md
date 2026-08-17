@@ -452,12 +452,12 @@ source-leaf: <需求树叶 id 或 (none)>
 `deferred-only: true` 不等于 gated：它表示当前 Task 的核心验收已经通过，剩余项可独立交付。继续完成 review；
 Review 通过且已有有效 Commit 时，若 MCP 提供 `split_deferred_acceptance`，传当前 `task-id`、最新 Commit、
 延期项、核心 verification PASS 与 review PASS。平台创建关联 follow-up Task 后，把返回 ID 写入
-`follow-up-task-ids`，当前 STATE 推进 `stage: done`。工具不可用时明确记录“后续 Task 未创建”，不得静默把
+`follow-up-task-ids`，当前 STATE 推进 `stage: done`。MCP 已加载但该接口缺失或调用失败时明确记录“后续 Task 未创建”，不得静默把
 延期项丢失，也不得因此把核心 Task 永久留在 gated。
 
 若 capital-agent MCP 提供 `record_skill_event`，每次 HANDOFF 写完 STATE 后追加一条同 `session_id` 事件：阶段进入用 `stage_entered`，门通过用 `gate_passed`，阻塞用 `stage_blocked`；verify/review 阶段分别用对应完成事件。artifact_refs 只传已登记的 Artifact ID 或路径，不传文件正文。
 
-同一 HANDOFF 若 MCP 提供 `record_task_artifact`，先登记本阶段新建或更新的 `.cap` 文件，再记录事件：`PROFILE.md→profile`、`task-context.md→other`、`spec.md→spec`、`plan.md→plan`、`STATE.md→state`、`verify/*→verify`、`review/*→review`、`release/*→release`，其余为 `other`。每个文件只传 `task_id / kind / repo-root 相对 path / SHA-256 hash / git_ref / stage / status / 一句 summary`；禁止传正文、本机绝对路径、内部服务地址或密钥。没有 task-id、工具不存在或单个登记失败时静默降级，不阻塞纯文件主线；同一路径同一 hash 不重复登记。
+同一 HANDOFF 若 MCP 提供 `record_task_artifact`，先登记本阶段新建或更新的 `.cap` 文件，再记录事件：`PROFILE.md→profile`、`task-context.md→other`、`spec.md→spec`、`plan.md→plan`、`STATE.md→state`、`verify/*→verify`、`review/*→review`、`release/*→release`，其余为 `other`。每个文件只传 `task_id / kind / repo-root 相对 path / SHA-256 hash / git_ref / stage / status / 一句 summary`；禁止传正文、本机绝对路径、内部服务地址或密钥。已经通过入口握手后，没有 task-id、旧 MCP 缺少单个接口或调用失败时按离线规则降级；团队模式的完整 MCP 工具集未加载时先进入 `restart_required`，只有用户明确选择本次本地继续才跳过平台登记。同一路径同一 hash 不重复登记。
 
 若 STATE 尚无 `task-id` 且 MCP 提供 `create_or_attach_task`，在首次 shape/intake 前自动创建统一 Task 并写回 `task-id`/`session-id`；退场时用 `record_task_delivery` 回写真实 Commit 与验证证据。具体契约见 `../harvest-experience/references/platform-task-loop.md`。
 
@@ -507,8 +507,8 @@ Review 通过且已有有效 Commit 时，若 MCP 提供 `split_deferred_accepta
 
 ## 一次完整入口的动作清单
 
-1. [ ] 运行 package 根 `scripts/cap-status.mjs <target-repo> --json`，完成客户端/Git/STATE 预检
-2. [ ] 调用 `create_or_attach_task` 创建或复用平台 Task；失败时明确报告本地降级，不得静默跳过
+1. [ ] 检查宿主 MCP 工具可见性，运行 package 根 `scripts/cap-status.mjs <target-repo> --json --mcp-runtime <loaded|missing|unknown>`；`restart_required` 时让用户选择重启或本次本地继续
+2. [ ] 调用 `create_or_attach_task` 创建或复用平台 Task；MCP 已加载但远端失败时明确报告离线执行，完整工具集未加载时不得未经选择静默跳过
 3. [ ] 重跑 `cap-status.mjs` 并输出平台、仓库、分支、Task、当前阶段、下一动作的握手快报
 4. [ ] 边界自检(cap-guard) + 分支意图 Gate；确认当前分支属于本任务并记录基线后再判定入口
 5. [ ] 若进改动阶段(implement/test/review):`git diff` → 解析角色+验证项 → 漂移检测

@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
+import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -46,7 +46,7 @@ if (args.doctor && args.local) {
   const codexActivation = await hasActivationRule(rules.codex)
   const claudeActivation = await hasActivationRule(rules.claude)
   const cursorActivation = await hasActivationRule(rules.cursor)
-  process.stdout.write(`运行模式: 本地（显式）\nCodex Skill: ${codexSkill?'PASS':'未安装'}\nClaude Skill: ${claudeSkill?'PASS':'未安装'}\nCursor Skill: ${cursorSkill?'PASS':'未安装'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n平台 / MCP / Test Provider: 本地模式跳过\n`)
+  process.stdout.write(`运行模式: 本地（显式）\nCodex Skill: ${codexSkill?'PASS':'未安装'}\nClaude Skill: ${claudeSkill?'PASS':'未安装'}\nCursor Skill: ${cursorSkill?'PASS':'未安装'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n平台 / MCP / Test Provider: 本地模式跳过\n当前会话加载状态: Doctor 只能验证磁盘配置；已打开的客户端需重启后才会加载更新。\n`)
   if ((!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode = 1
   process.exit()
 }
@@ -69,7 +69,7 @@ if (args.doctor) {
   const claudeActivation = await hasActivationRule(rules.claude)
   const cursorActivation = await hasActivationRule(rules.cursor)
   const label = (state,index) => !state.registered ? '未注册' : !state.valid ? 'FAIL（配置路径不可用）' : clientMcpProbes[index] ? 'PASS' : 'FAIL（实际调用失败）'
-  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${label(codexMcp,0)}\nClaude MCP: ${label(claudeMcp,1)}\nCursor MCP: ${label(cursorMcp,2)}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n`)
+  process.stdout.write(`平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${label(codexMcp,0)}\nClaude MCP: ${label(claudeMcp,1)}\nCursor MCP: ${label(cursorMcp,2)}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n当前会话加载状态: Doctor 已验证磁盘配置与独立 MCP 调用，但不能让已打开的客户端热加载；当前任务仍无 MCP 工具时请完全重启客户端。\n`)
   if (!health.ok || !mcpRuntime || !mcpTools || !mcpRegistered || !provider.ok || !providerAuth.ok || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode=1
   process.exit()
 }
@@ -90,7 +90,7 @@ if (args.local) {
   if (!args.codexOnly) installed.push(`Claude: ${(await installSkillLinks(join(root,'skills'),targets.claude)).length}`)
   if (!args.codexOnly && !args.claudeOnly) installed.push(`Cursor: ${(await installSkillLinks(join(root,'skills'),targets.cursor)).length}`)
   if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
-  process.stdout.write(`Capital Agent 本地模式安装完成。${installed.join('，')}。不会连接平台、创建 Task、调用 MCP/Harness 或累积 Outbox；测试与评审证据保留在本地。配置保存在 ${configFile}。\n`)
+  process.stdout.write(`Capital Agent 本地模式安装完成。${installed.join('，')}。不会连接平台、创建 Task、调用 MCP/Harness 或累积 Outbox；测试与评审证据保留在本地。配置保存在 ${configFile}。\n${clientRestartNotice()}\n`)
   process.exit()
 }
 if (!userKey) {
@@ -126,4 +126,4 @@ if (!args.configOnly && !args.claudeOnly) await installCodexMcpConfig(codexConfi
 if (!args.configOnly && !args.codexOnly && !args.claudeOnly) await installCursorMcpConfig(cursorMcpConfigPath(homedir()),process.execPath,wrapper)
 if (!args.configOnly && !args.codexOnly && commandExists('claude')) { try { run('claude',['mcp','remove','capital-agent','-s','user']) } catch {}; run('claude',['mcp','add','-s','user','capital-agent','--',process.execPath,wrapper]) }
 if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
-process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}。真实研发请求将自动进入 Cap；本地 Test Provider 已启用（按需运行、test-only）。配置仅保存在 ${configFile} 与 ${localProvider.configPath}。\n`)
+process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}。真实研发请求将自动进入 Cap；本地 Test Provider 已启用（按需运行、test-only）。配置仅保存在 ${configFile} 与 ${localProvider.configPath}。\n${clientRestartNotice()}\n`)

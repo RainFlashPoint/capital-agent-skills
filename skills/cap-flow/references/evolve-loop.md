@@ -110,9 +110,8 @@ git restore . ; git switch main ; git branch -D evolve/<topic>
 
 **密钥**:全程不读不写任何密钥;沉淀走已配置的 `capital-agent` MCP,凭据由 MCP 层管理,不进本 playbook。
 
-> **无 `capital-agent` MCP 的环境**:`enrich_context` / `record_experience` 不可用时,不假装已沉淀。
-> 编号文本告知用户"中心 KB 通道未配置,本次改进未沉淀;可参考 harvest-experience/references/setup-mcp.md 配置",
-> 并把改进摘要打印出来供用户手工记录。
+> **显式本地环境**：`enrich_context` / `record_experience` 不可用时，不假装已沉淀；告知用户中心 KB 已主动跳过，并把改进摘要打印出来供手工记录。
+> **团队模式**：完整 MCP 工具集未加载时由入口 `restart_required` 让用户选择重启或本次本地继续；本地继续不沉淀，MCP 已加载但远端调用失败时按 Outbox 规则保留本轮沉淀元数据。
 
 ---
 

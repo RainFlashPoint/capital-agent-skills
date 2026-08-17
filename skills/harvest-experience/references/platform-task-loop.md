@@ -1,10 +1,10 @@
 # 平台统一 Task 无感闭环
 
-本地研发默认不要求用户打开平台。只要 MCP 暴露对应工具，Skill 必须按以下顺序自动执行；工具不可用时降级为纯本地 `.cap` 流程。
+本地研发默认不要求用户打开平台。只要 MCP 暴露对应工具，Skill 必须按以下顺序自动执行。持久 `local_explicit` 或用户选择本次本地继续后的 `local_fallback_explicit` 走纯本地 `.cap` 流程；团队模式已配置但当前会话未暴露 MCP 时先进入 `restart_required` 让用户选择。只有 MCP 已加载、远端调用临时失败时，才按下面的 Outbox 规则离线继续。
 
 ## 离线 Outbox
 
-平台或 MCP 暂时不可用时，研发本身继续，但所有待回写事件统一写入 `.cap/outbox.jsonl`，不再为 Artifact、Action、Experience 各造一套临时文件。允许类型为 `task.attach`、`artifact.record`、`delivery.record`、`action.create:test`、`action.create:review`、`experience.record`、`skill.event`。
+MCP 工具已经加载、但平台或调用通道暂时不可用时，研发本身继续，但所有待回写事件统一写入 `.cap/outbox.jsonl`，不再为 Artifact、Action、Experience 各造一套临时文件。允许类型为 `task.attach`、`artifact.record`、`delivery.record`、`action.create:test`、`action.create:review`、`experience.record`、`skill.event`。客户端会话未加载 MCP 时不得借此创建 Outbox。
 
 每条事件必须带稳定 `idempotencyKey`、`type`、可选 `localTaskRef`、`dependsOn`、结构化 `payload`、时间与重试信息。离线创建 Task 时先生成 `localTaskRef`；后续事件依赖 `task.attach`，重放得到真实 `task_id/session_id` 后再注入后续 MCP 参数。只传路径、hash、Commit 和结构化结论，禁止保存代码正文、密钥和完整外部身份数据。
 

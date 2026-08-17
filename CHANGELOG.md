@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.6
+
+- 团队模式新增 `restart_required` 客户端选择门：当前会话未加载 MCP 时，默认建议重启恢复团队链路，也允许用户明确选择本次本地继续，不再让升级问题把研发完全卡死。
+- 新增一次性 `local_fallback_explicit`：不修改机器团队配置，仅当前任务跳过平台 Task、经验、Delivery、Server Gate 与 Outbox。
+- 本次本地选择持久绑定当前 branch + Task，后续阶段和 Git Hook 共享同一判断；切换 Task 自动失效，避免 `post-commit` 误写 Delivery Outbox。
+- `cap-status` 接收 `loaded / missing / unknown` MCP 运行时信号；显式本地模式继续可用，直接探测失败与客户端未重载不再混为同一种故障。
+- 安装、升级和 Doctor 明确说明已打开会话不能热加载 Skill/MCP，要求完全重启客户端并新建任务，同时确认现有分支和工作区改动不会丢失。
+
 ## 0.6.5
 
 - `record_experience` 增加稳定 `idempotency_key`：结构化经验由 Server 直接入库，旧客户端模型补全失败时降为 candidate，不再整条丢失。

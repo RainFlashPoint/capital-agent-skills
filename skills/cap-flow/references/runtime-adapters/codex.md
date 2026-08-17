@@ -1,6 +1,6 @@
 # Codex runtime adapter
 
-> updated: 2026-06-17
+> updated: 2026-08-17
 
 This adapter is data, not a skill. It defines how the cap playbooks map their portable contracts onto Codex runtimes without depending on Claude-only APIs.
 
@@ -15,6 +15,7 @@ This adapter is data, not a skill. It defines how the cap playbooks map their po
 | Long document review | `web-review` file mode or Live mode with blocking `/wait` | Plain text review gate |
 | Headless/non-interactive | Do not ask questions; write `needs-human` and choose the safe default | Block rather than accepting risk |
 | Cross-model adversary | Do not call `codex` from inside Codex | Run the adversarial pass inline |
+| Capital Agent MCP visibility | Inspect the tools exposed to the current task and pass `loaded` or `missing` to `cap-status --mcp-runtime` | Use `unknown` only when the host cannot expose tool visibility |
 
 ## Multi-agent adapter
 
@@ -94,4 +95,4 @@ for skill in .agents/skills/cap*; do
 done
 ```
 
-If the current Codex session was already running, a new session may be required before the skill registry sees new links.
+If the current Codex session was already running, it cannot be assumed to hot-load new Skill or MCP registration. In team mode, an absent Capital Agent MCP tool set produces `restart_required` before code reconnaissance or edits. Offer two choices: fully restart and create a new task for team mode, or explicitly continue this task with `--allow-local-once`. The latter returns `local_fallback_explicit`, keeps persistent team configuration unchanged, and skips platform Task/Experience/Delivery/Gate/Outbox work for this task. Existing branches and working-tree changes remain on disk.

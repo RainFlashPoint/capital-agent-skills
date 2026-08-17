@@ -116,6 +116,8 @@ bash scripts/setup.sh --local --upgrade
 bash scripts/setup.sh --local --doctor
 ```
 
+安装或升级后，请完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务使用新版本。已打开的会话不会可靠地热加载 Skill；现有 Git 分支和工作区改动不会丢失。
+
 安装后直接在任意 Git 项目中描述研发任务，Skills 会以显式本地模式运行。平台握手、经验注入、Task、MCP、独立 Harness、Delivery 和 Outbox 会主动跳过，不影响项目了解、需求确认、计划、实现、本地验证、评审和发布流程。
 
 ### 团队增强模式：接入 Cap Server
@@ -133,7 +135,7 @@ bash scripts/setup.sh --server "https://your-server" --upgrade
 bash scripts/setup.sh --server "https://your-server" --doctor
 ```
 
-安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。需要手工连接自建 Server 时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
+安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。安装或升级后建议完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务让 MCP 生效。若团队配置已经存在、但当前会话没有加载 Capital Agent MCP，Skills 会让用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；本地继续不会修改机器配置，但本任务不创建平台 Task、不回写经验或 Server Gate。需要手工连接自建 Server 时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
 
 平台地址和个人身份只保存在研发机器配置中。开源仓库不内置公司地址、个人凭据或项目代码。
 

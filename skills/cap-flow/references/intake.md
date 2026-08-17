@@ -303,7 +303,7 @@ session_id      # 会话标识
   F1——这是"接入 KB/经验后模型预测有没有变准"的**适应度函数**,也是并行分支 A/B 测 skill 变体的第一把尺。
 - **组装 = 模型判断 + 读文件**:脚本不碰 MCP;数据点由编排层读 plan / git diff / verify / review 汇总后经
   `record_experience` 吐出。字段**前向兼容**——server 现在忽略它不认识的字段不报错(见 `harvest-experience`)。
-- **无 MCP → 跳过**:`record_experience` 不可用时跳过步⑤,①–④ 照做;数据点没吐不影响本地退场。
+- **显式本地或已加载 MCP 的单次调用失败 → 跳过/离线补报**：`local_explicit` / `local_fallback_explicit` 跳过步⑤；MCP 已加载但 `record_experience` 调用失败时按 Outbox 规则补报。团队模式完整 MCP 工具集未加载时，入口先完成 `restart_required` 选择。
 
 **回流去向**:`<cap>/EVOLUTION.md`(脚本统一 append,缺则建头)。PROFILE.md 不承载流水,仅留一行指针——
 Evolution log 是无界流水、PROFILE 是有界快照,本性不同故分文件。这是长寿、可跨会话复用的演进记忆,区别于

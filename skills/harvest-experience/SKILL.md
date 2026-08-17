@@ -10,15 +10,15 @@ allowed-tools:
 这个 skill 让本地 CLI 会话和 capital-agent 知识层形成闭环：**登记会话 → 注入 → 编码 → 沉淀 → 结束**。
 它不改变正常编码方式，只补充轻量元数据事件；绝不上传代码正文。
 
-前置：MCP server `capital-agent` 已在本 CLI 注册（提供 `enrich_context`、`record_experience`、`search_knowledge` 等工具）。若工具临时不可用，正常编码继续，但本轮已经形成的 Task/Artifact/Delivery/Experience/Skill Event 元数据必须进入 `.cap/outbox.jsonl`，不能静默丢失。
+前置：MCP server `capital-agent` 已在本 CLI 注册（提供 `enrich_context`、`record_experience`、`search_knowledge` 等工具）。必须区分两种失败：团队模式已配置但当前会话根本没有暴露 MCP 工具时，按 `cap-status.mode=restart_required` 让用户选择重启或本次本地继续；本地继续返回 `local_fallback_explicit`，本 Skill 整体跳过且不写 Outbox。MCP 工具已经加载、但远端调用临时失败时，正常编码可离线继续，本轮已经形成的 Task/Artifact/Delivery/Experience/Skill Event 元数据必须进入 `.cap/outbox.jsonl`，不能静默丢失。
 
-若 `scripts/cap-status.mjs` 返回 `mode=local_explicit`（配置 `CAPITAL_AGENT_MODE=local`），本 Skill 整体跳过：不登记平台会话、不调用 MCP、不创建 Task / Artifact / Delivery / Experience 事件，也不写或重放 Outbox。`.cap/` 文件与 Git 历史仍作为本地项目记忆；本地测试和评审结论不得包装成 Server Gate。
+若 `scripts/cap-status.mjs` 返回 `mode=local_explicit`（配置 `CAPITAL_AGENT_MODE=local`）或 `mode=local_fallback_explicit`（用户只为本次任务明确本地继续），本 Skill 整体跳过：不登记平台会话、不调用 MCP、不创建 Task / Artifact / Delivery / Experience 事件，也不写或重放 Outbox。`.cap/` 文件与 Git 历史仍作为本地项目记忆；本地测试和评审结论不得包装成 Server Gate。
 
 ## 1. 会话开始 —— 登记 + 注入
 
 若当前目录属于 Git 仓库，开始实质工作前静默运行仓库自带的 `scripts/install-git-governance.mjs`（从本 skill 所属 package 根定位）。它幂等安装 `prepare-commit-msg`，保留并先执行项目原 Hook，把 `.cap/STATE.md` 中有效的 Task/Session 自动追加到 Commit，并在代码提交时检查 `.cap` 研发产物没有被遗漏或本地 exclude；安装失败时降级，不阻塞编码。不要要求用户手工安装或理解 Hook。
 
-若 MCP 提供 `create_or_attach_task`，优先按 `references/platform-task-loop.md` 创建/复用统一 Task；把返回的 `task_id`、`session_id` 写入 `.cap/STATE.md`。当 `cap-status` 已解析出活动 follow-up Task 时，必须切换到该 Task 并新建 Session，不能沿用已结束父 Task 的 session_id。仅当该工具不存在时才退回 `start_skill_session`。工具不可用时降级为原有流程，不阻塞编码。
+若 MCP 提供 `create_or_attach_task`，优先按 `references/platform-task-loop.md` 创建/复用统一 Task；把返回的 `task_id`、`session_id` 写入 `.cap/STATE.md`。当 `cap-status` 已解析出活动 follow-up Task 时，必须切换到该 Task 并新建 Session，不能沿用已结束父 Task 的 session_id。仅当已加载的兼容 MCP 只提供旧接口时才退回 `start_skill_session`。团队模式下 MCP 工具集合完全缺失属于 `restart_required`；用户选择本次本地继续后整体跳过本 Skill，工具存在但调用失败才进入离线流程。
 
 在开始实质编码前，用本次任务的意图调用一次 MCP 工具 `enrich_context`：
 
@@ -90,7 +90,7 @@ git diff --name-only HEAD    # 未提交改动
 - 记录 `experience_recorded`，artifact_refs 只放知识文档 ID。
 - 记录 `session_finished`，data 放 verify/review 的结构化结论，不放代码正文。
 
-若 MCP 提供 `record_task_artifact`，按 `references/platform-task-loop.md` 补登记本轮 `.cap` 产物元数据。只传相对路径、hash、Git ref 和结构化摘要；不传文件正文。无 task-id、工具不存在或调用失败时静默降级。
+若 MCP 提供 `record_task_artifact`，按 `references/platform-task-loop.md` 补登记本轮 `.cap` 产物元数据。只传相对路径、hash、Git ref 和结构化摘要；不传文件正文。已经通过入口握手后，无 task-id、旧 MCP 缺少该单个接口或调用失败时按离线规则降级；完整 MCP 工具集未加载时必须先完成 `restart_required` 选择，本次本地模式不会走到这里。
 Task 完成并严格退场后，额外登记 `.cap/history/<task-id>` 的历史快照元数据与父 Task 引用；历史正文仍只留在 Git 仓库，不上传平台。
 
 若已有有效 Git Commit 且 MCP 提供 `record_task_delivery`，按 `references/platform-task-loop.md` 自动回写 Commit、改动文件路径、verify/review。HEAD 已推送且门禁满足时，再调用 `request_docker_verification`；不得上传未提交工作区或代码正文。

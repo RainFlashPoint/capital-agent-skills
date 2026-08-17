@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -116,6 +116,16 @@ test('installs one managed activation block without overwriting user instruction
   assert.equal(content.split('capital-agent:auto-activation:start').length - 1,1)
   assert.equal(await hasActivationRule(target),true)
   assert.match(activationRuleBlock,/纯问答.*不创建平台 Task/)
+  assert.match(activationRuleBlock,/restart_required/)
+  assert.match(activationRuleBlock,/本次明确改用本地模式继续/)
+  assert.match(activationRuleBlock,/--allow-local-once/)
+})
+
+test('installation and upgrade tell users that an already open client cannot hot-load MCP', () => {
+  const notice = clientRestartNotice()
+  assert.match(notice,/完全退出并重新打开/)
+  assert.match(notice,/新建任务/)
+  assert.match(notice,/分支和工作区改动不会丢失/)
 })
 test('installs an idempotent Cursor always-on rule without replacing other rules', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-cursor-rule-'))
