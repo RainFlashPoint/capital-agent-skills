@@ -12,6 +12,7 @@ export function isSensitiveRiskRejection(value = '') {
 
 export function sanitizeTaskText(value = '') {
   return String(value)
+    .replace(/(https?:\/\/)[^@\s/]+@/gi, '$1')
     .replace(LABELED_SECRET, '$1[仅本地配置]')
     .replace(CREDENTIAL_ASSIGNMENT, '$1=[仅本地配置]')
     .replace(/\s+/g, ' ')

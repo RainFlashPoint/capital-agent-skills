@@ -17,7 +17,7 @@ description: >
 
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
-你正在执行研发主线的**发布阶段**。改动已过 review(STATE 里 `cap-gate: PASS`),现在由你把它**逐级晋级**
+你正在执行研发主线的**发布阶段**。显式 local / local-only 仓使用与当前 HEAD 一致的本地 `cap-gate`；团队模式必须由 Server canonical state 证明同一 Commit 的 Review Action 已通过。现在由你把它**逐级晋级**
 安全送上线。两条铁律贯穿全程:
 
 1. **每升一级先过门,过不了就回滚**——deploy 完立刻 smoke/health,不健康就切回上一个好版本。
@@ -61,13 +61,12 @@ deploy / promote / rollback **一律串行 inline**,一次只推一处。
 
 | 条件 | 检查 | 不满足 |
 |---|---|---|
-| **review 已 PASS** | STATE 里有 `cap-gate: PASS reviewed-head=<当前 HEAD 完整 sha>` | 回 `cap-review`(没评审过不发布) |
+| **review 已 PASS** | local/local-only：STATE 有 `cap-gate: PASS reviewed-head=<当前 HEAD>`；team/server：Server currentCommit=HEAD 且 Review Action succeeded | 回 `cap-review`(没可信评审证据不发布) |
 | **verify 已收口** | STATE.stage 已过 review / verify 通过 | 先完成 verify |
 | **改动已提交** | 工作树干净、HEAD 即要发布的版本 | 先提交 |
 | **知道往哪发** | 能从 `PROFILE.Deploy` 或目标仓读到部署目标类型 | 走 §2 探测;探不到 → 编号文本问用户 |
 
-> **`cap-gate` 与 HEAD 不符**(评审后又改了码)→ **停**,回 review 重审。发布的必须是被评审过的那个 sha。
-> 这正是 pre-push hook 对受保护分支核对的那行：reviewed-head 对不上当前 HEAD 时禁止生产晋级；开发/测试分支可先交付代码完成环境验证。
+> 本地 `cap-gate` 或 Server Action 的 source commit 与 HEAD 不符(评审后又改了码)→ **停**,回 review 重审。团队模式的受保护分支不接受 STATE 文本自证，由 Server Gate 负责晋级。
 
 ---
 
@@ -145,7 +144,7 @@ deploy / promote / rollback **一律串行 inline**,一次只推一处。
 | 文件 | 动作 | 说明 |
 |---|---|---|
 | `<repo>/.cap/PROFILE.md` | **读** | `## Deploy` 节(目标类型 + 配置位置);本阶段不写 PROFILE |
-| `<repo>/.cap/STATE.md` | **读 + 经 cap-flow 写**(单写者) | 读 `cap-gate` 入口门;本阶段输出 `## HANDOFF`,由 cap-flow 写 stage=release/done、release 进度、Decisions |
+| `<repo>/.cap/STATE.md` | **读 + 经 cap-flow 写**(单写者) | local/local-only 读 `cap-gate`；team/server 只读其中的 Server Gate 镜像并核对 canonical Action；本阶段输出 `## HANDOFF`,由 cap-flow 写 stage=release/done、release 进度、Decisions |
 | `<repo>/.cap/release/<release>-report.md` | **写** | 本次发布报告:各环境晋级时间 / 证据 / 指标 / 回滚(若有) |
 | `cap-release/targets/<type>.md` | **读**(本阶段目录) | 目标类型命令骨架 + 回滚骨架 |
 | `cap-flow/references/deployment-patterns.md` · `languages/*` | **读** | 方法论 / build 命令 |

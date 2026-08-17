@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -126,6 +126,34 @@ test('installation and upgrade tell users that an already open client cannot hot
   assert.match(notice,/完全退出并重新打开/)
   assert.match(notice,/新建任务/)
   assert.match(notice,/分支和工作区改动不会丢失/)
+})
+
+test('installation manifest records source commit, version and managed file hashes, then doctor detects drift', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'cap-install-manifest-'))
+  const source = join(home, 'capital-agent-skills')
+  await mkdir(join(source, 'skills', 'cap'), { recursive: true })
+  await mkdir(join(source, 'scripts'), { recursive: true })
+  await mkdir(join(source, '.claude-plugin'), { recursive: true })
+  await writeFile(join(source, 'skills', 'cap', 'SKILL.md'), '# cap\n')
+  await writeFile(join(source, 'scripts', 'setup.mjs'), '// setup\n')
+  await writeFile(join(source, '.claude-plugin', 'plugin.json'), '{"version":"0.6.6"}\n')
+  await writeInstallManifest(home, source)
+  const installed = await inspectInstallManifest(home, source)
+  assert.equal(installed.ok, true)
+  assert.equal(installed.recorded.version, '0.6.6')
+  assert.ok(installed.recorded.sourceCommit)
+  assert.ok(installed.recorded.files.some(item => item.path === 'skills/cap/SKILL.md' && item.sha256))
+  await writeFile(join(source, 'skills', 'cap', 'SKILL.md'), '# stale cap\n')
+  const drifted = await inspectInstallManifest(home, source)
+  assert.equal(drifted.ok, false)
+  assert.equal(drifted.reason, 'file_manifest_drift')
+  assert.deepEqual(drifted.changedFiles, ['skills/cap/SKILL.md'])
+})
+
+test('MCP wrapper keeps the user key out of child process arguments', async () => {
+  const source = await readFile(new URL('./mcp-remote.mjs', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /x-user-key:\$\{userKey\}/)
+  assert.match(source, /x-user-key:\$\{CAPITAL_AGENT_MCP_USER_KEY\}/)
 })
 test('installs an idempotent Cursor always-on rule without replacing other rules', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-cursor-rule-'))

@@ -104,6 +104,37 @@ test('pre-push blocks protected branch without a complete review gate', async ()
   assert.match(`${result.stdout}${result.stderr}`, /受保护分支/)
 })
 
+test('team mode rejects a protected push even when STATE self-signs PASS', async () => {
+  const repo = await fixtureRepo('cap-pre-push-self-signed-'); const home = await mkdtemp(join(tmpdir(), 'cap-pre-push-home-'))
+  await mkdir(join(repo, '.cap'), { recursive: true }); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  const sha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
+  await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_demo\ncap-gate: PASS reviewed-head=${sha}\n`)
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\n')
+  const result = spawnSync('sh', [join(root, 'skills/cap-flow/references/templates/hooks/pre-push')], {
+    cwd: repo,
+    input: `refs/heads/main ${sha} refs/heads/main 0000000000000000000000000000000000000000\n`,
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, CAPITAL_AGENT_MODE: 'server' },
+  })
+  assert.equal(result.status, 1)
+  assert.match(`${result.stdout}${result.stderr}`, /Server Gate/)
+})
+
+test('explicit local mode may use an exact reviewed HEAD for protected push', async () => {
+  const repo = await fixtureRepo('cap-pre-push-local-'); const home = await mkdtemp(join(tmpdir(), 'cap-pre-push-local-home-'))
+  await mkdir(join(repo, '.cap'), { recursive: true }); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  const sha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
+  await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_demo\ncap-gate: PASS reviewed-head=${sha}\n`)
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=local\n')
+  const result = spawnSync('sh', [join(root, 'skills/cap-flow/references/templates/hooks/pre-push')], {
+    cwd: repo,
+    input: `refs/heads/main ${sha} refs/heads/main 0000000000000000000000000000000000000000\n`,
+    encoding: 'utf8', env: { ...process.env, HOME: home, CAPITAL_AGENT_MODE: 'local' },
+  })
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`)
+  assert.match(result.stdout, /verify \+ review 均通过/)
+})
+
 async function fixtureRepo(prefix) {
   const repo = await mkdtemp(join(tmpdir(), prefix))
   run(repo, 'git', ['init', '-b', 'main'])

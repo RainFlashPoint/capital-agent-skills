@@ -1,8 +1,7 @@
 #!/bin/sh
 # cap-flow pre-push 检查
-# 作用：开发/测试分支允许先交付代码供环境验证；受保护分支仍要求 verify + review 全过。
-# 纯 shell —— 不调用任何 AI、不需要任何密钥(评审由你在本地用 /cap 跑到 review 阶段，
-#            它会把结论写进 .cap/STATE.md；本 hook 只核对那行结论)。
+# 作用：开发/测试分支允许先交付代码供环境验证；受保护分支按运行模式收紧。
+# 团队模式的可信 Gate 来自 Server Action，STATE 只是可编辑游标，不能自签放行受保护分支。
 # 绕过(明知故犯)：git push --no-verify
 #
 # 安装：由 cap-understand 的"脚手架自检"主动询问后拷到 .git/hooks/pre-push 并 chmod +x，
@@ -46,6 +45,15 @@ if [ -z "$PROTECTED_TARGET" ]; then
   exit 0
 fi
 
+CONFIG_MODE=$(sed -n 's/^CAPITAL_AGENT_MODE=//p' "${HOME:-}/.config/capital-agent/env" 2>/dev/null | tail -1)
+EFFECTIVE_MODE=${CAPITAL_AGENT_MODE:-$CONFIG_MODE}
+HARNESS_MODE=$(sed -n 's/^harness-mode:[[:space:]]*//p' .cap/PROFILE.md 2>/dev/null | tail -1 | tr '[:upper:]' '[:lower:]')
+if [ "$EFFECTIVE_MODE" != "local" ] && [ "$HARNESS_MODE" != "local-only" ]; then
+  echo "✗ cap: 目标 ${PROTECTED_TARGET} 是受保护分支；团队模式禁止用可编辑 STATE 自证 Server Gate。"
+  echo "  请推送研发分支，由绑定精确 Action ID 与 Commit 的 Server Gate 完成晋级。"
+  exit 1
+fi
+
 if [ ! -f "$STATE" ]; then
   # 无 STATE 有两种情形:① 特性已退场,history/archive 有快照=合法收尾;② 从没走过 cap 流程。
   if [ -n "$(ls -A .cap/history 2>/dev/null)" ] || [ -n "$(ls -A .cap/archive 2>/dev/null)" ]; then
@@ -58,7 +66,7 @@ if [ ! -f "$STATE" ]; then
   exit 1
 fi
 
-# 契约：cap-review 全部通过时，会向 STATE 写入恰好一行：
+# 本地显式模式 / local-only 维护仓契约：cap-review 全部通过时，会向 STATE 写入恰好一行：
 #   cap-gate: PASS reviewed-head=<被评审的 commit sha>
 # 未通过/被门控时写 BLOCK。本 hook 只认这行。
 GATE_LINE=$(grep -iE '^cap-gate:' "$STATE" | tail -1)

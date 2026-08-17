@@ -119,9 +119,12 @@ class CoverageLintTest(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
-def run_retire(*args):
+def run_retire(*args, env=None):
+    process_env = os.environ.copy()
+    if env:
+        process_env.update(env)
     r = subprocess.run([sys.executable, INTAKE, "retire", *args],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=process_env)
     return r
 
 
@@ -205,6 +208,86 @@ class RetireTest(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(cap, "STATE.md")))
             self.assertFalse(os.path.exists(os.path.join(cap, "history", "task_123")))
 
+    def test_legacy_manifest_path_traversal_is_rejected_without_deleting_repository(self):
+        with tempfile.TemporaryDirectory() as repo:
+            cap = os.path.join(repo, ".cap")
+            archive = os.path.join(cap, "history", "task_attack")
+            os.makedirs(archive)
+            marker = os.path.join(repo, "keep", "data.txt")
+            os.makedirs(os.path.dirname(marker))
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write("keep")
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_attack\n")
+            manifest = {
+                "schemaVersion": 1, "taskId": "task_attack", "parentTaskId": "", "title": "attack",
+                "intentSummary": "", "keywords": [], "branch": "main", "baseCommit": "abc",
+                "deliveryCommit": "def", "completedAt": "2026-08-17", "status": "completed",
+                "artifacts": [{"path": "../keep/data.txt", "sha256": "invalid", "size": 4}],
+            }
+            with open(os.path.join(archive, "manifest.json"), "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+            r = run_retire("--cap", cap, "--slug", "attack", "--date", "2026-08-17",
+                           "--task-id", "task_attack", "--delivery-commit", "def",
+                           "--gate-status", "passed", "--strict")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertTrue(os.path.isfile(marker))
+
+    def test_legacy_manifest_cannot_retire_another_active_task(self):
+        with tempfile.TemporaryDirectory() as cap:
+            archive = os.path.join(cap, "history", "task_audit")
+            os.makedirs(archive)
+            archived_spec = os.path.join(archive, "spec.md")
+            with open(archived_spec, "w", encoding="utf-8") as f:
+                f.write("archived")
+            with open(os.path.join(cap, "spec.md"), "w", encoding="utf-8") as f:
+                f.write("current")
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: implement\ntask-id: task_other\n")
+            manifest = {
+                "schemaVersion": 1, "taskId": "task_audit", "parentTaskId": "", "title": "audit",
+                "intentSummary": "", "keywords": [], "branch": "main", "baseCommit": "abc",
+                "deliveryCommit": "def", "completedAt": "2026-08-17", "status": "completed",
+                "artifacts": [{"path": "spec.md", "sha256": intake._sha256(archived_spec), "size": 8}],
+            }
+            with open(os.path.join(archive, "manifest.json"), "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+            r = run_retire("--cap", cap, "--slug", "audit", "--date", "2026-08-17",
+                           "--task-id", "task_audit", "--gate-status", "pending", "--strict")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertEqual(_read(os.path.join(cap, "spec.md")), "current")
+            self.assertIn("task_other", _read(os.path.join(cap, "STATE.md")))
+
+    def test_retirement_transaction_cannot_expand_manifest_cleanup_scope(self):
+        with tempfile.TemporaryDirectory() as cap:
+            archive = os.path.join(cap, "history", "task_123")
+            os.makedirs(archive)
+            archived_spec = os.path.join(archive, "spec.md")
+            with open(archived_spec, "w", encoding="utf-8") as f:
+                f.write("archived")
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            manifest = {
+                "schemaVersion": 1, "taskId": "task_123", "parentTaskId": "", "title": "test",
+                "intentSummary": "", "keywords": [], "branch": "main", "baseCommit": "abc",
+                "deliveryCommit": "def", "completedAt": "2026-08-17", "status": "completed",
+                "artifacts": [{"path": "spec.md", "sha256": intake._sha256(archived_spec), "size": 8}],
+            }
+            transaction = {
+                "schemaVersion": 1, "phase": "snapshot", "copied": ["spec.md", "STATE.md"],
+                "historyMode": True,
+                "request": {"taskId": "task_123", "leaf": "", "reqRootRelative": "", "evolutionEntry": ""},
+            }
+            with open(os.path.join(archive, "manifest.json"), "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+            with open(os.path.join(archive, "retirement.json"), "w", encoding="utf-8") as f:
+                json.dump(transaction, f)
+            r = run_retire("--cap", cap, "--slug", "test", "--date", "2026-08-17",
+                           "--task-id", "task_123", "--delivery-commit", "def",
+                           "--gate-status", "passed", "--strict")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+
     def test_task_history_retire_is_idempotent(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap)
@@ -218,6 +301,44 @@ class RetireTest(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertTrue(json.loads(second.stdout)["idempotent"])
+
+    def test_retire_recovers_every_transaction_phase_without_duplicate_backflow(self):
+        for phase in ("snapshot", "cleanup", "index", "leaf", "backflow"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as cap:
+                req = os.path.join(cap, "requirements")
+                os.makedirs(req)
+                write_leaf(req, "order.checkout.a")
+                _make_cap(cap)
+                with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                    f.write("stage: done\ntask-id: task_123\n")
+                entry = "- 2026-08-17 · feat · 可恢复退场"
+                args = ("--cap", cap, "--slug", "feat", "--date", "2026-08-17",
+                        "--task-id", "task_123", "--delivery-commit", "deadbeef",
+                        "--gate-status", "passed", "--strict",
+                        "--leaf", "order.checkout.a", "--req-root", req,
+                        "--evolution-entry", entry)
+                interrupted = run_retire(*args, env={"CAP_RETIRE_FAIL_AFTER": phase})
+                self.assertNotEqual(interrupted.returncode, 0, interrupted.stdout)
+                recovered = run_retire(*args)
+                self.assertEqual(recovered.returncode, 0, recovered.stderr)
+                result = json.loads(recovered.stdout)
+                self.assertTrue(result["recovered"])
+                history = os.path.join(cap, "history", "task_123")
+                with open(os.path.join(history, "retirement.json"), encoding="utf-8") as f:
+                    transaction = json.load(f)
+                self.assertEqual(transaction["phase"], "complete")
+                self.assertEqual(transaction["request"]["reqRootRelative"], "requirements")
+                self.assertNotIn(cap, json.dumps(transaction, ensure_ascii=False))
+                self.assertTrue(os.path.isfile(os.path.join(cap, "history", "index", "task_123.json")))
+                self.assertFalse(os.path.exists(os.path.join(cap, "STATE.md")))
+                leaf = _read(os.path.join(req, "order", "checkout", "order.checkout.a.md"))
+                self.assertIn("status: shipped", leaf)
+                self.assertEqual(leaf.count("可恢复退场"), 1)
+                evolution = _read(os.path.join(cap, "EVOLUTION.md"))
+                self.assertEqual(evolution.count("可恢复退场"), 1)
+                repeated = run_retire(*args)
+                self.assertEqual(repeated.returncode, 0, repeated.stderr)
+                self.assertTrue(json.loads(repeated.stdout)["idempotent"])
 
     def test_archives_and_clears(self):
         with tempfile.TemporaryDirectory() as cap:

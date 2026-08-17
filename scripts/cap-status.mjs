@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkPlatformHandshake, normalizeServerUrl } from './setup-lib.mjs'
-import { flushPendingDeliveries, readHarnessMode } from './client-delivery.mjs'
+import { flushPendingDeliveries, readHarnessMode, sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { inspectOutbox } from './cap-outbox.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
 
@@ -122,7 +122,7 @@ export function inspectTaskBoundary({ stateText = '', branch = '', worktree = ''
   }
 }
 
-export function resolveNextAction({ stateText = '', artifacts = {}, dirty = false } = {}) {
+export function resolveNextAction({ stateText = '', artifacts = {}, dirty = false, allowStateGate = true } = {}) {
   if (!stateText) {
     return artifacts.profile
       ? { stage: 'define', action: '需求确认', reason: '尚无任务 STATE，已有项目画像' }
@@ -149,8 +149,10 @@ export function resolveNextAction({ stateText = '', artifacts = {}, dirty = fals
     case 'implement':
       return checked(stateText, 'implementation (green)') || dirty ? { stage: 'test', action: '测试验证', reason: dirty ? '检测到代码改动' : '实现门已通过' } : { stage, action: '编码实现', reason: '尚无完成实现的证据' }
     case 'test':
+      if (!allowStateGate) return { stage: 'test', action: '等待 Server Test Action', reason: '团队模式只接受绑定精确 Commit 的 Server Action 证据', gated: true }
       return checked(stateText, 'test：logic') || checked(stateText, 'test: logic') ? { stage: 'review', action: '代码评审', reason: '基础验证已通过' } : { stage, action: '测试验证', reason: '仍需形成通过的验证证据' }
     case 'review':
+      if (!allowStateGate) return { stage: 'review', action: '等待 Server Review Action', reason: '团队模式只接受绑定精确 Commit 的 Server Action 证据', gated: true }
       return /cap-gate:\s*pass/i.test(stateText) || checked(stateText, 'review') ? { stage: 'release', action: '交付收口', reason: '评审门已通过' } : { stage, action: '代码评审', reason: '评审门尚未通过' }
     case 'release': return { stage: 'done', action: '完成退场', reason: '进入交付收口' }
     case 'done': return { stage: 'done', action: '归档并沉淀经验', reason: '任务已完成' }
@@ -162,7 +164,7 @@ export function stageLabel(stage = '') {
   return ({ understand: '项目了解', define: '需求确认', plan: '开发计划', implement: '编码实现', test: '测试验证', review: '代码评审', release: '交付收口', done: '完成退场' })[stage] || '项目了解'
 }
 
-export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fetchImpl = fetch, offline = false, environment = process.env, mcpRuntime = 'unknown', allowLocalFallback = false } = {}) {
+export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fetchImpl = fetch, offline = false, environment = {}, mcpRuntime = 'unknown', allowLocalFallback = false } = {}) {
   const repo = resolve(repoRoot)
   const configPath = join(homeDir, '.config/capital-agent/env')
   const configText = await readFile(configPath, 'utf8').catch(() => '')
@@ -178,7 +180,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const head = git(repo, ['rev-parse', 'HEAD'])
   const upstream = git(repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
   const upstreamHead = upstream ? git(repo, ['rev-parse', upstream]) : ''
-  const remote = git(repo, ['remote', 'get-url', 'origin'])
+  const remote = sanitizeRepositoryUrl(git(repo, ['remote', 'get-url', 'origin']))
   const dirty = Boolean(git(repo, ['status', '--porcelain']))
   const statePath = join(repo, '.cap/STATE.md')
   const stateText = await readFile(statePath, 'utf8').catch(() => '')
@@ -210,7 +212,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
   const pendingDeliveries = gitRoot && !offline && !localRun && !restartRequired && !boundary.blocked ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
   const outbox = gitRoot && !localRun ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
-  const localNext = resolveNextAction({ stateText, artifacts, dirty })
+  const localNext = resolveNextAction({ stateText, artifacts, dirty, allowStateGate: localRun || harnessMode === 'local-only' })
   const localStage = canonicalStage(field(stateText, 'stage'))
   const next = switchingTask
     ? nextFromPlatformTask(remoteTask, localNext)
@@ -347,6 +349,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
     if (argv[index] === '--mcp-runtime') { index += 1; continue }
     if (!argv[index].startsWith('-')) { repoArg = argv[index]; break }
   }
-  const result = await inspectCapStatus({ repoRoot: repoArg, offline, mcpRuntime, allowLocalFallback })
+  const result = await inspectCapStatus({ repoRoot: repoArg, offline, mcpRuntime, allowLocalFallback, environment: process.env })
   process.stdout.write(json ? `${JSON.stringify(result, null, 2)}\n` : `${render(result)}\n`)
 }

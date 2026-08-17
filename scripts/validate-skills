@@ -19,7 +19,7 @@ contains_old_skill_name(){
 }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/cap-flow/scripts/cap-context-guard" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -64,6 +64,8 @@ for old in cap-map cap-shape cap-build cap-verify; do
   if contains_old_skill_name "$old"; then err "仍存在旧 Skill 名: $old"; fi
 done
 grep -q 'stage: understand | define | plan | implement | test | review | release | done' "$REF/templates/STATE.md" || err "STATE 阶段枚举未迁移"
+grep -q 'cap-review → cap-release.*→ 退场' "$ROOT/cap-flow/SKILL.md" || err "主线顺序必须为 review → release → 退场"
+grep -q 'stage=release；只有 cap-release 完成后才 stage=done' "$ROOT/cap-review/SKILL.md" || err "Review PASS 不得跳过 Release 直接 done"
 ok "阶段协议迁移检查完成"
 
 echo "== 4.3 progress and repository reconnaissance =="
@@ -91,6 +93,12 @@ grep -q 'history/<task-id>' "$REF/intake.md" || err "Retire 未切换到按 Task
 grep -q 'Server Gate PASS' "$REF/intake.md" || err "Retire 未要求权威 Gate 后退场"
 grep -q '不得停在口头承诺' "$REF/progress-protocol.md" || err "进度协议未强制真实执行"
 grep -q 'External operation boundary' "$REF/task-reconnaissance.md" || err "task-context 未记录外部操作边界"
+for fingerprint in index-fingerprint worktree-fingerprint untracked-fingerprint; do
+  grep -q "$fingerprint" "$REF/task-reconnaissance.md" || err "task-context 未记录 $fingerprint"
+done
+grep -q 'canonical Git root' "$REF/task-reconnaissance.md" || err "Context Guard 未声明从 canonical Git root 执行"
+grep -q 'retirement.json' "$REF/intake.md" || err "Retire 未声明可恢复 phase 事务"
+grep -q 'install-manifest.json' README.md || err "README 未说明安装源码漂移诊断"
 grep -q 'External operation authorization' "$REF/templates/STATE.md" || err "STATE 未跨会话保存授权边界"
 ok "进度与代码侦察协议检查完成"
 
@@ -145,6 +153,16 @@ grep -q 'CAPITAL_AGENT_MODE=local' scripts/setup.mjs || err "setup 未持久化�
 grep -q 'local_explicit' scripts/cap-status.mjs || err "cap-status 未实现显式本地状态"
 grep -q -- '--local' README.md || err "README 未公开本地安装命令"
 ok "显式本地运行模式检查完成"
+
+echo "== 4.3.4 P0 运行边界与发布门禁 =="
+[ -x scripts/release-check ] || err "缺少可执行的 scripts/release-check"
+grep -q 'effectiveMode.*local' scripts/post-commit.mjs || err "post-commit 未在持久 local 模式硬退出"
+grep -q 'outbox_lock_timeout' scripts/cap-outbox.mjs || err "Outbox 未实现跨进程写锁"
+grep -q 'outbox_symlink_not_allowed' scripts/cap-outbox.mjs || err "Outbox 未拒绝软链逃逸"
+grep -q 'SANDBOX_UNAVAILABLE' runtime/local-test-provider.mjs || err "本地 Provider 未对缺失沙箱 fail-closed"
+grep -q 'CAPITAL_AGENT_MCP_USER_KEY' scripts/mcp-remote.mjs || err "MCP user key 未移出 argv"
+grep -q '团队模式禁止用可编辑 STATE 自证 Server Gate' "$REF/templates/hooks/pre-push" || err "团队 pre-push 仍允许 STATE 自签 Gate"
+ok "P0 运行边界与发布门禁检查完成"
 
 echo "== 4.4 external integration safety invariants =="
 SERVER_ROLE="$REF/roles/server-dev.md"

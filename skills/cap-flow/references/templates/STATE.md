@@ -42,9 +42,9 @@ history-artifact-root: <退场后为 .cap/history/<task-id>，活动期间为空
 owner: <本特性的人类归属：当初需求确认/计划拍板的人；缺省 (none)>   # 归因用；退场随数据点吐出
 runner: <谁执行本轮：人跑=<operator>，无头/夜间自治=night-factory>   # 与 owner 分记；A/B 时切分人机产出。见 headless-policy.md §3
 updated: <时间戳，由调用方传入，例如 2026-06-04T15:30>
-task-context: .cap/task-context.md @ <调查时 HEAD 或 working-tree>   # 意图/分支/HEAD 变化时刷新
+task-context: .cap/task-context.md @ <调查时 HEAD 或 working-tree>   # 意图/分支/HEAD/index/worktree/untracked 任一变化时刷新
 verify-checks: [logic, journey, model]   # 本次运行从 diff 动态解析；未进入 verify 前可留 []
-cap-gate: <未设置>   # cap-review 全过(verdict=PASS)时写 `PASS reviewed-head=<HEAD的sha>`，否则写 `BLOCK`。本地 pre-push hook(若装)只认这一行来决定放不放行 push。
+cap-gate: <未设置>   # local/local-only：cap-review 全过时可写 `PASS reviewed-head=<HEAD的sha>`，本地 pre-push hook据此放行；team/server：这里只镜像状态，受保护分支以 Server 同一 Commit 的 canonical Review Action 为准，不接受 STATE 自签。
 delivery-status: NOT_DELIVERED | CODE_DELIVERED | ENV_PENDING | ENV_VERIFIED | ENV_BLOCKED
 delivery-head: <最近一次已通过 record_task_delivery 登记的完整 Git SHA；尚未登记则留空>
 deferred-only: false   # true 表示核心验收已通过，下面只剩可独立拆分的延期项；不得再用 gated 阻塞当前 Task

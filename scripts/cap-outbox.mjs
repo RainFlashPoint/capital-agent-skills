@@ -1,13 +1,32 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export const OUTBOX_TYPES = new Set(['task.attach', 'artifact.record', 'delivery.record', 'action.create:test', 'action.create:review', 'experience.record', 'skill.event'])
 const text = (value, max = 4000) => String(value ?? '').trim().slice(0, max)
-const outboxPath = repoRoot => join(resolve(repoRoot), '.cap/outbox.jsonl')
+const delay = ms => new Promise(resolvePromise => setTimeout(resolvePromise, ms))
+
+function containedBy(parent, child) {
+  const rel = relative(parent, child)
+  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+}
+
+async function resolveOutboxPaths(repoRoot = '.') {
+  const repo = await realpath(resolve(repoRoot)).catch(() => { throw new Error('outbox_repo_not_found') })
+  const cap = join(repo, '.cap')
+  const before = await lstat(cap).catch(() => null)
+  if (before?.isSymbolicLink()) throw new Error('outbox_symlink_not_allowed:.cap')
+  await mkdir(cap, { recursive: true, mode: 0o700 })
+  const canonicalCap = await realpath(cap)
+  if (!containedBy(repo, canonicalCap)) throw new Error('outbox_path_not_contained:.cap')
+  const path = join(canonicalCap, 'outbox.jsonl')
+  const current = await lstat(path).catch(() => null)
+  if (current?.isSymbolicLink()) throw new Error('outbox_symlink_not_allowed:outbox.jsonl')
+  return { repo, cap: canonicalCap, path, lock: join(canonicalCap, '.outbox.lock') }
+}
 
 function stableKey(input = {}) {
   const explicit = text(input.idempotencyKey || input.idempotency_key, 500)
@@ -38,27 +57,72 @@ function normalizeEvent(input = {}, now = new Date().toISOString()) {
   }
 }
 
-async function writeEvents(repoRoot, rows) {
-  const path = outboxPath(repoRoot)
-  await mkdir(dirname(path), { recursive: true })
-  const temp = `${path}.tmp`
-  await writeFile(temp, rows.map(item => JSON.stringify(item)).join('\n') + (rows.length ? '\n' : ''))
-  await rename(temp, path)
+async function acquireLock(paths, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      await mkdir(paths.lock, { mode: 0o700 })
+      const owner = await open(join(paths.lock, 'owner.json'), 'wx', 0o600)
+      await owner.writeFile(`${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`)
+      await owner.close()
+      return async () => rm(paths.lock, { recursive: true, force: true })
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+      const lockStat = await stat(paths.lock).catch(() => null)
+      if (lockStat && Date.now() - lockStat.mtimeMs > 30_000) {
+        await rm(paths.lock, { recursive: true, force: true }).catch(() => {})
+        continue
+      }
+      await delay(10 + Math.floor(Math.random() * 20))
+    }
+  }
+  throw new Error('outbox_lock_timeout')
+}
+
+async function writeEvents(paths, rows) {
+  const temp = `${paths.path}.${process.pid}.${randomUUID()}.tmp`
+  const body = rows.map(item => JSON.stringify(item)).join('\n') + (rows.length ? '\n' : '')
+  const handle = await open(temp, 'wx', 0o600)
+  try {
+    await handle.writeFile(body)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  try {
+    await rename(temp, paths.path)
+    const directory = await open(dirname(paths.path), 'r')
+    try { await directory.sync() } finally { await directory.close() }
+  } finally {
+    await rm(temp, { force: true }).catch(() => {})
+  }
+}
+
+async function readOutboxUnlocked(paths) {
+  const raw = await readFile(paths.path, 'utf8').catch(error => error?.code === 'ENOENT' ? '' : Promise.reject(error))
+  const rows = []
+  for (const [index, line] of raw.split(/\r?\n/).entries()) {
+    if (!line) continue
+    try { rows.push(normalizeEvent(JSON.parse(line))) } catch { throw new Error(`outbox_corrupt_line:${index + 1}`) }
+  }
+  return rows
 }
 
 export async function readOutbox(repoRoot = '.') {
-  const raw = await readFile(outboxPath(repoRoot), 'utf8').catch(() => '')
-  return raw.split(/\r?\n/).filter(Boolean).map(line => { try { return normalizeEvent(JSON.parse(line)) } catch { return null } }).filter(Boolean)
+  return readOutboxUnlocked(await resolveOutboxPaths(repoRoot))
 }
 
 export async function enqueueOutboxEvent(repoRoot = '.', input = {}) {
-  const rows = await readOutbox(repoRoot)
-  const event = normalizeEvent(input)
-  const existing = rows.find(item => item.idempotencyKey === event.idempotencyKey)
-  if (existing) return { event: existing, idempotent: true, pending: rows.length }
-  rows.push(event)
-  await writeEvents(repoRoot, rows)
-  return { event, idempotent: false, pending: rows.length }
+  const paths = await resolveOutboxPaths(repoRoot); const release = await acquireLock(paths)
+  try {
+    const rows = await readOutboxUnlocked(paths)
+    const event = normalizeEvent(input)
+    const existing = rows.find(item => item.idempotencyKey === event.idempotencyKey)
+    if (existing) return { event: existing, idempotent: true, pending: rows.length }
+    rows.push(event)
+    await writeEvents(paths, rows)
+    return { event, idempotent: false, pending: rows.length }
+  } finally { await release() }
 }
 
 export function buildReplayPlan(rows = []) {
@@ -87,24 +151,31 @@ export async function inspectOutbox(repoRoot = '.') {
   const plan = buildReplayPlan(rows)
   const ready = plan.filter(item => item.replayStatus === 'ready')
   const blocked = plan.filter(item => item.replayStatus === 'blocked')
-  return { path: outboxPath(repoRoot), pending: rows.length, ready: ready.length, blocked: blocked.length, oldestCreatedAt: rows.map(item => item.createdAt).filter(Boolean).sort()[0] || '', next: ready[0] ? { id: ready[0].id, type: ready[0].type, idempotencyKey: ready[0].idempotencyKey, localTaskRef: ready[0].localTaskRef } : null, events: plan }
+  const paths = await resolveOutboxPaths(repoRoot)
+  return { path: paths.path, pending: rows.length, ready: ready.length, blocked: blocked.length, oldestCreatedAt: rows.map(item => item.createdAt).filter(Boolean).sort()[0] || '', next: ready[0] ? { id: ready[0].id, type: ready[0].type, idempotencyKey: ready[0].idempotencyKey, localTaskRef: ready[0].localTaskRef } : null, events: plan }
 }
 
 export async function acknowledgeOutboxEvent(repoRoot = '.', eventId = '') {
-  const rows = await readOutbox(repoRoot)
-  const next = rows.filter(item => item.id !== eventId)
-  if (next.length === rows.length) return { acknowledged: false, pending: rows.length }
-  await writeEvents(repoRoot, next)
-  return { acknowledged: true, pending: next.length }
+  const paths = await resolveOutboxPaths(repoRoot); const release = await acquireLock(paths)
+  try {
+    const rows = await readOutboxUnlocked(paths)
+    const next = rows.filter(item => item.id !== eventId)
+    if (next.length === rows.length) return { acknowledged: false, pending: rows.length }
+    await writeEvents(paths, next)
+    return { acknowledged: true, pending: next.length }
+  } finally { await release() }
 }
 
 export async function markOutboxAttempt(repoRoot = '.', eventId = '', error = '', now = new Date().toISOString()) {
-  const rows = await readOutbox(repoRoot)
-  const index = rows.findIndex(item => item.id === eventId)
-  if (index < 0) return { updated: false, pending: rows.length }
-  rows[index] = { ...rows[index], attempt: rows[index].attempt + 1, lastAttemptAt: now, lastError: text(error, 1000) }
-  await writeEvents(repoRoot, rows)
-  return { updated: true, pending: rows.length, event: rows[index] }
+  const paths = await resolveOutboxPaths(repoRoot); const release = await acquireLock(paths)
+  try {
+    const rows = await readOutboxUnlocked(paths)
+    const index = rows.findIndex(item => item.id === eventId)
+    if (index < 0) return { updated: false, pending: rows.length }
+    rows[index] = { ...rows[index], attempt: rows[index].attempt + 1, lastAttemptAt: now, lastError: text(error, 1000) }
+    await writeEvents(paths, rows)
+    return { updated: true, pending: rows.length, event: rows[index] }
+  } finally { await release() }
 }
 
 async function main() {

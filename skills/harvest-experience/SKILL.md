@@ -24,7 +24,7 @@ allowed-tools:
 
 - `agent_type`: 按任务性质选 `dev`（改代码）/ `prd`（理需求）/ `review` / `test`
 - `input`: 用户这次的需求/意图原文
-- `repo_url`: 当前仓库地址（`git remote get-url origin` 或本地路径，用于统计复用率归因）
+- `repo_url`: 当前仓库地址（`git remote get-url origin` 或本地路径，用于统计复用率归因）；首次外发前必须移除 URL 中的用户名、密码和 Token，注入与沉淀复用同一份净化结果。
 - `session_id`: 可选，会话标识
 
 把返回的经验内容作为上下文纳入你的方案，不要照搬无关内容。若返回为空，正常编码即可。
@@ -46,7 +46,7 @@ git diff --name-only HEAD    # 未提交改动
 **核心字段(必填)**：
 - `intent`: 本次会话的意图/需求。**优先用你对本次会话的总结**（比 commit message 信息量大）；若要用 commit message，先确认它不是 "fix bug" 这类空话，否则用总结。
 - `changed_files`: 上一步 `git diff --name-only` 得到的文件路径数组（**只传路径，绝不传代码内容**）
-- `repo_url`: 当前仓库地址（必须与第 1 步一致，否则闭环归因会断）
+- `repo_url`: 当前仓库地址（必须与第 1 步净化后的值逐字符一致，否则闭环归因会断）
 - `idempotency_key`: 本轮沉淀的稳定身份，至少绑定 `repo_url + task_id + commit_sha + 经验意图`；同一经验重试和 Outbox 重放必须逐字符复用，禁止每次生成新键。
 - `experience`: 结构化经验，不得让服务端只凭需求标题和文件路径猜：
   - `problem`: 本轮遇到的真实问题或原方案为何不成立。

@@ -339,7 +339,7 @@ git -C <target-repo> status --porcelain             # 含未跟踪
 ```
 [brownfield] cap-understand ─┐
                       ├→ cap-define → cap-plan → cap-implement{red→green} →
-[greenfield] ─────────┘   cap-test{logic | journey | model} → cap-review → 退场 → cap-release{dev→staging→canary→full}
+[greenfield] ─────────┘   cap-test{logic | journey | model} → cap-review → cap-release{dev→staging→canary→full} → 退场
 ```
 
 任一验证项也可**单独调用**:`/cap 测试 --check=journey --scope=full-chain` 做现状审计(也当 cap-understand 的

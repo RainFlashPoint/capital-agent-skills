@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildSanitizedTaskRetry, isSensitiveRiskRejection } from './cap-task-request.mjs'
+import { buildSanitizedTaskRetry, isSensitiveRiskRejection, sanitizeTaskText } from './cap-task-request.mjs'
 import { switchTaskState } from './cap-task-state-switch.mjs'
 
 async function fixture() {
@@ -29,6 +29,13 @@ test('sensitive Task rejection is classified and retried with local-only configu
   assert.equal(retry.requirementText.includes('2560799'), false)
   assert.equal(retry.requirementText.includes('测试公司'), false)
   assert.equal(retry.requirementText.includes('abc123'), false)
+})
+
+test('embedded repository credentials are removed before Task text leaves the client', () => {
+  const sanitized = sanitizeTaskText('仓库 https://deploy-user:super-secret@git.example.com/team/service.git，按 dev 分支开发')
+  assert.equal(sanitized, '仓库 https://git.example.com/team/service.git，按 dev 分支开发')
+  assert.equal(sanitized.includes('deploy-user'), false)
+  assert.equal(sanitized.includes('super-secret'), false)
 })
 
 test('stale Task state is moved aside before a fresh Task boundary is initialized', async () => {

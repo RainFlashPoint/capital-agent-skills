@@ -46,6 +46,7 @@ def normalize_stage(stage):
     value = str(stage or "").strip().lower()
     return LEGACY_STAGE_ALIASES.get(value, value)
 RETIRE_ARTIFACTS = ["task-context.md", "spec.md", "plan.md", "verify", "review", "STATE.md"]
+RETIRE_PHASES = {"snapshot": 0, "cleanup": 1, "index": 2, "leaf": 3, "backflow": 4, "complete": 5}
 
 
 def _sha256(path):
@@ -65,6 +66,133 @@ def _artifact_manifest(root):
             rows.append({"path": os.path.relpath(path, root).replace(os.sep, "/"),
                          "sha256": _sha256(path), "size": os.path.getsize(path)})
     return rows
+
+
+def _atomic_write_text(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
+def _atomic_write_json(path, value):
+    _atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+
+def _read_json(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _fail_retire_after(phase):
+    if os.environ.get("CAP_RETIRE_FAIL_AFTER") == phase:
+        raise RuntimeError(f"retire fault injection after {phase}")
+
+
+def _relative_contained_path(root, candidate):
+    if not candidate:
+        return ""
+    canonical_root = os.path.realpath(root)
+    canonical_candidate = os.path.realpath(candidate)
+    if os.path.commonpath([canonical_root, canonical_candidate]) != canonical_root:
+        raise ValueError(f"路径必须位于 .cap 内: {candidate}")
+    return os.path.relpath(canonical_candidate, canonical_root).replace(os.sep, "/")
+
+
+def _safe_archive_segment(value, label):
+    text = str(value or "")
+    if not text or text in (".", "..") or "/" in text or "\\" in text or os.path.basename(text) != text:
+        raise ValueError(f"非法 {label}: {value}")
+    return text
+
+
+def _validate_retire_manifest(archive_dir, manifest, expected_task_id="", expected_delivery_commit=""):
+    if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 1:
+        raise ValueError("retire manifest schemaVersion 非法")
+    if manifest.get("status") != "completed":
+        raise ValueError("retire manifest status 非 completed")
+    required = ("taskId", "parentTaskId", "title", "intentSummary", "keywords", "branch", "baseCommit", "deliveryCommit", "completedAt")
+    if any(key not in manifest for key in required):
+        raise ValueError("retire manifest 缺少索引必需字段")
+    if expected_task_id and manifest.get("taskId") != expected_task_id:
+        raise ValueError(f"retire manifest taskId 不匹配: {manifest.get('taskId')} != {expected_task_id}")
+    if expected_delivery_commit and manifest.get("deliveryCommit") != expected_delivery_commit:
+        raise ValueError("retire manifest deliveryCommit 与本次请求不匹配")
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise ValueError("retire manifest artifacts 非数组")
+    canonical_archive = os.path.realpath(archive_dir)
+    copied = set()
+    for index, item in enumerate(artifacts):
+        if not isinstance(item, dict):
+            raise ValueError(f"retire manifest artifact[{index}] 非对象")
+        raw_path = item.get("path")
+        if not isinstance(raw_path, str) or not raw_path or "\\" in raw_path or os.path.isabs(raw_path):
+            raise ValueError(f"retire manifest artifact[{index}] 路径非法")
+        parts = raw_path.split("/")
+        if any(part in ("", ".", "..") for part in parts) or parts[0] not in RETIRE_ARTIFACTS:
+            raise ValueError(f"retire manifest artifact[{index}] 越过允许的工件范围: {raw_path}")
+        artifact_path = os.path.join(archive_dir, *parts)
+        if os.path.islink(artifact_path):
+            raise ValueError(f"retire manifest artifact[{index}] 不允许软链接: {raw_path}")
+        canonical_artifact = os.path.realpath(artifact_path)
+        if os.path.commonpath([canonical_archive, canonical_artifact]) != canonical_archive or not os.path.isfile(canonical_artifact):
+            raise ValueError(f"retire manifest artifact[{index}] 不在归档内或不存在: {raw_path}")
+        if item.get("sha256") != _sha256(canonical_artifact) or item.get("size") != os.path.getsize(canonical_artifact):
+            raise ValueError(f"retire manifest artifact[{index}] 哈希或大小不匹配: {raw_path}")
+        copied.add(parts[0])
+    for name in RETIRE_ARTIFACTS:
+        archived_item = os.path.join(archive_dir, name)
+        if not os.path.lexists(archived_item):
+            continue
+        if os.path.islink(archived_item):
+            raise ValueError(f"retire archive 顶层工件不允许软链接: {name}")
+        if os.path.commonpath([canonical_archive, os.path.realpath(archived_item)]) != canonical_archive:
+            raise ValueError(f"retire archive 顶层工件越界: {name}")
+        copied.add(name)
+    return sorted(copied)
+
+
+def _validate_retire_transaction(cap, transaction, history_mode, expected_task_id=""):
+    if not isinstance(transaction, dict) or transaction.get("schemaVersion") != 1:
+        raise ValueError("retirement transaction schemaVersion 非法")
+    if transaction.get("phase") not in RETIRE_PHASES:
+        raise ValueError(f"retirement transaction phase 非法: {transaction.get('phase')}")
+    if bool(transaction.get("historyMode")) != history_mode:
+        raise ValueError("retirement transaction historyMode 与本次请求不匹配")
+    copied = transaction.get("copied")
+    if not isinstance(copied, list) or any(item not in RETIRE_ARTIFACTS for item in copied):
+        raise ValueError("retirement transaction copied 超出工件白名单")
+    request = transaction.get("request")
+    if not isinstance(request, dict):
+        raise ValueError("retirement transaction request 非对象")
+    if expected_task_id and request.get("taskId") != expected_task_id:
+        raise ValueError(f"retirement transaction taskId 不匹配: {request.get('taskId')} != {expected_task_id}")
+    req_root_relative = request.get("reqRootRelative", "")
+    if req_root_relative:
+        if not isinstance(req_root_relative, str) or "\\" in req_root_relative or os.path.isabs(req_root_relative):
+            raise ValueError("retirement transaction reqRootRelative 非法")
+        resolved = _relative_contained_path(cap, os.path.join(cap, *req_root_relative.split("/")))
+        if resolved != req_root_relative:
+            raise ValueError("retirement transaction reqRootRelative 非规范路径")
+    return sorted(set(copied))
+
+
+def _retire_cleanup_path(cap, name):
+    if name not in RETIRE_ARTIFACTS:
+        raise ValueError(f"拒绝清理非白名单工件: {name}")
+    canonical_cap = os.path.realpath(cap)
+    candidate = os.path.abspath(os.path.join(canonical_cap, name))
+    if os.path.commonpath([canonical_cap, candidate]) != canonical_cap:
+        raise ValueError(f"退场清理路径越界: {name}")
+    return candidate
 
 
 def _state_value(path, key):
@@ -266,8 +394,7 @@ def _set_frontmatter_status(path, value):
     with open(path, encoding="utf-8") as f:
         text = f.read()
     new = re.sub(r"(?m)^status:.*$", f"status: {value}", text, count=1)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new)
+    _atomic_write_text(path, new)
 
 
 def _mark_leaf_shipped(req_root, leaf_id):
@@ -303,22 +430,28 @@ def _append_leaf_cap_log(leaf_path, entry):
     entry 总追加到文件末尾——该段恒为叶末段,故条目累积其下。"""
     with open(leaf_path, encoding="utf-8") as f:
         text = f.read()
+    if entry in text.splitlines():
+        return leaf_path
     if LEAF_CAP_LOG_HEADER not in text:
         text = text.rstrip("\n") + f"\n\n{LEAF_CAP_LOG_HEADER}\n"
     text = text.rstrip("\n") + "\n" + entry + "\n"
-    with open(leaf_path, "w", encoding="utf-8") as f:
-        f.write(text)
+    _atomic_write_text(leaf_path, text)
+    return leaf_path
 
 
 def _append_evolution(cap_dir, entry):
     """耐久教训回流:统一 append `<cap>/EVOLUTION.md`(唯一正屋;缺则建 `# Evolution log` 头)。
     PROFILE 不承载流水(仅留指针)——见 templates/PROFILE.md。"""
     target = os.path.join(cap_dir, "EVOLUTION.md")
-    exists = os.path.isfile(target)
-    with open(target, "a", encoding="utf-8") as f:
-        if not exists:
-            f.write("# Evolution log\n\n")
-        f.write(entry + "\n")
+    text = ""
+    if os.path.isfile(target):
+        with open(target, encoding="utf-8") as f:
+            text = f.read()
+    if entry not in text.splitlines():
+        if not text:
+            text = "# Evolution log\n\n"
+        text = text.rstrip("\n") + "\n" + entry + "\n"
+        _atomic_write_text(target, text)
     return target
 
 
@@ -426,24 +559,58 @@ def cmd_write_tree(args):
 
 
 def cmd_retire(args):
-    """特性退场:先生成可校验快照，再清理活动工件；新协议按 Task ID 写 history。"""
+    """特性退场:快照提交后按耐久 phase 推进；中断时从 retirement.json 幂等恢复。"""
     state_path = os.path.join(args.cap, "STATE.md")
     state_task_id = _state_value(state_path, "task-id")
     state_stage = normalize_stage(_state_value(state_path, "stage"))
     history_mode = bool(args.task_id)
-    archive_dir = os.path.join(args.cap, "history", args.task_id) if history_mode else os.path.join(args.cap, "archive", f"{args.date}-{args.slug}")
-    if history_mode and os.path.isfile(os.path.join(archive_dir, "manifest.json")):
-        print(json.dumps({"archived": archive_dir, "idempotent": True}, ensure_ascii=False))
-        return 0
+    try:
+        if history_mode:
+            task_segment = _safe_archive_segment(args.task_id, "task-id")
+            archive_dir = os.path.join(args.cap, "history", task_segment)
+        else:
+            date_segment = _safe_archive_segment(args.date, "date")
+            slug_segment = _safe_archive_segment(args.slug, "slug")
+            archive_dir = os.path.join(args.cap, "archive", f"{date_segment}-{slug_segment}")
+        _relative_contained_path(args.cap, archive_dir)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    manifest_path = os.path.join(archive_dir, "manifest.json")
+    transaction_path = os.path.join(archive_dir, "retirement.json")
+    try:
+        req_root_relative = _relative_contained_path(args.cap, args.req_root)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    if os.path.islink(archive_dir):
+        print(f"archive 不允许为软链接: {archive_dir}", file=sys.stderr)
+        return 2
+    archive_exists = os.path.isdir(archive_dir)
+    transaction = _read_json(transaction_path) if os.path.isfile(transaction_path) else None
+    if archive_exists and not os.path.isfile(manifest_path):
+        print(f"archive 已存在但缺 manifest,拒绝覆盖: {archive_dir}", file=sys.stderr)
+        return 1
+    expected_task_id = args.task_id or state_task_id
+    manifest = _read_json(manifest_path) if archive_exists else None
+    try:
+        manifest_copied = _validate_retire_manifest(
+            archive_dir, manifest, expected_task_id,
+            args.delivery_commit if args.strict else "",
+        ) if manifest else []
+        if transaction:
+            transaction_copied = _validate_retire_transaction(args.cap, transaction, history_mode, expected_task_id)
+            if transaction_copied != manifest_copied:
+                raise ValueError("retirement transaction copied 与 manifest 工件不一致")
+            copied = transaction_copied
+        else:
+            copied = manifest_copied
+    except (KeyError, TypeError, ValueError) as error:
+        print(f"retire 恢复证据无效: {error}", file=sys.stderr)
+        return 2
     if args.strict:
         if not args.task_id:
             print("strict retire requires --task-id", file=sys.stderr)
-            return 2
-        if state_task_id and state_task_id != args.task_id:
-            print(f"STATE task-id 不匹配: {state_task_id} != {args.task_id}", file=sys.stderr)
-            return 2
-        if state_stage != "done":
-            print(f"Task 尚未完成,拒绝退场: stage={state_stage or 'missing'}", file=sys.stderr)
             return 2
         if args.gate_status != "passed":
             print("Server Gate 未确认通过,拒绝退场", file=sys.stderr)
@@ -451,85 +618,160 @@ def cmd_retire(args):
         if not args.delivery_commit:
             print("缺少 delivery commit,拒绝退场", file=sys.stderr)
             return 2
+        if os.path.isfile(state_path):
+            if state_task_id != args.task_id:
+                print(f"STATE task-id 不匹配: {state_task_id or 'missing'} != {args.task_id}", file=sys.stderr)
+                return 2
+            if state_stage != "done":
+                print(f"Task 尚未完成,拒绝退场: stage={state_stage or 'missing'}", file=sys.stderr)
+                return 2
+        elif not transaction:
+            print("缺少同 Task 的 STATE 或可信 retirement transaction,拒绝恢复", file=sys.stderr)
+            return 2
+    elif archive_exists and not transaction and state_stage and state_stage != "done":
+        print(f"当前仍有活动 Task,拒绝从旧 manifest 恢复退场: stage={state_stage}", file=sys.stderr)
+        return 2
+    if not os.path.isfile(state_path) and transaction:
+        remaining = [name for name in copied if os.path.lexists(_retire_cleanup_path(args.cap, name))]
+        if remaining:
+            print(f"STATE 缺失但仍存在待清理工件,拒绝自动恢复: {', '.join(remaining)}", file=sys.stderr)
+            return 2
+    if transaction and transaction.get("phase") == "complete":
+        print(json.dumps({"archived": archive_dir, "idempotent": True, "recovered": False}, ensure_ascii=False))
+        return 0
+    recovered = archive_exists
+    if not transaction:
+        if archive_exists:
+            pass
+        else:
+            parent = os.path.dirname(archive_dir)
+            os.makedirs(parent, exist_ok=True)
+            temp_dir = tempfile.mkdtemp(prefix=".snapshot-", dir=parent)
+            copied = []
+            try:
+                for name in RETIRE_ARTIFACTS:
+                    src = os.path.join(args.cap, name)
+                    dst = os.path.join(temp_dir, name)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dst)
+                        copied.append(name)
+                    elif os.path.isfile(src):
+                        shutil.copy2(src, dst)
+                        copied.append(name)
+                manifest = {
+                    "schemaVersion": 1,
+                    "taskId": args.task_id or state_task_id,
+                    "parentTaskId": args.parent_task_id or "",
+                    "title": args.title or args.slug,
+                    "intentSummary": args.intent_summary or "",
+                    "keywords": [item.strip() for item in (args.keywords or "").split(",") if item.strip()],
+                    "branch": args.branch or "",
+                    "baseCommit": args.base_commit or "",
+                    "deliveryCommit": args.delivery_commit or "",
+                    "completedAt": args.completed_at or args.date,
+                    "status": "completed",
+                    "artifacts": _artifact_manifest(temp_dir),
+                }
+                _atomic_write_json(os.path.join(temp_dir, "manifest.json"), manifest)
+                transaction = {
+                    "schemaVersion": 1, "phase": "snapshot", "copied": copied,
+                    "historyMode": history_mode,
+                    "request": {"taskId": args.task_id or state_task_id, "leaf": args.leaf or "", "reqRootRelative": req_root_relative, "evolutionEntry": args.evolution_entry or ""},
+                }
+                _atomic_write_json(os.path.join(temp_dir, "retirement.json"), transaction)
+                os.rename(temp_dir, archive_dir)
+                temp_dir = ""
+            finally:
+                if temp_dir and os.path.isdir(temp_dir):
+                    shutil.rmtree(temp_dir)
+            _fail_retire_after("snapshot")
+        if transaction is None:
+            transaction = {
+                "schemaVersion": 1, "phase": "snapshot", "copied": copied,
+                "historyMode": history_mode,
+                "request": {"taskId": args.task_id or state_task_id, "leaf": args.leaf or "", "reqRootRelative": req_root_relative, "evolutionEntry": args.evolution_entry or ""},
+            }
+            _atomic_write_json(transaction_path, transaction)
+    else:
+        copied = _validate_retire_transaction(args.cap, transaction, history_mode, expected_task_id)
 
-    if os.path.exists(archive_dir):
-        print(f"archive 已存在,拒绝覆盖: {archive_dir}", file=sys.stderr)
-        return 1
-
-    parent = os.path.dirname(archive_dir)
-    os.makedirs(parent, exist_ok=True)
-    temp_dir = tempfile.mkdtemp(prefix=".snapshot-", dir=parent)
-    copied = []
     try:
-        for name in RETIRE_ARTIFACTS:
-            src = os.path.join(args.cap, name)
-            dst = os.path.join(temp_dir, name)
-            if os.path.isdir(src):
-                shutil.copytree(src, dst)
-                copied.append(name)
-            elif os.path.isfile(src):
-                shutil.copy2(src, dst)
-                copied.append(name)
-        artifacts = _artifact_manifest(temp_dir)
-        manifest = {
-            "schemaVersion": 1,
-            "taskId": args.task_id or state_task_id,
-            "parentTaskId": args.parent_task_id or "",
-            "title": args.title or args.slug,
-            "intentSummary": args.intent_summary or "",
-            "keywords": [item.strip() for item in (args.keywords or "").split(",") if item.strip()],
-            "branch": args.branch or "",
-            "baseCommit": args.base_commit or "",
-            "deliveryCommit": args.delivery_commit or "",
-            "completedAt": args.completed_at or args.date,
-            "status": "completed",
-            "artifacts": artifacts,
-        }
-        with open(os.path.join(temp_dir, "manifest.json"), "w", encoding="utf-8") as f:
-            json.dump(manifest, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.rename(temp_dir, archive_dir)
-        temp_dir = ""
-    finally:
-        if temp_dir and os.path.isdir(temp_dir):
-            shutil.rmtree(temp_dir)
+        manifest_copied = _validate_retire_manifest(
+            archive_dir, manifest, expected_task_id,
+            args.delivery_commit if args.strict else "",
+        )
+        transaction_copied = _validate_retire_transaction(args.cap, transaction, history_mode, expected_task_id)
+        if manifest_copied != transaction_copied:
+            raise ValueError("retirement transaction copied 与 manifest 工件不一致")
+        copied = transaction_copied
+    except (KeyError, TypeError, ValueError) as error:
+        print(f"retire 事务证据无效: {error}", file=sys.stderr)
+        return 2
 
-    moved = []
-    for name in copied:  # 快照完整落地后才清理活动区
-        src = os.path.join(args.cap, name)
-        if os.path.isdir(src):
-            shutil.rmtree(src)
-        elif os.path.exists(src):
-            os.remove(src)
-        moved.append(name)
+    def advance(phase):
+        transaction["phase"] = phase
+        _atomic_write_json(transaction_path, transaction)
+
+    current_phase = lambda: RETIRE_PHASES[transaction.get("phase", "snapshot")]
+
+    if current_phase() < RETIRE_PHASES["cleanup"]:
+        for name in copied:
+            src = _retire_cleanup_path(args.cap, name)
+            if os.path.islink(src):
+                os.remove(src)
+            elif os.path.isdir(src):
+                shutil.rmtree(src)
+            elif os.path.exists(src):
+                os.remove(src)
+        _fail_retire_after("cleanup")
+        advance("cleanup")
 
     index_path = None
-    if history_mode:
-        index_dir = os.path.join(args.cap, "history", "index")
-        os.makedirs(index_dir, exist_ok=True)
-        index_path = os.path.join(index_dir, f"{args.task_id}.json")
-        index_item = {key: manifest[key] for key in ("schemaVersion", "taskId", "parentTaskId", "title", "intentSummary", "keywords", "branch", "baseCommit", "deliveryCommit", "completedAt", "status")}
-        index_item["artifactRoot"] = f".cap/history/{args.task_id}"
-        with open(index_path, "w", encoding="utf-8") as f:
-            json.dump(index_item, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+    if transaction.get("historyMode"):
+        task_id = transaction.get("request", {}).get("taskId") or manifest.get("taskId")
+        index_path = os.path.join(args.cap, "history", "index", f"{task_id}.json")
+        if current_phase() < RETIRE_PHASES["index"]:
+            index_item = {key: manifest[key] for key in ("schemaVersion", "taskId", "parentTaskId", "title", "intentSummary", "keywords", "branch", "baseCommit", "deliveryCommit", "completedAt", "status")}
+            index_item["artifactRoot"] = f".cap/history/{task_id}"
+            _atomic_write_json(index_path, index_item)
+            _fail_retire_after("index")
+            advance("index")
+    elif current_phase() < RETIRE_PHASES["index"]:
+        advance("index")
+
+    request = transaction.get("request", {})
+    request_root = os.path.join(args.cap, request["reqRootRelative"]) if request.get("reqRootRelative") else request.get("reqRoot", "")
     leaf_path = None
-    if args.leaf and args.req_root:  # ③标 shipped(优雅降级:无叶/无树则跳过)
-        leaf_path = _mark_leaf_shipped(args.req_root, args.leaf)
-        if leaf_path is None:
-            print(f"warn: 未找到源叶 '{args.leaf}',跳过标 shipped", file=sys.stderr)
-    leaf_shipped = leaf_path is not None
+    if current_phase() < RETIRE_PHASES["leaf"]:
+        if request.get("leaf") and request_root:
+            leaf_path = _mark_leaf_shipped(request_root, request["leaf"])
+            if leaf_path is None:
+                print(f"warn: 未找到源叶 '{request['leaf']}',跳过标 shipped", file=sys.stderr)
+        _fail_retire_after("leaf")
+        advance("leaf")
+    elif request.get("leaf") and request_root:
+        for leaf in load_leaves(request_root):
+            if leaf.get("id") == request["leaf"]:
+                leaf_path = os.path.join(request_root, leaf["_path"])
+                break
+
     backflow = None
     leaf_evolution = None
-    if args.evolution_entry:  # ②回流 EVOLUTION(内容由调用方蒸馏,目标选择确定性)
-        backflow = _append_evolution(args.cap, args.evolution_entry)
-        if leaf_path:  # 同条也挂源叶 `## cap 记录`(需求树成带 cap 记录的活档案)
-            _append_leaf_cap_log(leaf_path, args.evolution_entry)
-            leaf_evolution = leaf_path
-    print(json.dumps({"archived": archive_dir, "moved": moved, "manifest": os.path.join(archive_dir, "manifest.json"), "index": index_path,
-                      "leaf_shipped": leaf_shipped, "backflow": backflow,
-                      "leaf_evolution": leaf_evolution},
-                     ensure_ascii=False))
+    if current_phase() < RETIRE_PHASES["backflow"]:
+        if request.get("evolutionEntry"):
+            backflow = _append_evolution(args.cap, request["evolutionEntry"])
+            if leaf_path:
+                leaf_evolution = _append_leaf_cap_log(leaf_path, request["evolutionEntry"])
+        _fail_retire_after("backflow")
+        advance("backflow")
+    elif request.get("evolutionEntry"):
+        backflow = os.path.join(args.cap, "EVOLUTION.md")
+        leaf_evolution = leaf_path
+
+    advance("complete")
+    print(json.dumps({"archived": archive_dir, "moved": copied, "manifest": manifest_path, "index": index_path,
+                      "leaf_shipped": leaf_path is not None, "backflow": backflow,
+                      "leaf_evolution": leaf_evolution, "recovered": recovered}, ensure_ascii=False))
     return 0
 
 

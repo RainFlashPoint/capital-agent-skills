@@ -3,6 +3,7 @@ import { existsSync } from 'fs'
 import { execFileSync, spawnSync } from 'child_process'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { sanitizeRepositoryUrl } from './client-delivery.mjs'
 
 function fail(message, detail = '') {
   process.stdout.write(`${JSON.stringify({ ok: false, code: message, detail }, null, 2)}\n`)
@@ -18,7 +19,7 @@ if (!existsSync(resolve(repo, '.git'))) {
 } else {
   let repoUrl = ''
   try {
-    repoUrl = execFileSync('git', ['-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim()
+    repoUrl = sanitizeRepositoryUrl(execFileSync('git', ['-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim())
   } catch {
     fail('repo_remote_missing', repo)
   }

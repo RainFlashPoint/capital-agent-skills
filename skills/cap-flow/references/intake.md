@@ -275,7 +275,9 @@ python3 scripts/intake.py prepare-next --cap <target>/.cap
 
 它只在根目录没有活动 Task 时返回成功；进行中 Task 要求续接或换 worktree，`stage=done` 则要求先完成严格退场。
 严格退场只有在 Task ID、Delivery Commit 和 Server Gate PASS 同时明确时才执行。脚本先在临时目录复制并计算
-SHA-256，原子落下快照和 `manifest.json` 后才清理活动产物；失败时根 `.cap` 保持不变。
+SHA-256，原子落下快照、`manifest.json` 与 `retirement.json` 后，再按 cleanup → index → leaf → backflow 的耐久
+phase 推进。任一步中断后重跑同一 Retire 会从已提交 phase 继续；清理、索引、叶状态和同一条 Evolution/叶记录均幂等，
+不会因为“快照已经存在”而跳过剩余收尾，也不会重复追加经验。快照尚未提交前失败时，根 `.cap` 保持不变。
 
 **确定性 vs 判断性**:文件移动 / 标 shipped / 追加 = 脚本。**"哪些决策值得回流" = 模型判断**——判据:跨特性
 仍成立的架构 / 契约决策、踩过的坑、新发现的风险才回流;一次性实现细节不回流。
@@ -315,8 +317,8 @@ history(本地 Task 事实快照)。旧 `.cap/archive` 继续作为兼容历史�
 > 适应度函数。两者都走 harvest-experience 的 `record_experience`、都带 owner/runner 归因,但**教训是精炼的经验卡、
 > 数据点是打分原料**,用途不同。本地 EVOLUTION 与中心 KB 并行:前者私有档案,后者团队共享池。
 
-**降级**:无 `requirements/` 树、或特性非源自叶 → 跳过③,①②④照做。**幂等安全**:`archive/<date>-<slug>/` 已
-存在 → 拒绝覆盖、非 0 退出、不动任何文件。
+**降级**:无 `requirements/` 树、或特性非源自叶 → 跳过③,①②④照做。**幂等安全**:合法快照带
+`retirement.json` 时续跑或返回已完成；目标目录存在但缺 `manifest.json` 时拒绝覆盖、非 0 退出、不动活动文件。
 
 ---
 

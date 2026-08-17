@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0
+
+- 新增统一 `scripts/release-check` 发布门禁，在显式本地模式下覆盖结构、行为、并发、安全边界与补丁检查。
+- 本地 Test Provider 改为最小环境、临时 HOME 与 fail-closed OS 沙箱；团队模式不再允许 STATE 文本自证 Server Gate。
+- Outbox 增加仓库内原子锁、唯一临时文件、损坏阻断与软链 containment，并通过 40 进程并发回归。
+- 持久本地模式的 post-commit 完全跳过平台与 Delivery Outbox；MCP user key 不再出现在子进程参数，仓库 URL 外发前统一移除嵌入凭据。
+- 安装时记录源码 Commit、插件版本和受管理文件哈希，Doctor 可识别旧安装副本与文件漂移。
+- 任务上下文加入 index、worktree、untracked fingerprint；Guard 统一从 canonical Git root 工作，子目录运行不再漏检。
+- Retire 使用可重入的分阶段事务，snapshot、cleanup、index、leaf 与 backflow 中断后可幂等恢复；旧归档恢复会校验 Task、Gate、manifest 哈希、路径 containment 与清理白名单。
+- 统一 Review → Release → Retire 顺序，Review PASS 不再把任务直接写成 done 而跳过交付收口。
+
 ## 0.6.6
 
 - 团队模式新增 `restart_required` 客户端选择门：当前会话未加载 MCP 时，默认建议重启恢复团队链路，也允许用户明确选择本次本地继续，不再让升级问题把研发完全卡死。

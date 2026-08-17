@@ -1,7 +1,8 @@
-import { chmod, copyFile, lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'fs/promises'
-import { basename, dirname, join } from 'path'
+import { chmod, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rename, symlink, unlink, writeFile } from 'fs/promises'
+import { basename, dirname, join, relative, resolve } from 'path'
 import { execFileSync } from 'child_process'
 import { createRequire } from 'module'
+import { createHash, randomUUID } from 'crypto'
 
 const require = createRequire(import.meta.url)
 export const { resolveSystemAddresses } = require('./system-dns.cjs')
@@ -35,6 +36,72 @@ export const skillTargets = home => ({ codex: join(home, '.agents/skills'), clau
 export const activationRuleTargets = home => ({ codex: join(home, '.codex', 'AGENTS.md'), claude: join(home, '.claude', 'CLAUDE.md'), cursor: join(home, '.cursor', 'rules', 'capital-agent.mdc') })
 export const codexConfigPath = home => join(home, '.codex', 'config.toml')
 export const cursorMcpConfigPath = home => join(home, '.cursor', 'mcp.json')
+export const installManifestPath = home => join(home, '.capital-agent', 'install-manifest.json')
+
+const MANAGED_DIRECTORIES = ['skills', 'scripts', 'runtime', '.claude-plugin']
+const MANAGED_ROOT_FILES = ['README.md', 'CHANGELOG.md', 'AGENTS.md', 'CLAUDE.md']
+
+async function collectManagedFiles(sourceRoot) {
+  const rows = []
+  async function walk(absolute) {
+    const entries = await readdir(absolute, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (entry.name === '__pycache__' || entry.name === '.DS_Store' || entry.name.endsWith('.pyc')) continue
+      const path = join(absolute, entry.name)
+      if (entry.isDirectory()) await walk(path)
+      else if (entry.isFile()) rows.push(path)
+      else if (entry.isSymbolicLink()) rows.push(path)
+    }
+  }
+  for (const directory of MANAGED_DIRECTORIES) await walk(join(sourceRoot, directory))
+  for (const name of MANAGED_ROOT_FILES) {
+    const path = join(sourceRoot, name)
+    if (await lstat(path).then(item => item.isFile() || item.isSymbolicLink()).catch(() => false)) rows.push(path)
+  }
+  const unique = [...new Set(rows)].sort()
+  return Promise.all(unique.map(async path => {
+    const stat = await lstat(path)
+    const content = stat.isSymbolicLink() ? Buffer.from(`symlink:${await readlink(path)}`) : await readFile(path)
+    return { path: relative(sourceRoot, path).split('\\').join('/'), sha256: createHash('sha256').update(content).digest('hex'), size: content.length }
+  }))
+}
+
+export async function buildInstallManifest(sourceRoot) {
+  const root = await realpath(resolve(sourceRoot))
+  let sourceCommit = 'working-tree'
+  try { sourceCommit = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || sourceCommit } catch {}
+  const version = await readFile(join(root, '.claude-plugin', 'plugin.json'), 'utf8').then(value => String(JSON.parse(value).version || '')).catch(() => '')
+  return { schemaVersion: 1, sourceRoot: root, sourceCommit, version, files: await collectManagedFiles(root) }
+}
+
+export async function writeInstallManifest(home, sourceRoot) {
+  const path = installManifestPath(home)
+  const manifest = await buildInstallManifest(sourceRoot)
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
+  await writeFile(temporary, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 })
+  await rename(temporary, path)
+  await chmod(path, 0o600)
+  return { path, manifest }
+}
+
+export async function inspectInstallManifest(home, sourceRoot) {
+  const path = installManifestPath(home)
+  const recorded = await readFile(path, 'utf8').then(JSON.parse).catch(() => null)
+  if (!recorded) return { ok: false, reason: 'manifest_missing', path, recorded: null, current: null, changedFiles: [] }
+  const current = await buildInstallManifest(sourceRoot).catch(() => null)
+  if (!current) return { ok: false, reason: 'source_unavailable', path, recorded, current: null, changedFiles: [] }
+  if (recorded.sourceRoot !== current.sourceRoot) return { ok: false, reason: 'source_root_mismatch', path, recorded, current, changedFiles: [] }
+  const recordedFiles = new Map((recorded.files || []).map(item => [item.path, item]))
+  const currentFiles = new Map((current.files || []).map(item => [item.path, item]))
+  const changedFiles = [...new Set([...recordedFiles.keys(), ...currentFiles.keys()])]
+    .filter(name => recordedFiles.get(name)?.sha256 !== currentFiles.get(name)?.sha256)
+    .sort()
+  const reason = recorded.version !== current.version ? 'version_drift'
+    : recorded.sourceCommit !== current.sourceCommit ? 'source_commit_drift'
+      : changedFiles.length ? 'file_manifest_drift' : ''
+  return { ok: !reason, reason, path, recorded, current, changedFiles }
+}
 
 const ACTIVATION_START = '<!-- capital-agent:auto-activation:start -->'
 const ACTIVATION_END = '<!-- capital-agent:auto-activation:end -->'

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+# 发布验证永远以纯本地模式运行，任何测试若意外触发平台路径都应失败。
+export CAPITAL_AGENT_MODE=local
+
+echo '== Skills structure and policy =='
+bash scripts/validate-skills
+
+echo '== Node behavior and adversarial regression =='
+node --test scripts/test-*.mjs
+
+echo '== Python behavior regression =='
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+echo '== Patch hygiene =='
+git diff --check
+
+echo 'RELEASE CHECK: PASS'

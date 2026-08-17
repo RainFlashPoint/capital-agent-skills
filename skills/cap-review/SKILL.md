@@ -360,11 +360,11 @@ status: clean | issues_found
 ```markdown
 ## HANDOFF
 # Cap State: <feature/topic>
-stage: review            # 通过则下一步 → done(验证收尾);未过则停在 review
+stage: review            # 通过则下一步 → release(交付收口);未过则停在 review
 status: in-progress | gated | blocked
 updated: <stamp>
 verify-checks: [...]     # 沿用本次解析
-cap-gate: <见下>         # ★ G1–G6 全过(verdict=PASS)→ 写 `PASS reviewed-head=<git rev-parse HEAD 完整 sha>`;否则写 `BLOCK`。本地 pre-push hook 凭此行决定放不放行 push;改了代码必须重跑本阶段刷新这行的 sha。
+cap-gate: <见下>         # 仅显式 local / local-only 仓可写 `PASS reviewed-head=<git rev-parse HEAD 完整 sha>` 作为本地门；团队模式只镜像 Server Review Action 引用，不得由 STATE 自签 PASS。
 
 ## Gates passed
 - [x] spec approved
@@ -393,7 +393,7 @@ cap-gate: <见下>         # ★ G1–G6 全过(verdict=PASS)→ 写 `PASS revie
 - <date> <接受了哪条风险 / 为何 / scope 缩减决定 / 误报判定>
 
 ## Next action
--> <PASS: 进验证收尾(§6 引用 verify 证据做最终确认)→ stage=done>
+-> <PASS: 进验证收尾(§6 引用 verify 证据做最终确认)→ stage=release；只有 cap-release 完成后才 stage=done>
 -> <BLOCKED: 修 CRITICAL / 安全 open 项后重跑 cap-review>
 -> <DRIFT: 重跑 cap-understand 相关部分刷新 PROFILE>
 ```
@@ -406,8 +406,7 @@ review 门控 PASS 后做轻量验证把整个特性收口(不重复 verify 的�
 1. **复核 verify 证据**:`.cap/verify/` 下报告存在且结论为通过(logic 覆盖率达门、journey 旅程 PASS、model
    分达阈)。缺失或不通过 → 回 cap-test。
 2. **plan-completion 收口**:Step 2 的 plan 项全部 DONE / CHANGED,或剩余 NOT-DONE 已显式落 P1 待办。
-3. 满足 → `stage=done, status=in-progress→done`,**并向 STATE 写入 `cap-gate: PASS reviewed-head=$(git rev-parse HEAD)`**
-   (给本地 pre-push hook 放行用),输出收尾摘要;不满足 → 停在 review、写 `cap-gate: BLOCK`、指出缺口。
+3. 满足后：显式 local / local-only 仓可向 STATE 写入 `cap-gate: PASS reviewed-head=$(git rev-parse HEAD)` 供本地 pre-push 使用；团队模式必须引用同一 Commit 的 Server Review Action 终态，STATE 只能保存镜像摘要。缺少可信终态就停在 review，不能自行写 PASS。
 
 ---
 

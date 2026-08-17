@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawn } from 'node:child_process'
 import { acknowledgeOutboxEvent, buildReplayPlan, enqueueOutboxEvent, inspectOutbox, markOutboxAttempt } from './cap-outbox.mjs'
 
 test('outbox enqueue is idempotent by stable key', async () => {
@@ -50,4 +51,40 @@ test('experience replay replaces a mismatched payload key with the envelope key'
     payload: { intent: '沉淀经验', changed_files: ['a.js'], idempotency_key: 'experience:stale' },
   })
   assert.equal(event.payload.idempotency_key, 'experience:authoritative')
+})
+
+test('outbox preserves every event under multi-process contention', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-race-'))
+  const cli = new URL('./cap-outbox.mjs', import.meta.url).pathname
+  const results = await Promise.all(Array.from({ length: 40 }, (_, index) => new Promise(resolvePromise => {
+    const input = JSON.stringify({ type: 'skill.event', idempotencyKey: `race:${index}`, payload: { index } })
+    const child = spawn(process.execPath, [cli, 'enqueue', repo, input], { env: { ...process.env, CAPITAL_AGENT_MODE: 'local' }, stdio: 'ignore' })
+    child.on('close', status => resolvePromise(status))
+  })))
+  assert.deepEqual(new Set(results), new Set([0]))
+  const outbox = await inspectOutbox(repo)
+  assert.equal(outbox.pending, 40)
+  assert.equal(new Set(outbox.events.map(item => item.idempotencyKey)).size, 40)
+})
+
+test('outbox refuses a symlinked .cap directory outside the repository', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'cap-outbox-link-'))
+  const repo = join(base, 'repo'); const outside = join(base, 'outside')
+  await mkdir(repo); await mkdir(outside); await symlink(outside, join(repo, '.cap'))
+  await assert.rejects(
+    enqueueOutboxEvent(repo, { type: 'skill.event', idempotencyKey: 'escape', payload: {} }),
+    /outbox_path_not_contained|outbox_symlink_not_allowed/,
+  )
+})
+
+test('outbox corruption blocks mutation instead of silently deleting evidence', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-corrupt-'))
+  await mkdir(join(repo, '.cap'))
+  const valid = JSON.stringify({ id: 'evt_good', type: 'skill.event', idempotencyKey: 'good', payload: {}, createdAt: '2026-08-17T00:00:00.000Z' })
+  await writeFile(join(repo, '.cap/outbox.jsonl'), `${valid}\n{"id":"partial"`)
+  await assert.rejects(
+    enqueueOutboxEvent(repo, { type: 'skill.event', idempotencyKey: 'new', payload: {} }),
+    /outbox_corrupt_line:2/,
+  )
+  assert.match(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), /partial/)
 })

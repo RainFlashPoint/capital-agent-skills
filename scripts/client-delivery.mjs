@@ -9,6 +9,18 @@ const text = value => String(value || '').trim()
 const git = (repo, args) => { try { return text(execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] })) } catch { return '' } }
 const field = (markdown, name) => text(String(markdown || '').match(new RegExp(`^${name}:\\s*(.+)$`, 'mi'))?.[1]).replace(/\s+#.*$/, '')
 
+export function sanitizeRepositoryUrl(value = '') {
+  const raw = text(value)
+  try {
+    const parsed = new URL(raw)
+    parsed.username = ''
+    parsed.password = ''
+    return parsed.toString()
+  } catch {
+    return raw.replace(/(https?:\/\/)[^@\s/]+@/i, '$1')
+  }
+}
+
 export async function readHarnessMode(repoRoot) {
   const profile = await readFile(join(repoRoot, '.cap/PROFILE.md'), 'utf8').catch(() => '')
   return field(profile, 'harness-mode').toLowerCase() === 'local-only' ? 'local-only' : 'server'
@@ -42,15 +54,7 @@ export async function buildCommitDelivery(repoRoot) {
 }
 
 export function buildPushAuthorizationFingerprint({ repoUrl = '', taskId = '', branch = '', commitSha = '' } = {}) {
-  let safeRepoUrl = text(repoUrl)
-  try {
-    const parsed = new URL(safeRepoUrl)
-    parsed.username = ''
-    parsed.password = ''
-    safeRepoUrl = parsed.toString()
-  } catch {
-    safeRepoUrl = safeRepoUrl.replace(/(https?:\/\/)[^@\s]+@/i, '$1')
-  }
+  const safeRepoUrl = sanitizeRepositoryUrl(repoUrl)
   const identity = [safeRepoUrl, text(taskId), text(branch), text(commitSha)].join('\n')
   return createHash('sha256').update(identity).digest('hex')
 }

@@ -131,8 +131,8 @@ bash /path/to/capital-agent-skills/scripts/setup.sh --server "https://your-serve
 升级和诊断：
 
 ```bash
-bash scripts/setup.sh --server "https://your-server" --upgrade
-bash scripts/setup.sh --server "https://your-server" --doctor
+bash scripts/setup.sh --upgrade
+bash scripts/setup.sh --doctor
 ```
 
 安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。安装或升级后建议完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务让 MCP 生效。若团队配置已经存在、但当前会话没有加载 Capital Agent MCP，Skills 会让用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；本地继续不会修改机器配置，但本任务不创建平台 Task、不回写经验或 Server Gate。需要手工连接自建 Server 时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
@@ -155,6 +155,16 @@ Git 仓库中的实现、修复、重构、测试、评审和发布请求会自�
 没有 Cap Server 时，“自动进入 Cap”表示启动本地研发主线，不会尝试创建远程 Task，也不会阻塞工作。团队未来接入 Server 后，继续使用相同命令即可获得中心知识库和可信 Gate 增强。
 
 需要显式启动时，Codex 使用 `$cap`，Claude Code 使用 `/cap`。也可以使用 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布` 等直白表达，不需要记忆内部 Skill 名称。
+
+维护或发布 Skills 前运行完整本地门禁：
+
+```bash
+bash scripts/release-check
+```
+
+该命令在显式本地模式下统一执行结构检查、Node/Python 行为回归、并发与安全边界测试以及补丁检查；任一失败都不得升级版本或打标签。
+
+安装或升级会在 `~/.capital-agent/install-manifest.json` 记录源码 Commit、插件版本和受管理文件哈希。Doctor 会比较当前运行源码与安装清单；如果显示“源码 Commit 漂移”“文件内容漂移”或“运行副本与源码目录不一致”，先运行升级命令，再完全退出并重新打开客户端。
 
 ## 演进方向
 

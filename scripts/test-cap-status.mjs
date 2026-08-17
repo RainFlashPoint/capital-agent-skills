@@ -42,6 +42,27 @@ test('legacy verify state normalizes to test and follows explicit next action', 
   assert.equal(result.stage, 'review')
 })
 
+test('team mode cannot advance from editable STATE gate text while platform is unverified', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-self-gate-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  const branch = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()
+  const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_fake\nbranch: ${branch}\nworktree: ${root}\nstage: review\nstatus: in-progress\ncap-gate: PASS reviewed-head=${'a'.repeat(40)}\n`)
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true, environment: {}, mcpRuntime: 'loaded' })
+  assert.equal(result.mode, 'platform_attached_unverified')
+  assert.equal(result.workflow.stage, 'review')
+  assert.equal(result.workflow.gated, true)
+  assert.match(result.workflow.reason, /Server Action/)
+})
+
+test('repository identity removes credentials before status output', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-redact-'))
+  execFileSync('git', ['remote', 'add', 'origin', 'https://audit-user:audit-secret@example.test/org/repo.git'], { cwd: repo })
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true, environment: { CAPITAL_AGENT_MODE: 'local' } })
+  assert.equal(result.repository.remote, 'https://example.test/org/repo.git')
+})
+
 test('offline handshake exposes missing platform and task instead of silently succeeding', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true })

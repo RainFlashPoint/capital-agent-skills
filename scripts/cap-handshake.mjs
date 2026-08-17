@@ -4,6 +4,7 @@ import { readFile } from 'fs/promises'
 import { homedir, hostname } from 'os'
 import { join } from 'path'
 import { checkPlatformHandshake } from './setup-lib.mjs'
+import { sanitizeRepositoryUrl } from './client-delivery.mjs'
 
 function git(args) { try { return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return '' } }
 function parseConfig(raw) { return Object.fromEntries(String(raw).split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1], match[2]])) }
@@ -17,7 +18,7 @@ const payload = {
   clientId,
   clientName: hostname(),
   clientVersion: 'cap-handshake/1',
-  repoUrl: git(['remote', 'get-url', 'origin']) || process.cwd(),
+  repoUrl: sanitizeRepositoryUrl(git(['remote', 'get-url', 'origin'])) || process.cwd(),
   branch: git(['branch', '--show-current']),
   mcpReachable: true,
   capabilities: { taskWrite: true, commitReconcile: true, skillSession: true },

@@ -66,7 +66,7 @@ build: 逐任务 RED→GREEN→verify   → 测试=ground truth(cap-implement RG
   ↓                              → 失败 → 系统化调试子环(三振升级)
 verify(按改动 resolve check)     → logic/journey/model(cap-test;无新鲜证据不声称通过)
   ↓
-review(多角色 + 安全 open=0 门)  → 写 cap-gate(cap-review;硬门一律不短)
+review(多角色 + 安全 open=0 门)  → local/local-only 写 cap-gate；team/server 绑定同一 Commit 的 Server Review Action(硬门一律不短)
   ↓
 converge oracle(§4)            → 真做完没?没 → 回 build;做完 → release
   ↓
@@ -89,7 +89,7 @@ release → intake Retire          → 标叶 shipped、解锁下游(§5 checkpo
 **单叶通过判据**(三条全满足才算这片叶 done):
 1. logic 全绿——真命令 + exit 0(ground truth,不接受"应该过了")。
 2. 每条 Done Criteria 有对应证据(命令输出 / 测试 / 制品),逐条核对。
-3. review gate = PASS(`cap-gate: PASS reviewed-head=<sha>`)。
+3. review gate = PASS(local/local-only：`cap-gate: PASS reviewed-head=<sha>`；team/server：同一 Commit 的 Server canonical Review Action succeeded，STATE 仅作镜像)。
 
 **不通过**:列出**未满足的** Done Criteria → append 成新 build 任务前**先查重**(同一 Done Criteria 不重复追加)→ 回 build。**per-leaf 迭代上限(防内层死循环)**:同一缺口连续 **≥3 轮**仍未消除(无新鲜进展)→ 该叶 **gated**(三振升级)。
 

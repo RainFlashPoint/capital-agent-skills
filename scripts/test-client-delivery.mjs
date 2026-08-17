@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildCandidateDelivery, buildCommitDelivery, buildPushAuthorizationFingerprint, flushPendingDeliveries, queueCommitDelivery, readHarnessMode } from './client-delivery.mjs'
@@ -27,6 +27,20 @@ test('task-scoped local fallback is visible to post-commit and does not leak to 
   assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_local' }), true)
   assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_next' }), false)
   assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/other', taskId: 'task_local' }), false)
+})
+
+test('persistent explicit local mode makes post-commit a hard no-op', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-post-local-')); const home = await mkdtemp(join(tmpdir(), 'cap-post-home-'))
+  git(repo, ['init', '-b', 'main']); git(repo, ['config', 'user.name', 'test']); git(repo, ['config', 'user.email', 'test@example.com'])
+  await mkdir(join(repo, '.cap')); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_local\nsession-id: session_local\n')
+  await writeFile(join(repo, 'a.txt'), 'body\n'); git(repo, ['add', 'a.txt']); git(repo, ['commit', '-m', 'local commit'])
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=local\nCAPITAL_AGENT_SERVER_URL=http://127.0.0.1:9\nCAPITAL_AGENT_USER_KEY=must-not-be-used\n')
+  const result = spawnSync(process.execPath, [new URL('./post-commit.mjs', import.meta.url).pathname], {
+    cwd: repo, env: { ...process.env, HOME: home, CAPITAL_AGENT_MODE: 'local' }, encoding: 'utf8', timeout: 5000,
+  })
+  assert.equal(result.status, 0, result.stderr)
+  await assert.rejects(readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), /ENOENT/)
 })
 
 test('candidate delivery is bound to exact task repo branch HEAD and passed local verification', async () => {

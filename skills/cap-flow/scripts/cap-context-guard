@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
-repo="${CAP_REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-context="$repo/.cap/task-context.md"
+repo_candidate="${CAP_REPO_ROOT:-.}"
 expected_intent=""
 stage=""
 
@@ -10,11 +9,17 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --intent) expected_intent="${2:-}"; shift 2 ;;
     --stage) stage="${2:-}"; shift 2 ;;
-    *) repo="$1"; context="$repo/.cap/task-context.md"; shift ;;
+    *) repo_candidate="$1"; shift ;;
   esac
 done
 
 fail() { printf 'cap-context: BLOCKED — %s\n' "$1" >&2; exit 1; }
+git_root="$(git -C "$repo_candidate" rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$git_root" ] || fail "目标路径不在 Git 仓库中：$repo_candidate"
+repo="$(cd "$git_root" 2>/dev/null && pwd -P)" || fail "无法解析 canonical Git root：$git_root"
+context="$repo/.cap/task-context.md"
+script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+package_root="$(cd "$script_dir/../../.." && pwd -P)"
 field() { sed -n "s/^- $1:[[:space:]]*//p" "$context" | head -1 | sed 's/[[:space:]]*$//'; }
 section_has_path() {
   awk -v heading="$1" '
@@ -32,9 +37,13 @@ for heading in "## Entry points" "## Call chain and data flow" "## Similar imple
 done
 
 intent="$(field intent)"; recorded_branch="$(field branch)"; recorded_head="$(field head)"
+recorded_index="$(field index-fingerprint)"; recorded_worktree="$(field worktree-fingerprint)"; recorded_untracked="$(field untracked-fingerprint)"
 [ -n "$intent" ] || fail "task-context 缺少 intent"
 [ -n "$recorded_branch" ] || fail "task-context 缺少 branch"
 [ -n "$recorded_head" ] || fail "task-context 缺少 head"
+[ -n "$recorded_index" ] || fail "task-context 缺少 index-fingerprint"
+[ -n "$recorded_worktree" ] || fail "task-context 缺少 worktree-fingerprint"
+[ -n "$recorded_untracked" ] || fail "task-context 缺少 untracked-fingerprint"
 [ "$(field profile-used-as)" = "index-only" ] || fail "PROFILE 必须标记为 index-only，不能代替代码事实"
 
 current_branch="$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
@@ -42,6 +51,12 @@ current_head="$(git -C "$repo" rev-parse --verify HEAD 2>/dev/null || true)"
 [ -n "$current_head" ] || current_head="working-tree"
 [ "$recorded_branch" = "$current_branch" ] || fail "分支已变化：记录=${recorded_branch} 当前=${current_branch}；重新调查代码"
 [ "$recorded_head" = "$current_head" ] || fail "HEAD 已变化：记录=${recorded_head} 当前=${current_head}；刷新 task-context"
+fingerprints="$(node "$package_root/scripts/cap-context-fingerprint.mjs" "$repo" 2>/dev/null)" || fail "无法计算 index/worktree/untracked fingerprint"
+set -- $fingerprints
+current_index="${1:-}"; current_worktree="${2:-}"; current_untracked="${3:-}"
+[ "$recorded_index" = "$current_index" ] || fail "index fingerprint 已变化；暂存区与调查时不一致，刷新 task-context"
+[ "$recorded_worktree" = "$current_worktree" ] || fail "worktree fingerprint 已变化；未暂存改动与调查时不一致，刷新 task-context"
+[ "$recorded_untracked" = "$current_untracked" ] || fail "untracked fingerprint 已变化；未跟踪文件与调查时不一致，刷新 task-context"
 
 if [ -n "$expected_intent" ] && [ "$intent" != "$expected_intent" ]; then
   fail "任务意图已变化；刷新 task-context（记录=${intent}）"
@@ -60,4 +75,4 @@ case "$stage" in
   *) fail "未知阶段：$stage" ;;
 esac
 
-printf 'cap-context: PASS — intent/branch/HEAD/代码证据均新鲜%s\n' "${stage:+，允许进入 $stage}"
+printf 'cap-context: PASS — intent/branch/HEAD/index/worktree/untracked/代码证据均新鲜%s\n' "${stage:+，允许进入 $stage}"

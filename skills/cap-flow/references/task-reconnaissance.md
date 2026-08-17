@@ -41,6 +41,9 @@
 - intent: <本次任务>
 - branch: <当前分支>
 - head: <调查时 HEAD；无提交则注明 working-tree>
+- index-fingerprint: <调查时暂存区 fingerprint>
+- worktree-fingerprint: <调查时未暂存 tracked fingerprint>
+- untracked-fingerprint: <调查时未跟踪文件 fingerprint；排除 .cap 工作态>
 - inspected-at: <UTC 时间>
 - profile-used-as: index-only
 
@@ -86,4 +89,4 @@
 bash <cap-flow>/scripts/cap-context-guard --stage <stage> [--intent "<当前任务原文>"] <repo>
 ```
 
-门禁检查文件存在、必填段、intent、branch、HEAD、PROFILE 的 `index-only` 声明，以及入口/测试/影响范围、证据来源和外部操作边界。失败时先刷新 `task-context.md`，不得口头解释后绕过。
+门禁从 canonical Git root 运行，检查文件存在、必填段、intent、branch、HEAD、index/worktree/untracked fingerprint、PROFILE 的 `index-only` 声明，以及入口/测试/影响范围、证据来源和外部操作边界。任一工作区事实变化都先刷新 `task-context.md`，不得口头解释后绕过。

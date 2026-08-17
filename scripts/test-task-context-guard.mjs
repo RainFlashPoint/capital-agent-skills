@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const guard = join(root, 'skills/cap-flow/scripts/cap-context-guard')
+const boundaryGuard = join(root, 'skills/cap-flow/scripts/cap-guard')
+const fingerprintScript = join(root, 'scripts/cap-context-fingerprint.mjs')
 
 function fixture() {
   const repo = mkdtempSync(join(tmpdir(), 'cap-context-fixture-'))
@@ -30,14 +32,22 @@ function run(repo, ...args) {
   return spawnSync('bash', [guard, ...args, repo], { cwd: repo, encoding: 'utf8' })
 }
 
+function fingerprints(repo) {
+  return JSON.parse(execFileSync(process.execPath, [fingerprintScript, repo, '--json'], { cwd: repo, encoding: 'utf8' }))
+}
+
 function writeContext(repo, { includeTests = true } = {}) {
   const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+  const snapshot = fingerprints(repo)
   writeFileSync(join(repo, '.cap/task-context.md'), `# Task Context
 
 - intent: 接入新的支付渠道
 - branch: ${branch}
 - head: ${head}
+- index-fingerprint: ${snapshot.index}
+- worktree-fingerprint: ${snapshot.worktree}
+- untracked-fingerprint: ${snapshot.untracked}
 - inspected-at: 2026-07-21T00:00:00Z
 - profile-used-as: index-only
 
@@ -75,11 +85,15 @@ ${includeTests ? '- `test/payment.test.js` — 支付测试入口' : '- 尚未�
 
 function writeWorkingTreeContext(repo) {
   const branch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+  const snapshot = fingerprints(repo)
   writeFileSync(join(repo, '.cap/task-context.md'), `# Task Context
 
 - intent: 初始化新项目
 - branch: ${branch}
 - head: working-tree
+- index-fingerprint: ${snapshot.index}
+- worktree-fingerprint: ${snapshot.worktree}
+- untracked-fingerprint: ${snapshot.untracked}
 - inspected-at: 2026-08-13T00:00:00Z
 - profile-used-as: index-only
 
@@ -150,6 +164,43 @@ test('a new commit makes the reconnaissance stale', () => {
   const result = run(repo, '--stage', 'test')
   assert.equal(result.status, 1)
   assert.match(result.stderr, /HEAD 已变化/)
+})
+
+test('staged changes make the recorded index fingerprint stale', () => {
+  const repo = fixture(); writeContext(repo)
+  appendFileSync(join(repo, 'src/payment-service.js'), '// staged change\n')
+  execFileSync('git', ['add', 'src/payment-service.js'], { cwd: repo })
+  const result = run(repo, '--stage', 'test')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /index fingerprint 已变化/)
+})
+
+test('unstaged tracked changes make the worktree fingerprint stale', () => {
+  const repo = fixture(); writeContext(repo)
+  appendFileSync(join(repo, 'src/payment-service.js'), '// worktree change\n')
+  const result = run(repo, '--stage', 'test')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /worktree fingerprint 已变化/)
+})
+
+test('untracked source changes make the untracked fingerprint stale', () => {
+  const repo = fixture(); writeContext(repo)
+  writeFileSync(join(repo, 'src/new-channel.js'), 'export const channel = true\n')
+  const result = run(repo, '--stage', 'test')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /untracked fingerprint 已变化/)
+})
+
+test('context and boundary guards resolve the canonical Git root from a nested directory', () => {
+  const repo = fixture(); writeContext(repo)
+  const nested = join(repo, 'src', 'nested'); mkdirSync(nested, { recursive: true })
+  const branch = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()
+  writeFileSync(join(repo, '.cap/STATE.md'), `# Cap State: fixture\nbranch: ${branch}\nworktree: ${repo}\nstage: implement\nstatus: in-progress\n`)
+  const contextResult = spawnSync('bash', [guard, '--stage', 'implement', nested], { cwd: nested, encoding: 'utf8' })
+  assert.equal(contextResult.status, 0, contextResult.stderr)
+  const boundaryResult = spawnSync('sh', [boundaryGuard], { cwd: nested, encoding: 'utf8' })
+  assert.equal(boundaryResult.status, 0, boundaryResult.stderr)
+  assert.match(boundaryResult.stdout, /边界一致/)
 })
 
 test('missing test evidence blocks the workflow', () => {

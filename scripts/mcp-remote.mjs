@@ -30,9 +30,9 @@ await fetch(`${serverUrl}/api/auth/handshake`, {
 
 const proxy = join(homedir(), '.capital-agent', 'mcp-runtime', 'node_modules', 'mcp-remote', 'dist', 'proxy.js')
 const nodeOptions = `${process.env.NODE_OPTIONS || ''} --require=${dnsFallback}`.trim()
-const child = spawn(process.execPath, [proxy, `${serverUrl}/api/mcp/message`, '--header', `x-user-key:${userKey}`], {
+const child = spawn(process.execPath, [proxy, `${serverUrl}/api/mcp/message`, '--header', 'x-user-key:${CAPITAL_AGENT_MCP_USER_KEY}'], {
   stdio: 'inherit',
-  env: { ...process.env, CAPITAL_AGENT_SERVER_URL: serverUrl, CAPITAL_AGENT_MCP_RUNTIME_DIR: join(homedir(), '.capital-agent', 'mcp-runtime'), NODE_OPTIONS: nodeOptions },
+  env: { ...process.env, CAPITAL_AGENT_SERVER_URL: serverUrl, CAPITAL_AGENT_MCP_USER_KEY: userKey, CAPITAL_AGENT_MCP_RUNTIME_DIR: join(homedir(), '.capital-agent', 'mcp-runtime'), NODE_OPTIONS: nodeOptions },
 })
 child.on('error', error => { process.stderr.write(`${error.message}\n`); process.exit(1) })
 child.on('exit', code => process.exit(code ?? 1))
