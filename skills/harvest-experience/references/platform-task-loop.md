@@ -22,8 +22,8 @@ MCP 工具已经加载、但平台或调用通道暂时不可用时，研发本�
 2. 运行 `cap-status.mjs <repo> --json` 对账当前本地 HEAD、upstream/远端跟踪 HEAD 与 STATE 的 `delivery-head`，再通过 MCP 确认平台最近 Delivery。若本地或远端存在未登记 Commit（包括 IDEA、人工或其它 Agent 提交），按提交顺序收集 Commit SHA 与改动路径并补调用 `record_task_delivery`；不得要求原 Codex 会话仍然存活。平台没有 Delivery 查询工具时，幂等重报当前 HEAD，由服务端去重。
 3. 若 `cap-status.task.requiresNewSession=true`，说明 STATE 指向的父 Task 已完成、平台已给出活动 follow-up Task：调用 `create_or_attach_task` 时显式传 `task_id=cap-status.task.id`，省略旧 `session_id`，并用本轮意图生成新的稳定幂等键。否则按常规创建/复用 Task。两种情况都传需求原文、repo、branch、base commit、leaf、worktree；`repository.harnessMode=local-only` 时固定传 `completion_mode=evidence_only`，业务 `server` 仓传 `completion_mode=code_change`。
 4. follow-up 必须重新计算并传入本轮 `verification_commands`；禁止照搬父 Task 的接口、测试或发布命令。平台返回新 Session 后，旧 session-id 仅作历史记录，不得继续写事件。
-5. 把返回的 `task_id`、`session_id`、Skill/知识快照 ID 写入 `.cap/STATE.md` 顶层元数据，覆盖父 Task/Session 指针。
-6. 后续 `enrich_context`、`record_skill_event`、`record_experience` 始终复用同一 repo URL 和新 session ID；`record_experience` 同时使用绑定 repo + Task + Commit + 意图的稳定 `idempotency_key`，Outbox 重放不得换键。
+5. 把返回的 `task_id`、`session_id`、Skill/知识快照 ID 写入 `.cap/STATE.md` 顶层元数据，覆盖父 Task/Session 指针。返回的 `knowledge_snapshot.items[].document_id` 只作为本 Task 的归因允许集合；不把知识正文写入 STATE。
+6. 后续 `enrich_context` 同时传新 Task ID 和 Session ID；`record_skill_event`、`record_experience` 始终复用同一 repo URL 和新 session ID。`record_experience` 同时使用绑定 repo + Task + Commit + 意图的稳定 `idempotency_key`，Outbox 重放不得换键。Server 持久化本次 `enrich_context` 实际返回的文档 ID；Delivery 只可上报“冻结允许集合 ∩ Server 注入台账 ∩ 客户端确认采用”中的真实采用项。旧会话缺注入台账时降为兼容统计，不补造精确证据。
 
 ## 平台 Action 接力
 

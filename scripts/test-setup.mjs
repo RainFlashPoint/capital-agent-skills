@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -192,6 +192,37 @@ test('upgrade removes only old internal links owned by this skill package', asyn
   await assert.rejects(lstat(join(target,'cap-shape')))
   assert.equal(await readlink(join(target,'cap-define')), other)
   assert.deepEqual(legacySkillNames, ['cap-map','cap-shape','cap-build','cap-verify'])
+})
+
+test('upgrade removes or backs up only Capital Agent skills from the retired Codex discovery directory', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'cap-legacy-codex-'))
+  const source = join(home, 'source', 'skills')
+  const oldSource = join(home, '.capital-agent', 'capital-agent-skills', 'skills')
+  const legacyRoot = join(home, '.codex', 'skills')
+  for (const name of ['cap', 'cap-flow', 'harvest-experience', 'cap-review']) await mkdir(join(source, name), { recursive: true })
+  await mkdir(join(oldSource, 'cap-flow'), { recursive: true })
+  await mkdir(join(oldSource, 'cap-map'), { recursive: true })
+  await mkdir(join(legacyRoot, 'harvest-experience'), { recursive: true })
+  await mkdir(join(legacyRoot, 'cap-review'), { recursive: true })
+  await symlink(join(oldSource, 'cap-flow'), join(legacyRoot, 'cap-flow'))
+  await symlink(join(oldSource, 'cap-map'), join(legacyRoot, 'cap-map'))
+  await writeFile(join(legacyRoot, 'harvest-experience', 'SKILL.md'), '---\nname: harvest-experience\n---\n# Capital Agent experience\n')
+  await writeFile(join(legacyRoot, 'cap-review', 'SKILL.md'), '---\nname: cap-review\n---\n# User-owned review skill\n')
+
+  const before = await inspectLegacyCodexSkills(home, source)
+  assert.deepEqual(before.entries.map(item => [item.name, item.kind]).sort(), [
+    ['cap-flow', 'managed_link'],
+    ['cap-map', 'managed_link'],
+    ['cap-review', 'unmanaged_conflict'],
+    ['harvest-experience', 'managed_directory'],
+  ])
+
+  const migrated = await migrateLegacyCodexSkills(home, source)
+  assert.deepEqual(migrated.removed.sort(), ['cap-flow', 'cap-map'])
+  assert.equal(migrated.backedUp[0].name, 'harvest-experience')
+  assert.equal((await lstat(join(home, '.capital-agent', 'legacy-codex-skills', 'harvest-experience'))).isDirectory(), true)
+  assert.equal((await lstat(join(legacyRoot, 'cap-review'))).isDirectory(), true)
+  assert.deepEqual(migrated.after.entries.map(item => item.name), ['cap-review'])
 })
 test('polls until browser approval', async () => {
   let calls = 0

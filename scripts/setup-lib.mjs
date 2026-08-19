@@ -37,6 +37,7 @@ export const activationRuleTargets = home => ({ codex: join(home, '.codex', 'AGE
 export const codexConfigPath = home => join(home, '.codex', 'config.toml')
 export const cursorMcpConfigPath = home => join(home, '.cursor', 'mcp.json')
 export const installManifestPath = home => join(home, '.capital-agent', 'install-manifest.json')
+export const legacyCodexSkillRoot = home => join(home, '.codex', 'skills')
 
 const MANAGED_DIRECTORIES = ['skills', 'scripts', 'runtime', '.claude-plugin']
 const MANAGED_ROOT_FILES = ['README.md', 'CHANGELOG.md', 'AGENTS.md', 'CLAUDE.md']
@@ -101,6 +102,71 @@ export async function inspectInstallManifest(home, sourceRoot) {
     : recorded.sourceCommit !== current.sourceCommit ? 'source_commit_drift'
       : changedFiles.length ? 'file_manifest_drift' : ''
   return { ok: !reason, reason, path, recorded, current, changedFiles }
+}
+
+async function packageSkillNames(sourceDir) {
+  const current = (await readdir(sourceDir, { withFileTypes: true }).catch(() => []))
+    .filter(item => item.isDirectory())
+    .map(item => item.name)
+  return [...new Set([...current, ...legacySkillNames])]
+}
+
+function resolvesToCapitalAgentPackage(target, name, { home, sourceDir, linkPath }) {
+  const resolved = resolve(dirname(linkPath), target)
+  const current = resolve(sourceDir, name)
+  const legacy = resolve(home, '.capital-agent', 'capital-agent-skills', 'skills', name)
+  const normalized = resolved.split('\\').join('/')
+  return resolved === current || resolved === legacy || normalized.endsWith(`/capital-agent-skills/skills/${name}`)
+}
+
+export async function inspectLegacyCodexSkills(home, sourceDir) {
+  const root = legacyCodexSkillRoot(home)
+  const entries = []
+  for (const name of await packageSkillNames(sourceDir)) {
+    const path = join(root, name)
+    const stat = await lstat(path).catch(() => null)
+    if (!stat) continue
+    if (stat.isSymbolicLink()) {
+      const target = await readlink(path).catch(() => '')
+      entries.push({ name, path, kind: resolvesToCapitalAgentPackage(target, name, { home, sourceDir, linkPath: path }) ? 'managed_link' : 'unmanaged_conflict', target })
+      continue
+    }
+    if (stat.isDirectory()) {
+      const skill = await readFile(join(path, 'SKILL.md'), 'utf8').catch(() => '')
+      const declared = skill.match(/^name:\s*([^\r\n]+)$/m)?.[1]?.trim() || ''
+      const managed = declared === name && /capital[ -]agent/i.test(skill)
+      entries.push({ name, path, kind: managed ? 'managed_directory' : 'unmanaged_conflict', target: '' })
+    }
+  }
+  return { ok: entries.length === 0, root, entries }
+}
+
+export async function migrateLegacyCodexSkills(home, sourceDir) {
+  const before = await inspectLegacyCodexSkills(home, sourceDir)
+  const backupRoot = join(home, '.capital-agent', 'legacy-codex-skills')
+  const removed = []
+  const backedUp = []
+  const conflicts = []
+  for (const entry of before.entries) {
+    if (entry.kind === 'managed_link') {
+      await unlink(entry.path)
+      removed.push(entry.name)
+      continue
+    }
+    if (entry.kind === 'managed_directory') {
+      const backup = join(backupRoot, entry.name)
+      if (await lstat(backup).catch(() => null)) {
+        conflicts.push({ ...entry, reason: 'backup_exists', backup })
+        continue
+      }
+      await mkdir(backupRoot, { recursive: true, mode: 0o700 })
+      await rename(entry.path, backup)
+      backedUp.push({ name: entry.name, backup })
+      continue
+    }
+    conflicts.push({ ...entry, reason: 'not_owned' })
+  }
+  return { removed, backedUp, conflicts, backupRoot, after: await inspectLegacyCodexSkills(home, sourceDir) }
 }
 
 const ACTIVATION_START = '<!-- capital-agent:auto-activation:start -->'

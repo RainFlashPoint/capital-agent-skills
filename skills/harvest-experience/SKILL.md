@@ -25,9 +25,12 @@ allowed-tools:
 - `agent_type`: 按任务性质选 `dev`（改代码）/ `prd`（理需求）/ `review` / `test`
 - `input`: 用户这次的需求/意图原文
 - `repo_url`: 当前仓库地址（`git remote get-url origin` 或本地路径，用于统计复用率归因）；首次外发前必须移除 URL 中的用户名、密码和 Token，注入与沉淀复用同一份净化结果。
-- `session_id`: 可选，会话标识
+- `session_id`: 团队模式使用 Task 返回的会话标识
+- `task_id`: 新版 Server 支持时同时传统一 Task ID；Server 会把本次真实返回的知识 ID 持久化到该 Task 的注入台账。旧客户端未传时可由 `session_id` 反查，反查失败只保留曝光统计，不能形成精确采纳证据。
 
 把返回的经验内容作为上下文纳入你的方案，不要照搬无关内容。若返回为空，正常编码即可。
+
+团队模式下，`create_or_attach_task` 会同时返回冻结知识快照的最小 `knowledge_snapshot.items`（文档 ID、标题、来源类型和命中原因），`enrich_context` 会在每条可归因知识旁标出 `知识ID`。冻结快照是允许集合，Server 注入台账是本轮真实看到的集合；Delivery 声明是客户端确认采用的集合。只有三者交集才能成为精确采用。标题相似但 ID 不同、只在其中一边出现，或属于代码图谱/项目画像而没有快照文档 ID 时，都不能声称采用。
 
 ## 2. 会话结束 —— 沉淀经验（harvest）
 
@@ -95,7 +98,7 @@ Task 完成并严格退场后，额外登记 `.cap/history/<task-id>` 的历史�
 
 若已有有效 Git Commit 且 MCP 提供 `record_task_delivery`，按 `references/platform-task-loop.md` 自动回写 Commit、改动文件路径、verify/review。HEAD 已推送且门禁满足时，再调用 `request_docker_verification`；不得上传未提交工作区或代码正文。
 
-回写 Delivery 时，若 Task 绑定过知识快照，必须基于本轮真实使用情况填写 `knowledge_outcome`：直接照用为 `direct_adopted`，经过实质修正后使用为 `modified_adopted`，看过但未使用为 `not_used`，确认不适用或产生误导为 `rejected`。对于采用或拒绝，同时传 `knowledge_used_ids`，只列本轮实际使用/判错的知识文档 ID；它必须是 Task 创建时冻结知识快照的子集，Server 会拒绝快照外 ID。不得因为“检索到了知识”就默认声称采用；误导时在 `knowledge_reasons` 中加入 `knowledge_misled`，并用 `knowledge_note` 写一句脱敏原因。旧客户端未传 ID 时只按 `coarse_legacy` 兼容统计，不能作为精确复用证明。
+回写 Delivery 时，若 Task 绑定过知识快照，必须基于本轮真实使用情况填写 `knowledge_outcome`：直接照用为 `direct_adopted`，经过实质修正后使用为 `modified_adopted`，看过但未使用为 `not_used`，确认不适用或产生误导为 `rejected`。对于采用或拒绝，同时传 `knowledge_used_ids`，只列本轮实际使用/判错、且同时出现在 Task 冻结快照与本轮注入结果中的知识文档 ID；Server 会与持久化注入台账再次取交集，并拒绝快照外或本轮未注入的 ID。不得按标题猜 ID，也不得因为“检索到了知识”就默认声称采用；误导时在 `knowledge_reasons` 中加入 `knowledge_misled`，并用 `knowledge_note` 写一句脱敏原因。旧客户端、旧事件或缺失注入台账时只按 `coarse_legacy` 兼容统计，不能作为精确复用证明。
 
 一条可证明的复用链必须同时具备：来源经验引用原 Task、后续 Task 的知识快照包含该文档、Delivery 以 `knowledge_used_ids` 精确采用、最终 Commit Gate 成功。若后续 Task 仅一次 Delivery 即通过，Server 记录 `first_pass=true`，形成“第一次踩坑，第二次避开”的可核验案例，而不是只看页面上的曝光次数。
 

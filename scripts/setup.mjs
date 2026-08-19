@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets, writeInstallManifest } from './setup-lib.mjs'
+import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets, writeInstallManifest } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -32,6 +32,14 @@ function installStateDetail(state, localMode = false) {
   const labels = { manifest_missing: '未找到安装清单', source_unavailable: '安装源码不可用', source_root_mismatch: '运行副本与本次源码目录不一致', version_drift: '版本号漂移', source_commit_drift: '源码 Commit 漂移', file_manifest_drift: '文件内容漂移' }
   return `FAIL（${labels[state.reason] || state.reason}${state.changedFiles.length ? `: ${state.changedFiles.slice(0, 5).join(', ')}` : ''}；请运行 ${localMode ? '--local --upgrade' : '--upgrade'}）`
 }
+function legacySkillDetail(state = {}) {
+  if (state.ok) return 'PASS'
+  return `FAIL（旧版重复 Skill: ${(state.entries || []).map(item => item.name).join(', ')}；请运行升级命令）`
+}
+function migrationDetail(result = {}) {
+  const moved = [...(result.removed || []), ...(result.backedUp || []).map(item => item.name)]
+  return moved.length ? `；已迁移旧版 Codex Skill: ${moved.join(', ')}` : ''
+}
 function probeInstalledMcp(state = {}) {
   if (!state.registered || !state.valid) return false
   try { return JSON.parse(execFileSync(process.execPath,[join(here,'probe-mcp.mjs'),state.command,...state.args],{encoding:'utf8',timeout:15_000})).ok === true } catch { return false }
@@ -52,9 +60,10 @@ if (args.doctor && args.local) {
   const claudeActivation = await hasActivationRule(rules.claude)
   const cursorActivation = await hasActivationRule(rules.cursor)
   const installState = await inspectInstallManifest(homedir(), root)
+  const legacySkills = await inspectLegacyCodexSkills(homedir(), join(root, 'skills'))
   const installDetail = installStateDetail(installState, true)
-  process.stdout.write(`运行模式: 本地（显式）\n安装源码一致性: ${installDetail}\nCodex Skill: ${codexSkill?'PASS':'未安装'}\nClaude Skill: ${claudeSkill?'PASS':'未安装'}\nCursor Skill: ${cursorSkill?'PASS':'未安装'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n平台 / MCP / Test Provider: 本地模式跳过\n当前会话加载状态: Doctor 只能验证磁盘配置；已打开的客户端需重启后才会加载更新。\n`)
-  if (!installState.ok || (!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode = 1
+  process.stdout.write(`运行模式: 本地（显式）\n安装源码一致性: ${installDetail}\n旧版 Codex Skill 隔离: ${legacySkillDetail(legacySkills)}\nCodex Skill: ${codexSkill?'PASS':'未安装'}\nClaude Skill: ${claudeSkill?'PASS':'未安装'}\nCursor Skill: ${cursorSkill?'PASS':'未安装'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n平台 / MCP / Test Provider: 本地模式跳过\n当前会话加载状态: Doctor 只能验证磁盘配置；已打开的客户端需重启后才会加载更新。\n`)
+  if (!installState.ok || !legacySkills.ok || (!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode = 1
   process.exit()
 }
 
@@ -76,10 +85,11 @@ if (args.doctor) {
   const claudeActivation = await hasActivationRule(rules.claude)
   const cursorActivation = await hasActivationRule(rules.cursor)
   const installState = await inspectInstallManifest(homedir(), root)
+  const legacySkills = await inspectLegacyCodexSkills(homedir(), join(root, 'skills'))
   const installDetail = installStateDetail(installState)
   const label = (state,index) => !state.registered ? '未注册' : !state.valid ? 'FAIL（配置路径不可用）' : clientMcpProbes[index] ? 'PASS' : 'FAIL（实际调用失败）'
-  process.stdout.write(`安装源码一致性: ${installDetail}\n平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${label(codexMcp,0)}\nClaude MCP: ${label(claudeMcp,1)}\nCursor MCP: ${label(cursorMcp,2)}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n当前会话加载状态: Doctor 已验证磁盘配置与独立 MCP 调用，但不能让已打开的客户端热加载；当前任务仍无 MCP 工具时请完全重启客户端。\n`)
-  if (!installState.ok || !health.ok || !mcpRuntime || !mcpTools || !mcpRegistered || !provider.ok || !providerAuth.ok || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode=1
+  process.stdout.write(`安装源码一致性: ${installDetail}\n旧版 Codex Skill 隔离: ${legacySkillDetail(legacySkills)}\n平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${label(codexMcp,0)}\nClaude MCP: ${label(claudeMcp,1)}\nCursor MCP: ${label(cursorMcp,2)}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${provider.ok&&providerAuth.ok?'PASS':'FAIL'}\nProvider 权限: ${provider.ok?'test-only':'不可用'}\n当前会话加载状态: Doctor 已验证磁盘配置与独立 MCP 调用，但不能让已打开的客户端热加载；当前任务仍无 MCP 工具时请完全重启客户端。\n`)
+  if (!installState.ok || !legacySkills.ok || !health.ok || !mcpRuntime || !mcpTools || !mcpRegistered || !provider.ok || !providerAuth.ok || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode=1
   process.exit()
 }
 
@@ -90,6 +100,7 @@ if (args.local) {
   await writeFile(configFile,`CAPITAL_AGENT_MODE=local\n${retainedConfig}${retainedConfig ? '\n' : ''}`,{mode:0o600})
   await chmod(configFile,0o600)
   const installed = []
+  const legacyMigration = await migrateLegacyCodexSkills(homedir(), join(root, 'skills'))
   const targets = skillTargets(homedir())
   const rules = activationRuleTargets(homedir())
   await installActivationRule(rules.codex)
@@ -100,7 +111,7 @@ if (args.local) {
   if (!args.codexOnly && !args.claudeOnly) installed.push(`Cursor: ${(await installSkillLinks(join(root,'skills'),targets.cursor)).length}`)
   if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
   await writeInstallManifest(homedir(), root)
-  process.stdout.write(`Capital Agent 本地模式安装完成。${installed.join('，')}。不会连接平台、创建 Task、调用 MCP/Harness 或累积 Outbox；测试与评审证据保留在本地。配置保存在 ${configFile}。\n${clientRestartNotice()}\n`)
+  process.stdout.write(`Capital Agent 本地模式安装完成。${installed.join('，')}${migrationDetail(legacyMigration)}。不会连接平台、创建 Task、调用 MCP/Harness 或累积 Outbox；测试与评审证据保留在本地。配置保存在 ${configFile}。\n${clientRestartNotice()}\n`)
   process.exit()
 }
 if (!userKey) {
@@ -123,6 +134,7 @@ if (installedMcpVersion !== MCP_REMOTE_VERSION) {
 }
 
 const installed = []
+const legacyMigration = await migrateLegacyCodexSkills(homedir(), join(root, 'skills'))
 const targets = skillTargets(homedir())
 const rules = activationRuleTargets(homedir())
 await installActivationRule(rules.codex)
@@ -137,4 +149,4 @@ if (!args.configOnly && !args.codexOnly && !args.claudeOnly) await installCursor
 if (!args.configOnly && !args.codexOnly && commandExists('claude')) { try { run('claude',['mcp','remove','capital-agent','-s','user']) } catch {}; run('claude',['mcp','add','-s','user','capital-agent','--',process.execPath,wrapper]) }
 if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
 await writeInstallManifest(homedir(), root)
-process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}。真实研发请求将自动进入 Cap；本地 Test Provider 已启用（按需运行、test-only）。配置仅保存在 ${configFile} 与 ${localProvider.configPath}。\n${clientRestartNotice()}\n`)
+process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}${migrationDetail(legacyMigration)}。真实研发请求将自动进入 Cap；本地 Test Provider 已启用（按需运行、test-only）。配置仅保存在 ${configFile} 与 ${localProvider.configPath}。\n${clientRestartNotice()}\n`)

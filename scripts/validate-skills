@@ -19,7 +19,7 @@ contains_old_skill_name(){
 }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-history-recon.mjs" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -75,6 +75,8 @@ for f in "$ROOT"/cap-{understand,define,plan,implement,test,review,release}/SKIL
 done
 grep -q 'task-context.md' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未要求任务级代码事实"
 grep -q 'cap-context-guard' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未执行 task-context 确定性门禁"
+grep -q 'cap-history-recon.mjs' "$REF/task-reconnaissance.md" || err "task-context 未执行确定性历史侦察"
+grep -q '先核实高分候选，再问用户' "$REF/task-reconnaissance.md" || err "历史侦察仍可能先把历史定位问题交还用户"
 grep -q 'cap-status.mjs' "$ROOT/cap/SKILL.md" || err "cap 未执行客户端握手与下一动作判定"
 grep -q 'outbox.jsonl' "$ROOT/cap/SKILL.md" || err "cap 未声明离线 Outbox 补报协议"
 grep -q '等待历史元数据补报授权' "$ROOT/cap/SKILL.md" || err "cap 未区分当前 Task 与历史 Outbox 授权边界"
