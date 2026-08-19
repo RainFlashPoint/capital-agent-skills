@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { acknowledgeOutboxEvent, enqueueOutboxEvent, inspectOutbox, markOutboxAttempt } from './cap-outbox.mjs'
+import { acknowledgeOutboxEvent, enqueueOutboxEvent, inspectOutbox, markOutboxAttempt, outboxEventTaskRef } from './cap-outbox.mjs'
 
 const text = value => String(value || '').trim()
 const git = (repo, args) => { try { return text(execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] })) } catch { return '' } }
@@ -99,7 +99,7 @@ export async function queueCommitDelivery(repoRoot, item) {
   })
 }
 
-export async function flushPendingDeliveries(repoRoot, { fetchImpl = fetch, homeDir = homedir() } = {}) {
+export async function flushPendingDeliveries(repoRoot, { activeTaskRef = '', fetchImpl = fetch, homeDir = homedir() } = {}) {
   const path = join(repoRoot, '.cap/pending-deliveries.jsonl')
   const raw = await readFile(path, 'utf8').catch(() => '')
   const rows = raw.split(/\r?\n/).filter(Boolean).map(line => { try { return JSON.parse(line) } catch { return null } }).filter(Boolean)
@@ -110,8 +110,12 @@ export async function flushPendingDeliveries(repoRoot, { fetchImpl = fetch, home
     await rename(temp, path)
   }
   const config = await readClientConfig(homeDir)
-  const plan = await inspectOutbox(repoRoot)
-  const deliveries = plan.events.filter(item => item.type === 'delivery.record' && item.replayStatus === 'ready')
+  const plan = await inspectOutbox(repoRoot, { activeTaskRef })
+  const pendingIds = new Set(plan.events.map(item => item.id))
+  const deliveries = plan.events.filter(item => item.type === 'delivery.record'
+    && item.replayStatus === 'ready'
+    && !(item.dependsOn || []).some(dependencyId => pendingIds.has(dependencyId))
+    && (!activeTaskRef || outboxEventTaskRef(item) === text(activeTaskRef)))
   let sent = 0
   for (const event of deliveries) {
     const item = event.payload || {}
@@ -123,7 +127,8 @@ export async function flushPendingDeliveries(repoRoot, { fetchImpl = fetch, home
     if (ok) { await acknowledgeOutboxEvent(repoRoot, event.id); sent += 1 }
     else await markOutboxAttempt(repoRoot, event.id, 'delivery_replay_failed')
   }
-  const after = await inspectOutbox(repoRoot)
-  const pending = after.events.filter(item => item.type === 'delivery.record').length
+  const after = await inspectOutbox(repoRoot, { activeTaskRef })
+  const pending = after.events.filter(item => item.type === 'delivery.record'
+    && (!activeTaskRef || outboxEventTaskRef(item) === text(activeTaskRef))).length
   return { total: deliveries.length, migrated: rows.length, sent, pending }
 }

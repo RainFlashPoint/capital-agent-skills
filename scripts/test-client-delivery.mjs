@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildCandidateDelivery, buildCommitDelivery, buildPushAuthorizationFingerprint, flushPendingDeliveries, queueCommitDelivery, readHarnessMode } from './client-delivery.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
+import { enqueueOutboxEvent } from './cap-outbox.mjs'
 
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
 
@@ -98,6 +99,71 @@ test('pending delivery queue flushes successfully and keeps failed rows', async 
   const result = await flushPendingDeliveries(repo, { homeDir: home, fetchImpl: async () => ({ ok: true }) })
   assert.deepEqual(result, { total: 1, migrated: 0, sent: 1, pending: 0 })
   assert.equal(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), '')
+})
+
+test('delivery flush sends only the active Task and leaves historical Task metadata untouched', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-delivery-task-scope-')); const home = await mkdtemp(join(tmpdir(), 'cap-delivery-task-scope-home-'))
+  await mkdir(join(repo, '.cap')); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-key\n')
+  await queueCommitDelivery(repo, { taskId: 'task_old', payload: { commit_sha: 'old' } })
+  await queueCommitDelivery(repo, { taskId: 'task_current', payload: { commit_sha: 'current' } })
+  await queueCommitDelivery(repo, { taskId: '', payload: { commit_sha: 'unscoped' } })
+  const requests = []
+
+  const result = await flushPendingDeliveries(repo, {
+    activeTaskRef: 'task_current',
+    homeDir: home,
+    fetchImpl: async url => { requests.push(String(url)); return { ok: true } },
+  })
+
+  assert.deepEqual(result, { total: 1, migrated: 0, sent: 1, pending: 0 })
+  assert.equal(requests.length, 1)
+  assert.match(requests[0], /\/api\/tasks\/task_current\/commit-reconcile$/)
+  assert.doesNotMatch(requests[0], /task_old/)
+  const remaining = await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8')
+  assert.match(remaining, /task_old/)
+  assert.match(remaining, /unscoped/)
+  assert.doesNotMatch(remaining, /task_current/)
+})
+
+test('delivery flush does not bypass an unresolved dependency from another Task', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-delivery-cross-task-dependency-')); const home = await mkdtemp(join(tmpdir(), 'cap-delivery-cross-task-dependency-home-'))
+  await mkdir(join(repo, '.cap')); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-key\n')
+  const old = await enqueueOutboxEvent(repo, { type: 'task.attach', idempotencyKey: 'old:attach', localTaskRef: 'task_old', payload: {} })
+  await enqueueOutboxEvent(repo, {
+    type: 'delivery.record', idempotencyKey: 'current:delivery', localTaskRef: 'task_current', dependsOn: [old.event.id],
+    payload: { taskId: 'task_current', payload: { commit_sha: 'current' } },
+  })
+  const requests = []
+
+  const result = await flushPendingDeliveries(repo, {
+    activeTaskRef: 'task_current', homeDir: home,
+    fetchImpl: async url => { requests.push(String(url)); return { ok: true } },
+  })
+
+  assert.deepEqual(result, { total: 0, migrated: 0, sent: 0, pending: 1 })
+  assert.deepEqual(requests, [])
+  assert.match(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), /current:delivery/)
+})
+
+test('delivery flush proceeds when a recorded dependency has already left the pending Outbox', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-delivery-resolved-dependency-')); const home = await mkdtemp(join(tmpdir(), 'cap-delivery-resolved-dependency-home-'))
+  await mkdir(join(repo, '.cap')); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-key\n')
+  await enqueueOutboxEvent(repo, {
+    type: 'delivery.record', idempotencyKey: 'current:delivery:resolved', localTaskRef: 'task_current', dependsOn: ['evt_already_acked'],
+    payload: { taskId: 'task_current', payload: { commit_sha: 'current' } },
+  })
+  const requests = []
+
+  const result = await flushPendingDeliveries(repo, {
+    activeTaskRef: 'task_current', homeDir: home,
+    fetchImpl: async url => { requests.push(String(url)); return { ok: true } },
+  })
+
+  assert.deepEqual(result, { total: 1, migrated: 0, sent: 1, pending: 0 })
+  assert.equal(requests.length, 1)
 })
 
 test('legacy pending delivery file migrates into the unified outbox before replay', async () => {

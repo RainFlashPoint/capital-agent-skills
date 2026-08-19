@@ -6,6 +6,7 @@ import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { inspectTaskBoundary } from './cap-status.mjs'
+import { archiveHistoricalOutboxEvents } from './cap-outbox.mjs'
 
 const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'verify', 'review', 'release']
 
@@ -42,6 +43,7 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
   await mkdir(snapshotRoot, { recursive: true })
 
   const moved = []
+  let outboxArchive = { archived: 0, pending: 0, totalBefore: 0, archivePath: '', retainedHistoricalPending: 0 }
   try {
     for (const name of ACTIVE_PATHS) {
       const source = join(capRoot, name)
@@ -53,6 +55,17 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
     await writeFile(join(snapshotRoot, 'manifest.json'), `${JSON.stringify({ oldTaskId, oldSessionId: field(oldState, 'session-id'), oldBranch: field(oldState, 'branch'), currentBranch: branch, currentWorktree: gitRoot, fingerprint, moved: moved.map(item => item.source.slice(capRoot.length + 1)) }, null, 2)}\n`)
     await writeFile(statePath, `# Cap State: ${title}\n\nstage: ${stage}\nstatus: in-progress\ntask-id: ${taskId}\nsession-id: ${sessionId}\nbranch: ${branch}\nbranch-purpose: feature/${safeSegment(title, 'task')}\nbase-commit: ${head}\nworktree: ${gitRoot}\nupdated: pending\n\n## Gates passed\n- [ ] context：task-context.md 已基于当前任务与代码 HEAD 刷新\n- [x] git：旧任务状态已安全隔离，当前分支与本 Task 绑定\n\n## Decisions log\n- 旧活动状态已保存到 .cap/local-state/stale/${safeSegment(oldTaskId)}/${fingerprint}，未修改业务源码。\n\n## Next action\n-> refresh task-context before implementation\n`)
     await writeFile(join(capRoot, 'task-context.md'), `# Task Context\n\n- intent: ${intentSummary || title}\n- branch: ${branch}\n- head: ${head}\n- status: pending-reconnaissance\n\n当前文件仅完成 Task 边界切换；进入需求确认、计划或编码前必须重新执行任务级代码侦察。\n`)
+    try {
+      outboxArchive = await archiveHistoricalOutboxEvents(repo, { activeTaskRef: taskId, archiveLabel: oldTaskId })
+      if (outboxArchive.archived) {
+        const currentState = await readFile(statePath, 'utf8')
+        await writeFile(statePath, currentState.replace('\n## Next action', `\n- 已将 ${outboxArchive.archived} 条非当前 Task Outbox 元数据归档，未补报、未删除；活动 Outbox 剩余 ${outboxArchive.pending} 条。\n\n## Next action`))
+      }
+    } catch (error) {
+      outboxArchive = { ...outboxArchive, error: String(error?.message || error) }
+      const currentState = await readFile(statePath, 'utf8')
+      await writeFile(statePath, currentState.replace('\n## Next action', `\n- 历史 Outbox 自动归档未完成：${outboxArchive.error}；cap-status 仍按当前 Task 隔离展示，旧事件未重放、未删除。\n\n## Next action`))
+    }
   } catch (error) {
     await rm(statePath, { force: true }).catch(() => {})
     await rm(join(capRoot, 'task-context.md'), { force: true }).catch(() => {})
@@ -60,7 +73,7 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
     await rm(snapshotRoot, { recursive: true, force: true }).catch(() => {})
     throw error
   }
-  return { switched: true, snapshotRoot, oldTaskId, taskId, sessionId, branch, head }
+  return { switched: true, snapshotRoot, oldTaskId, taskId, sessionId, branch, head, outboxArchive }
 }
 
 function args(argv) {

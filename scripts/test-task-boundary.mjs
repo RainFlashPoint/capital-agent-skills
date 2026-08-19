@@ -63,3 +63,24 @@ test('matching active boundary refuses implicit replacement', async () => {
   const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new', expectedOldTaskId: 'task_old' })
   assert.equal(result.oldTaskId, 'task_old')
 })
+
+test('Task switch archives old Outbox metadata and leaves only the new Task active', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_old\nsession-id: session_old\nbranch: feature/new-task\nworktree: ${repo}\nstage: done\nstatus: in-progress\n`)
+  await writeFile(join(repo, '.cap/outbox.jsonl'), [
+    JSON.stringify({ id: 'evt_old', idempotencyKey: 'old:1', type: 'skill.event', localTaskRef: 'task_old', dependsOn: [], payload: {}, createdAt: '2026-08-18T00:00:00.000Z' }),
+    JSON.stringify({ id: 'evt_new', idempotencyKey: 'new:1', type: 'skill.event', localTaskRef: 'task_new', dependsOn: [], payload: {}, createdAt: '2026-08-18T00:00:01.000Z' }),
+    JSON.stringify({ id: 'evt_unscoped', idempotencyKey: 'unscoped:1', type: 'skill.event', dependsOn: [], payload: {}, createdAt: '2026-08-18T00:00:02.000Z' }),
+  ].join('\n') + '\n')
+
+  const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new', expectedOldTaskId: 'task_old' })
+  assert.equal(result.outboxArchive.archived, 1)
+  assert.equal(result.outboxArchive.pending, 1)
+  assert.equal(result.outboxArchive.unscopedPending, 1)
+  assert.match(await readFile(result.outboxArchive.archivePath, 'utf8'), /old:1/)
+  const remaining = await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8')
+  assert.doesNotMatch(remaining, /old:1/)
+  assert.match(remaining, /new:1/)
+  assert.match(remaining, /unscoped:1/)
+})

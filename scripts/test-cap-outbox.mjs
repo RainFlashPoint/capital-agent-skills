@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
-import { acknowledgeOutboxEvent, buildReplayPlan, enqueueOutboxEvent, inspectOutbox, markOutboxAttempt } from './cap-outbox.mjs'
+import { acknowledgeOutboxEvent, archiveHistoricalOutboxEvents, buildReplayPlan, enqueueOutboxEvent, inspectOutbox, markOutboxAttempt } from './cap-outbox.mjs'
 
 test('outbox enqueue is idempotent by stable key', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-'))
@@ -87,4 +87,71 @@ test('outbox corruption blocks mutation instead of silently deleting evidence', 
     /outbox_corrupt_line:2/,
   )
   assert.match(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), /partial/)
+})
+
+test('scoped outbox inspection keeps historical Task metadata out of the active replay plan', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-scope-'))
+  await enqueueOutboxEvent(repo, { type: 'skill.event', idempotencyKey: 'old:1', localTaskRef: 'task_old', payload: {} })
+  await enqueueOutboxEvent(repo, { type: 'skill.event', idempotencyKey: 'current:1', localTaskRef: 'task_current', payload: {} })
+  await enqueueOutboxEvent(repo, { type: 'task.attach', idempotencyKey: 'unscoped:1', payload: {} })
+
+  const outbox = await inspectOutbox(repo, { activeTaskRef: 'task_current' })
+  assert.equal(outbox.totalPending, 3)
+  assert.equal(outbox.pending, 1)
+  assert.equal(outbox.historicalPending, 1)
+  assert.equal(outbox.unscopedPending, 1)
+  assert.deepEqual(outbox.events.map(item => item.idempotencyKey), ['current:1'])
+})
+
+test('historical Task events are archived without replay or loss and repeated archiving is idempotent', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-archive-'))
+  await enqueueOutboxEvent(repo, { type: 'experience.record', idempotencyKey: 'old:1', localTaskRef: 'task_old', payload: { changed_files: ['a.js'] } })
+  await enqueueOutboxEvent(repo, { type: 'delivery.record', idempotencyKey: 'old:2', localTaskRef: 'task_old', payload: { task_id: 'task_old' } })
+  await enqueueOutboxEvent(repo, { type: 'skill.event', idempotencyKey: 'current:1', localTaskRef: 'task_current', payload: {} })
+  await enqueueOutboxEvent(repo, { type: 'task.attach', idempotencyKey: 'unscoped:1', payload: {} })
+
+  const first = await archiveHistoricalOutboxEvents(repo, { activeTaskRef: 'task_current', archiveLabel: 'task_old' })
+  assert.equal(first.archived, 2)
+  assert.equal(first.pending, 1)
+  assert.equal(first.unscopedPending, 1)
+  assert.match(first.archivePath, /\.cap\/local-state\/outbox-archive\/task_old\//)
+  const archiveRows = (await readFile(first.archivePath, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+  assert.deepEqual(archiveRows.map(item => item.idempotencyKey).sort(), ['old:1', 'old:2'])
+  assert.deepEqual((await inspectOutbox(repo)).events.map(item => item.idempotencyKey).sort(), ['current:1', 'unscoped:1'])
+
+  const second = await archiveHistoricalOutboxEvents(repo, { activeTaskRef: 'task_current', archiveLabel: 'task_old' })
+  assert.equal(second.archived, 0)
+  assert.equal(second.pending, 1)
+  assert.equal(second.unscopedPending, 1)
+})
+
+test('a cross-Task dependency is retained in the active Outbox instead of being orphaned', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-cross-task-dependency-'))
+  const old = await enqueueOutboxEvent(repo, { type: 'task.attach', idempotencyKey: 'old:attach', localTaskRef: 'task_old', payload: {} })
+  await enqueueOutboxEvent(repo, { type: 'artifact.record', idempotencyKey: 'current:artifact', localTaskRef: 'task_current', dependsOn: [old.event.id], payload: {} })
+
+  const scoped = await inspectOutbox(repo, { activeTaskRef: 'task_current' })
+  assert.equal(scoped.pending, 2)
+  assert.equal(scoped.historicalPending, 0)
+  assert.equal(scoped.retainedHistoricalPending, 1)
+
+  const archived = await archiveHistoricalOutboxEvents(repo, { activeTaskRef: 'task_current', archiveLabel: 'task_old' })
+  assert.equal(archived.archived, 0)
+  assert.equal(archived.retainedHistoricalPending, 1)
+  assert.equal((await inspectOutbox(repo)).pending, 2)
+})
+
+test('a historical dependent of the active Task is retained so the archive stays dependency-complete', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-outbox-cross-task-dependent-'))
+  const current = await enqueueOutboxEvent(repo, { type: 'task.attach', idempotencyKey: 'current:attach', localTaskRef: 'task_current', payload: {} })
+  await enqueueOutboxEvent(repo, { type: 'artifact.record', idempotencyKey: 'old:artifact', localTaskRef: 'task_old', dependsOn: [current.event.id], payload: {} })
+
+  const scoped = await inspectOutbox(repo, { activeTaskRef: 'task_current' })
+  assert.equal(scoped.pending, 2)
+  assert.equal(scoped.historicalPending, 0)
+  assert.equal(scoped.retainedHistoricalPending, 1)
+
+  const archived = await archiveHistoricalOutboxEvents(repo, { activeTaskRef: 'task_current', archiveLabel: 'task_old' })
+  assert.equal(archived.archived, 0)
+  assert.equal((await inspectOutbox(repo)).pending, 2)
 })

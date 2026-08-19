@@ -210,8 +210,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
   const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
   const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
-  const pendingDeliveries = gitRoot && !offline && !localRun && !restartRequired && !boundary.blocked ? await flushPendingDeliveries(repo, { fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
-  const outbox = gitRoot && !localRun ? await inspectOutbox(repo).catch(() => ({ pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] })) : { pending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
+  const pendingDeliveries = gitRoot && taskId && !offline && !localRun && !restartRequired && !boundary.blocked ? await flushPendingDeliveries(repo, { activeTaskRef: taskId, fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
+  const emptyOutbox = { totalPending: 0, pending: 0, historicalPending: 0, retainedHistoricalPending: 0, unscopedPending: 0, retainedUnscopedPending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
+  const outbox = gitRoot && !localRun ? await inspectOutbox(repo, { activeTaskRef: taskId }).catch(() => emptyOutbox) : emptyOutbox
   const localNext = resolveNextAction({ stateText, artifacts, dirty, allowStateGate: localRun || harnessMode === 'local-only' })
   const localStage = canonicalStage(field(stateText, 'stage'))
   const next = switchingTask
@@ -331,7 +332,9 @@ function render(result) {
     localRun ? '证据：测试与评审结果仅保留在本地' : restartRequired ? '' : result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
     localRun || restartRequired ? '' : result.reconciliation.pushRequired ? `远程验证门禁：当前 HEAD ${result.repository.head.slice(0, 12)} 尚未与上游分支对齐；创建 Test/Review Action 前需要明确授权并推送当前分支` : '远程验证门禁：当前 HEAD 已在上游分支可见',
     result.platform.pendingDeliveries?.total ? `待发送补报：本次发送 ${result.platform.pendingDeliveries.sent}，剩余 ${result.platform.pendingDeliveries.pending}` : '',
-    result.platform.outbox?.pending ? `离线待同步：${result.platform.outbox.pending} 条（可重放 ${result.platform.outbox.ready}，阻塞 ${result.platform.outbox.blocked}）${result.platform.outbox.next ? `；下一条 ${result.platform.outbox.next.type}` : ''}` : '',
+    result.platform.outbox?.pending ? `当前 Task 离线待同步：${result.platform.outbox.pending} 条（可重放 ${result.platform.outbox.ready}，阻塞 ${result.platform.outbox.blocked}）${result.platform.outbox.next ? `；下一条 ${result.platform.outbox.next.type}` : ''}` : '',
+    result.platform.outbox?.historicalPending ? `历史 Outbox 已隔离：${result.platform.outbox.historicalPending} 条（不阻塞当前 Task，不会自动补报）` : '',
+    result.platform.outbox?.unscopedPending ? `无 Task 归属 Outbox 已隔离：${result.platform.outbox.unscopedPending} 条（待人工归属，不会自动补报）` : '',
     result.reasons.length ? `${restartRequired ? '状态原因' : '降级原因'}：${result.reasons.join(', ')}` : '',
   ].filter(Boolean).join('\n')
 }

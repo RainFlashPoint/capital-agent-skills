@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { inspectCapStatus, reconcileRepositoryState, resolveNextAction } from './cap-status.mjs'
@@ -166,13 +166,39 @@ test('offline handshake exposes queued outbox work without claiming platform com
   assert.equal(result.platform.outbox.next.type, 'task.attach')
 })
 
+test('status isolates historical Outbox rows from the active Task summary', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-outbox-task-scope-'))
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_current\nstage: implement\nstatus: in-progress\n')
+  await writeFile(join(repo, '.cap/outbox.jsonl'), [
+    JSON.stringify({ id: 'evt_old', idempotencyKey: 'old:1', type: 'skill.event', localTaskRef: 'task_old', dependsOn: [], payload: {}, createdAt: '2026-08-17T00:00:00.000Z' }),
+    JSON.stringify({ id: 'evt_current', idempotencyKey: 'current:1', type: 'skill.event', localTaskRef: 'task_current', dependsOn: [], payload: {}, createdAt: '2026-08-18T00:00:00.000Z' }),
+    JSON.stringify({ id: 'evt_unscoped', idempotencyKey: 'unscoped:1', type: 'skill.event', dependsOn: [], payload: {}, createdAt: '2026-08-18T01:00:00.000Z' }),
+  ].join('\n') + '\n')
+
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true })
+  assert.equal(result.platform.outbox.totalPending, 3)
+  assert.equal(result.platform.outbox.pending, 1)
+  assert.equal(result.platform.outbox.historicalPending, 1)
+  assert.equal(result.platform.outbox.unscopedPending, 1)
+  assert.equal(result.platform.outbox.next.idempotencyKey, 'current:1')
+})
+
 test('configured client without task reports platform ready after capability handshake', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-ready-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await mkdir(join(repo, '.cap'), { recursive: true })
   await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
-  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ data: { protocolVersion: 1, capabilities: { taskWrite: true, commitReconcile: true } } }) }) })
+  await writeFile(join(repo, '.cap/outbox.jsonl'), `${JSON.stringify({ id: 'evt_old', idempotencyKey: 'old:delivery', type: 'delivery.record', localTaskRef: 'task_old', dependsOn: [], payload: { taskId: 'task_old', payload: { commit_sha: 'old' } }, createdAt: '2026-08-17T00:00:00.000Z' })}\n`)
+  const requests = []
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl: async url => {
+    requests.push(String(url))
+    return { ok: true, status: 200, json: async () => ({ data: { protocolVersion: 1, capabilities: { taskWrite: true, commitReconcile: true } } }) }
+  } })
   assert.equal(result.mode, 'platform_ready')
   assert.equal(result.platform.connected, true)
+  assert.equal(requests.some(url => url.includes('/commit-reconcile')), false)
+  assert.match(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), /old:delivery/)
 })
 
 test('rejected HTTP handshake waits for MCP confirmation instead of falsely claiming local-only mode', async () => {

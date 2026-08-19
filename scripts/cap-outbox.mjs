@@ -35,6 +35,25 @@ function stableKey(input = {}) {
   return `cap-outbox:${input.type}:${digest}`
 }
 
+function safeSegment(value = '', fallback = 'historical') {
+  return text(value || fallback, 300).replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || fallback
+}
+
+export function outboxEventTaskRef(input = {}) {
+  const payload = input?.payload && typeof input.payload === 'object' ? input.payload : {}
+  const nested = payload?.payload && typeof payload.payload === 'object' ? payload.payload : {}
+  return text(
+    input.localTaskRef
+    || input.local_task_ref
+    || payload.task_id
+    || payload.taskId
+    || payload?.task?.id
+    || nested.task_id
+    || nested.taskId,
+    300,
+  )
+}
+
 function normalizeEvent(input = {}, now = new Date().toISOString()) {
   const type = text(input.type, 100)
   if (!OUTBOX_TYPES.has(type)) throw new Error(`unsupported_outbox_type:${type || 'empty'}`)
@@ -79,8 +98,8 @@ async function acquireLock(paths, timeoutMs = 10_000) {
   throw new Error('outbox_lock_timeout')
 }
 
-async function writeEvents(paths, rows) {
-  const temp = `${paths.path}.${process.pid}.${randomUUID()}.tmp`
+async function writeRowsFile(targetPath, rows) {
+  const temp = `${targetPath}.${process.pid}.${randomUUID()}.tmp`
   const body = rows.map(item => JSON.stringify(item)).join('\n') + (rows.length ? '\n' : '')
   const handle = await open(temp, 'wx', 0o600)
   try {
@@ -90,12 +109,16 @@ async function writeEvents(paths, rows) {
     await handle.close()
   }
   try {
-    await rename(temp, paths.path)
-    const directory = await open(dirname(paths.path), 'r')
+    await rename(temp, targetPath)
+    const directory = await open(dirname(targetPath), 'r')
     try { await directory.sync() } finally { await directory.close() }
   } finally {
     await rm(temp, { force: true }).catch(() => {})
   }
+}
+
+async function writeEvents(paths, rows) {
+  await writeRowsFile(paths.path, rows)
 }
 
 async function readOutboxUnlocked(paths) {
@@ -146,13 +169,111 @@ export function buildReplayPlan(rows = []) {
   return [...ordered, ...remaining.map(item => ({ ...item, replayStatus: 'blocked', unresolvedDependencies: item.dependsOn.filter(id => pendingIds.has(id) && !completed.has(id)) }))]
 }
 
-export async function inspectOutbox(repoRoot = '.') {
+function partitionOutboxRows(rows = [], activeTaskRef = '') {
+  const normalizedActive = text(activeTaskRef, 300)
+  if (!normalizedActive) return { active: [...rows], historical: [], unscoped: [], retainedHistorical: [], retainedUnscoped: [] }
+
+  const byId = new Map(rows.map(item => [item.id, item]))
+  const dependentsById = new Map()
+  for (const item of rows) {
+    for (const dependencyId of item.dependsOn || []) {
+      const dependents = dependentsById.get(dependencyId) || []
+      dependents.push(item.id)
+      dependentsById.set(dependencyId, dependents)
+    }
+  }
+  const activeIds = new Set(rows
+    .filter(item => outboxEventTaskRef(item) === normalizedActive)
+    .map(item => item.id))
+
+  const queue = [...activeIds]
+  while (queue.length) {
+    const item = byId.get(queue.shift())
+    for (const dependencyId of item?.dependsOn || []) {
+      if (!byId.has(dependencyId) || activeIds.has(dependencyId)) continue
+      activeIds.add(dependencyId)
+      queue.push(dependencyId)
+    }
+    for (const dependentId of dependentsById.get(item?.id) || []) {
+      if (activeIds.has(dependentId)) continue
+      activeIds.add(dependentId)
+      queue.push(dependentId)
+    }
+  }
+
+  const active = rows.filter(item => activeIds.has(item.id))
+  const historical = rows.filter(item => !activeIds.has(item.id) && outboxEventTaskRef(item))
+  const unscoped = rows.filter(item => !activeIds.has(item.id) && !outboxEventTaskRef(item))
+  const retainedHistorical = active.filter(item => {
+    const taskRef = outboxEventTaskRef(item)
+    return taskRef && taskRef !== normalizedActive
+  })
+  const retainedUnscoped = active.filter(item => !outboxEventTaskRef(item))
+  return { active, historical, unscoped, retainedHistorical, retainedUnscoped }
+}
+
+export async function inspectOutbox(repoRoot = '.', { activeTaskRef = '' } = {}) {
   const rows = await readOutbox(repoRoot)
-  const plan = buildReplayPlan(rows)
+  const partition = partitionOutboxRows(rows, activeTaskRef)
+  const plan = buildReplayPlan(partition.active)
   const ready = plan.filter(item => item.replayStatus === 'ready')
   const blocked = plan.filter(item => item.replayStatus === 'blocked')
   const paths = await resolveOutboxPaths(repoRoot)
-  return { path: paths.path, pending: rows.length, ready: ready.length, blocked: blocked.length, oldestCreatedAt: rows.map(item => item.createdAt).filter(Boolean).sort()[0] || '', next: ready[0] ? { id: ready[0].id, type: ready[0].type, idempotencyKey: ready[0].idempotencyKey, localTaskRef: ready[0].localTaskRef } : null, events: plan }
+  return {
+    path: paths.path,
+    activeTaskRef: text(activeTaskRef, 300),
+    totalPending: rows.length,
+    pending: partition.active.length,
+    historicalPending: partition.historical.length,
+    retainedHistoricalPending: partition.retainedHistorical.length,
+    unscopedPending: partition.unscoped.length,
+    retainedUnscopedPending: partition.retainedUnscoped.length,
+    ready: ready.length,
+    blocked: blocked.length,
+    oldestCreatedAt: partition.active.map(item => item.createdAt).filter(Boolean).sort()[0] || '',
+    next: ready[0] ? { id: ready[0].id, type: ready[0].type, idempotencyKey: ready[0].idempotencyKey, localTaskRef: ready[0].localTaskRef } : null,
+    events: plan,
+  }
+}
+
+async function resolveArchiveDirectory(paths, label) {
+  const localState = join(paths.cap, 'local-state')
+  const archiveRoot = join(localState, 'outbox-archive')
+  const archiveDirectory = join(archiveRoot, safeSegment(label))
+  for (const path of [localState, archiveRoot, archiveDirectory]) {
+    const current = await lstat(path).catch(() => null)
+    if (current?.isSymbolicLink()) throw new Error(`outbox_symlink_not_allowed:${relative(paths.cap, path)}`)
+    if (current && !current.isDirectory()) throw new Error(`outbox_archive_path_not_directory:${relative(paths.cap, path)}`)
+    if (!current) await mkdir(path, { mode: 0o700 })
+  }
+  const canonical = await realpath(archiveDirectory)
+  if (!containedBy(paths.cap, canonical)) throw new Error('outbox_archive_path_not_contained')
+  return canonical
+}
+
+export async function archiveHistoricalOutboxEvents(repoRoot = '.', { activeTaskRef = '', archiveLabel = '' } = {}) {
+  const normalizedActive = text(activeTaskRef, 300)
+  if (!normalizedActive) throw new Error('activeTaskRef is required')
+  const paths = await resolveOutboxPaths(repoRoot)
+  const release = await acquireLock(paths)
+  try {
+    const rows = await readOutboxUnlocked(paths)
+    const partition = partitionOutboxRows(rows, normalizedActive)
+    if (!partition.historical.length) {
+      return { archived: 0, pending: partition.active.length, unscopedPending: partition.unscoped.length, totalBefore: rows.length, archivePath: '', retainedHistoricalPending: partition.retainedHistorical.length, retainedUnscopedPending: partition.retainedUnscoped.length }
+    }
+
+    const body = partition.historical.map(item => JSON.stringify(item)).join('\n') + '\n'
+    const digest = createHash('sha256').update(body).digest('hex').slice(0, 16)
+    const archiveDirectory = await resolveArchiveDirectory(paths, archiveLabel || 'historical')
+    const archivePath = join(archiveDirectory, `${digest}.jsonl`)
+    const existing = await readFile(archivePath, 'utf8').catch(error => error?.code === 'ENOENT' ? '' : Promise.reject(error))
+    if (existing && existing !== body) throw new Error(`outbox_archive_collision:${archivePath}`)
+    if (!existing) await writeRowsFile(archivePath, partition.historical)
+    const historicalIds = new Set(partition.historical.map(item => item.id))
+    await writeEvents(paths, rows.filter(item => !historicalIds.has(item.id)))
+    return { archived: partition.historical.length, pending: partition.active.length, unscopedPending: partition.unscoped.length, totalBefore: rows.length, archivePath, retainedHistoricalPending: partition.retainedHistorical.length, retainedUnscopedPending: partition.retainedUnscoped.length }
+  } finally { await release() }
 }
 
 export async function acknowledgeOutboxEvent(repoRoot = '.', eventId = '') {
@@ -182,6 +303,7 @@ async function main() {
   const [command = 'status', repoArg = '.', value = ''] = process.argv.slice(2)
   const repoRoot = resolve(repoArg)
   if (['status', 'list', 'replay-plan'].includes(command)) return console.log(JSON.stringify(await inspectOutbox(repoRoot), null, 2))
+  if (command === 'archive-historical') return console.log(JSON.stringify(await archiveHistoricalOutboxEvents(repoRoot, JSON.parse(value || '{}')), null, 2))
   if (command === 'ack') return console.log(JSON.stringify(await acknowledgeOutboxEvent(repoRoot, value), null, 2))
   if (command === 'fail') return console.log(JSON.stringify(await markOutboxAttempt(repoRoot, value, process.argv.slice(5).join(' ') || 'replay_failed'), null, 2))
   if (command === 'enqueue') return console.log(JSON.stringify(await enqueueOutboxEvent(repoRoot, JSON.parse(value || '{}')), null, 2))
