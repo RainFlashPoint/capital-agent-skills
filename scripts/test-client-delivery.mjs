@@ -101,6 +101,22 @@ test('pending delivery queue flushes successfully and keeps failed rows', async 
   assert.equal(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), '')
 })
 
+test('delivery already present in canonical Task evidence is acknowledged without another POST', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-delivery-confirmed-')); const home = await mkdtemp(join(tmpdir(), 'cap-delivery-confirmed-home-'))
+  await mkdir(join(repo, '.cap')); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-key\n')
+  await queueCommitDelivery(repo, { taskId: 'task_ok', payload: { commit_sha: 'a'.repeat(40), idempotency_key: 'client-commit:task_ok:aaaaaaaa' } })
+  const requests = []
+  const result = await flushPendingDeliveries(repo, {
+    activeTaskRef: 'task_ok', homeDir: home,
+    canonicalTask: { id: 'task_ok', evidence: [{ type: 'local_delivery', commitSha: 'a'.repeat(40), idempotencyKey: 'client-commit:task_ok:aaaaaaaa', deliveryCandidate: false }] },
+    fetchImpl: async url => { requests.push(String(url)); return { ok: true } },
+  })
+  assert.deepEqual(result, { total: 1, migrated: 0, sent: 0, confirmed: 1, pending: 0 })
+  assert.deepEqual(requests, [])
+  assert.equal(await readFile(join(repo, '.cap/outbox.jsonl'), 'utf8'), '')
+})
+
 test('delivery flush sends only the active Task and leaves historical Task metadata untouched', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'cap-delivery-task-scope-')); const home = await mkdtemp(join(tmpdir(), 'cap-delivery-task-scope-home-'))
   await mkdir(join(repo, '.cap')); await mkdir(join(home, '.config/capital-agent'), { recursive: true })

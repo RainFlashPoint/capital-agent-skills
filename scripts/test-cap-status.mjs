@@ -232,6 +232,21 @@ test('loaded MCP keeps direct probe failure pending MCP confirmation instead of 
   assert.ok(result.reasons.includes('direct_probe_unavailable_needs_mcp_confirmation'))
 })
 
+test('unverified platform does not repeat a stale local test stage as platform truth', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-unverified-test-'))
+  const branch = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()
+  const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_1\nbranch: ${branch}\nworktree: ${root}\nstage: test\nstatus: in-progress\n`)
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, mcpRuntime: 'loaded', fetchImpl: async () => { throw new Error('fetch unavailable', { cause: { code: 'ENOTFOUND' } }) } })
+  assert.equal(result.mode, 'platform_attached_unverified')
+  assert.equal(result.workflow.currentStage, 'implement')
+  assert.equal(result.workflow.stage, 'implement')
+  assert.equal(result.workflow.action, '通过 MCP 确认最终候选与 Test Action')
+  assert.match(result.workflow.reason, /不能称为正在测试验证/)
+})
+
 test('stale branch and worktree STATE hard-blocks workflow before old Task delivery replay', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-boundary-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
@@ -281,6 +296,71 @@ test('canonical blocker and current commit override generic local waiting copy',
   assert.equal(result.task.currentCommit, 'a'.repeat(40))
   assert.equal(result.task.blocker.code, 'source_commit_not_remote')
   assert.equal(result.workflow.action, '推送当前分支后重试')
+})
+
+test('canonical implement stage replaces a stale local test cursor and persists the correction', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-canonical-implement-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_1\nstage: test\nstatus: in-progress\n')
+  const fetchImpl = async url => url.endsWith('/api/auth/handshake')
+    ? { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    : url.endsWith('/api/health')
+      ? { ok: true, status: 200, json: async () => ({ schemaRevision: '006_product_truth_convergence', taskStoreMode: 'postgres_authoritative' }) }
+      : { ok: true, status: 200, json: async () => ({ data: {
+          id: 'task_1', status: 'active', currentStage: 'implement', currentCommit: '', currentGate: 'commit',
+          candidateExplicit: false, currentAction: null, gates: { ready: false },
+          nextAction: { kind: 'gate', gate: 'commit', label: '形成最终候选 Commit' },
+        } }) }
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl })
+  assert.equal(result.workflow.currentStage, 'implement')
+  assert.equal(result.workflow.stage, 'implement')
+  assert.equal(result.workflow.status, 'active')
+  assert.equal(result.workflow.action, '形成最终候选 Commit')
+  assert.equal(result.correction.reason, 'server_canonical_state_overrides_local_state')
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /^stage: implement$/m)
+})
+
+test('platform cannot claim test verification before both a delivery candidate and Test Action exist', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-premature-test-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_1\nstage: test\nstatus: in-progress\n')
+  const fetchImpl = async url => url.endsWith('/api/auth/handshake')
+    ? { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    : url.endsWith('/api/health')
+      ? { ok: true, status: 200, json: async () => ({}) }
+      : { ok: true, status: 200, json: async () => ({ data: {
+          id: 'task_1', status: 'active', currentStage: 'test', currentCommit: 'b'.repeat(40), currentGate: 'quality',
+          candidateExplicit: true, currentAction: { id: 'action_old', type: 'test', status: 'succeeded', sourceCommit: 'a'.repeat(40) },
+          gates: { ready: false, candidateExplicit: true }, nextAction: null,
+        } }) }
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl })
+  assert.equal(result.workflow.currentStage, 'implement')
+  assert.equal(result.workflow.stage, 'implement')
+  assert.equal(result.workflow.action, '形成最终候选 Commit')
+  assert.match(result.workflow.reason, /delivery_candidate=true.*Test Action/)
+})
+
+test('platform reports test verification after candidate and matching Test Action are canonical', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-canonical-test-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_1\nstage: implement\nstatus: in-progress\n')
+  const fetchImpl = async url => url.endsWith('/api/auth/handshake')
+    ? { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    : url.endsWith('/api/health')
+      ? { ok: true, status: 200, json: async () => ({}) }
+      : { ok: true, status: 200, json: async () => ({ data: {
+          id: 'task_1', status: 'active', currentStage: 'test', currentCommit: 'a'.repeat(40), currentGate: 'quality',
+          currentAction: { id: 'action_1', type: 'test', status: 'running', sourceCommit: 'a'.repeat(40) },
+          gates: { ready: false, candidateExplicit: true },
+          nextAction: { kind: 'action', actionId: 'action_1', actionType: 'verify', actionStatus: 'running', label: '等待独立测试' },
+        } }) }
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl })
+  assert.equal(result.workflow.currentStage, 'test')
+  assert.equal(result.workflow.stage, 'test')
+  assert.equal(result.workflow.action, '等待独立测试')
 })
 
 test('history manifest marks task snapshot as completed without scanning history', async () => {

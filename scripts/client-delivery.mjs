@@ -99,7 +99,15 @@ export async function queueCommitDelivery(repoRoot, item) {
   })
 }
 
-export async function flushPendingDeliveries(repoRoot, { activeTaskRef = '', fetchImpl = fetch, homeDir = homedir() } = {}) {
+function canonicalDeliveryKeys(task = {}) {
+  if (!task || !Array.isArray(task.evidence)) return new Set()
+  return new Set(task.evidence
+    .filter(item => ['delivery', 'local_delivery'].includes(text(item?.type).toLowerCase()))
+    .map(item => text(item?.idempotencyKey || item?.idempotency_key))
+    .filter(Boolean))
+}
+
+export async function flushPendingDeliveries(repoRoot, { activeTaskRef = '', canonicalTask = null, fetchImpl = fetch, homeDir = homedir() } = {}) {
   const path = join(repoRoot, '.cap/pending-deliveries.jsonl')
   const raw = await readFile(path, 'utf8').catch(() => '')
   const rows = raw.split(/\r?\n/).filter(Boolean).map(line => { try { return JSON.parse(line) } catch { return null } }).filter(Boolean)
@@ -110,7 +118,19 @@ export async function flushPendingDeliveries(repoRoot, { activeTaskRef = '', fet
     await rename(temp, path)
   }
   const config = await readClientConfig(homeDir)
-  const plan = await inspectOutbox(repoRoot, { activeTaskRef })
+  let plan = await inspectOutbox(repoRoot, { activeTaskRef })
+  const deliveredKeys = canonicalDeliveryKeys(canonicalTask)
+  let confirmed = 0
+  if (deliveredKeys.size) {
+    for (const event of plan.events) {
+      if (event.type !== 'delivery.record' || event?.payload?.payload?.delivery_candidate === true) continue
+      const key = text(event?.payload?.payload?.idempotency_key || event.idempotencyKey)
+      if (!key || !deliveredKeys.has(key)) continue
+      const result = await acknowledgeOutboxEvent(repoRoot, event.id)
+      if (result.acknowledged) confirmed += 1
+    }
+    if (confirmed) plan = await inspectOutbox(repoRoot, { activeTaskRef })
+  }
   const pendingIds = new Set(plan.events.map(item => item.id))
   const deliveries = plan.events.filter(item => item.type === 'delivery.record'
     && item.replayStatus === 'ready'
@@ -130,5 +150,5 @@ export async function flushPendingDeliveries(repoRoot, { activeTaskRef = '', fet
   const after = await inspectOutbox(repoRoot, { activeTaskRef })
   const pending = after.events.filter(item => item.type === 'delivery.record'
     && (!activeTaskRef || outboxEventTaskRef(item) === text(activeTaskRef))).length
-  return { total: deliveries.length, migrated: rows.length, sent, pending }
+  return { total: deliveries.length + confirmed, migrated: rows.length, sent, ...(confirmed ? { confirmed } : {}), pending }
 }

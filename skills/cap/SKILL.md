@@ -34,8 +34,10 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
    平台暂时不可用时，把原本应调用 MCP 的结构化元数据写入目标仓 `.cap/outbox.jsonl`，使用 package 根 `scripts/cap-outbox.mjs enqueue`。恢复后先读取 `replay-plan`。属于**当前用户明确发起的本轮 Task** 的事件可按依赖顺序调用原 MCP 工具；成功后 `ack`，失败则 `fail` 保留事件。属于已完成 Task、旧 Session 或之前会话的**历史事件**，不得因用户本轮调用 `$cap` 就推定已获授权：先说明目的地、事件数量和将发送的元数据种类（路径、分支、Commit、Task/Session ID），取得明确同意后再逐条重放。用户未授权或暂未回答时保留 Outbox，并继续当前需求，不能让历史补报阻塞编码。不得把本地 PASS 重放成 Server Gate PASS，也不得上传代码正文。
 3. 创建/绑定 Task 后先读取 STATE 中已有的 Harness Action 引用；Test/Review/Patch 使用 `get_task_action / wait_task_action` 续接。编码实现由当前 Skills Session 或受控执行 Provider 完成，结果通过 Artifact、Delivery 和 Commit 回写，不再认领另一套旧 Task Action。
 4. 若状态包含 `git_delivery_reconciliation_needed`，立即扫描 `delivery-head..HEAD`；对 IDEA、人工或其它 Agent 产生的 Commit 幂等补调用 `record_task_delivery`。平台没有 Delivery 查询工具时也要重报当前 HEAD，由平台幂等去重，不能依赖原编码会话仍然存在。
+   重放普通 Delivery 前先对照 Server Task 的 evidence；同一 `idempotency_key` 已存在即确认对应 Outbox 事件，不再重复发送。只有普通 Delivery 可这样自动确认，候选 Delivery 仍要求当前授权并禁止历史重放。
    进入独立测试或评审前必须检查 `cap-status.repository.head/upstreamHead` 与 `reconciliation.pushRequired`。当前精确 Commit 尚未在上游分支可见时，进入明确的 **Push 门禁**：用一句话说明“将把当前分支的精确 Commit 推送到哪个远程”，请求一次授权；不得先创建 Action，也不得把 Server 的仓库预检失败解释为 Provider 故障。授权后同一 Task 内依次完成 Push → 当前 Delivery 补报 → Test Action，不再要求用户重复说“继续”。授权只覆盖当前 Task、当前仓库、当前分支和当前 Commit；分支、Commit、仓库或目标环境变化后失效。
 5. 用统一“客户端握手快报”告诉用户平台连接、仓库、分支、Task、当前阶段、已认领 Action 和下一步；不得先写规格或代码再补报。
+   平台 Task 可读取时，快报与后续聊天只使用 Server canonical projection，并让 `cap-status` 将纠偏后的 stage/status 写回本地游标。若没有同时出现 `delivery_candidate=true` 和绑定该候选的 Test Action，即使本地 STATE 写着 `test`，也只能称为“编码实现 / 等待形成最终候选”，不得称为“平台正在测试验证”。若直接探测不可用且尚未从 MCP 取得 canonical projection，也必须停留在“等待 MCP 确认”，不能复述本地 `test` 冒充平台阶段。
    `cap-status` 返回 `direct_probe_unavailable` 且 `platform.mcpRuntime=loaded|unknown` 时，只能表述为“直接探测不可用，等待 MCP 确认”，不得报告平台断网、网络错误或连接失败；必须继续调用 MCP 做最终确认。MCP 成功即按平台已连接继续，只有 MCP 已加载且直接探测与 MCP 调用都失败时才报告平台暂时不可用。`platform.mcpRuntime=missing` 不等待确认，直接执行 `restart_required`。
    快报必须同时显示 Outbox 待同步数、可重放数、阻塞数与下一事件类型；存在待同步事件时不得只说“平台已连接”。
    若待同步项属于历史 Task，快报必须标记“等待历史元数据补报授权”，不能直接执行，也不能含糊描述成普通连接恢复。

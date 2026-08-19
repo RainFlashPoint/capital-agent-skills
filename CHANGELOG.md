@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2
+
+- 平台可用时，客户端阶段、状态和下一动作真正以 Server canonical projection 为准，并把纠偏结果安全写回本地游标。
+- 没有最终候选 Commit 与对应 Test Action 时不再误报“平台正在测试验证”；普通 Delivery 已由 Server 幂等接收时自动清理对应 Outbox。
+
 ## 0.7.1
 
 - 新任务开始时主动运行只读历史侦察，一次定位相关历史分支、Commit、`.cap` 工程记忆与历史索引；不再先反问用户“以前是否做过”。

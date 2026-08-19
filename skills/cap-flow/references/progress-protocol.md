@@ -24,6 +24,10 @@ Server/MCP 返回预检失败时，优先展示结构化 `reason/preflight.code/
 
 平台可用时，客户端只消费 Server 的 canonical projection：`currentCommit/currentGate/currentAction/blocker/nextAction`。平台状态与本地 STATE 冲突时，必须输出 `server_canonical_state_overrides_local_state` 并修正本地游标；Session finished、本地 PASS 或 Execution success 都不能越权把 Task 判定为 done。健康接口同时展示 `build.commit/schemaRevision/taskStoreMode`，无法证明运行版本时不得声称新逻辑已部署。
 
+阶段名称也属于 canonical projection，不从本地 STATE 猜。业务 Harness 只有在 Server 同时确认 `delivery_candidate=true` 与该候选的 Test Action 后，才可对外称为“平台正在测试验证”；此前统一显示“编码实现 / 等待形成最终候选”。直接探测不可用且 MCP 尚未返回 projection 时显示“等待 MCP 确认”，不复述本地 `test` 冒充平台阶段。`verify_only` Task 不受候选 Commit 条件约束，仍按 Server 验证阶段展示。
+
+普通 Delivery 重放前先对照 Server Task evidence 的 `idempotencyKey`；同一事件已到账就确认并清除本地 Outbox，不再次 POST。候选 Delivery 不参与该自动确认或历史重放，仍受当前 Push 授权约束。
+
 “准备执行”“接下来调用”或一份执行计划不算执行证据。外部操作预检通过后，必须在当前会话真实调用可用工具并取得可观察结果，再以脱敏的命令/请求标识、状态码、终态或错误归因更新验证产物与 STATE；工具不可用或调用失败则据实标为 `ENV_BLOCKED` / `INCONCLUSIVE`，不得停在口头承诺或伪报完成。
 
 ## 阶段进入

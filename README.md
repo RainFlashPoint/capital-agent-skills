@@ -4,7 +4,15 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.7.1，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.7.2，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.7.2 更新
+
+这一版本让客户端展示与平台真实状态保持一致：
+
+- 平台可用时，阶段、状态和下一动作以 Server canonical projection 为准，并纠正本地游标。
+- 只有最终候选 Commit 与对应 Test Action 同时成立时，才显示“平台正在测试验证”。
+- Server 已幂等接收普通 Delivery 时，客户端自动清理对应 Outbox，不再重复补报。
 
 ## v0.7.1 更新
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { readFile, stat } from 'node:fs/promises'
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -65,12 +66,60 @@ function activeFollowUpId(task = {}) {
   return text(related.find(item => item?.relationType === 'follow_up' && item?.status !== 'done')?.id)
 }
 
+function hasCandidateTestAction(task = {}) {
+  const candidateExplicit = task?.candidateExplicit === true || task?.gates?.candidateExplicit === true
+  const currentCommit = text(task?.currentCommit || task?.gates?.currentCommit)
+  const actionType = text(task?.currentAction?.type || task?.currentAction?.actionType).toLowerCase()
+  const actionCommit = text(task?.currentAction?.sourceCommit || task?.currentAction?.commitSha)
+  return candidateExplicit && Boolean(currentCommit) && ['test', 'verify'].includes(actionType) && actionCommit === currentCommit
+}
+
+function canonicalWorkflowStage(task = {}, fallbackStage = '') {
+  const stage = canonicalStage(task?.currentStage) || canonicalStage(fallbackStage) || 'test'
+  const executionMode = text(task?.executionMode || task?.taskContract?.executionMode)
+  if (executionMode === 'verify_only') return 'test'
+  return stage === 'test' && !hasCandidateTestAction(task) ? 'implement' : stage
+}
+
+function localStatusFromRemote(status = '') {
+  const normalized = text(status).toLowerCase()
+  if (normalized === 'done') return 'done'
+  if (normalized === 'needs_human') return 'gated'
+  if (['failed', 'canceled', 'cancelled'].includes(normalized)) return 'blocked'
+  return 'in-progress'
+}
+
+async function persistCanonicalCursor(statePath, stateText, task = {}, effectiveStage = '') {
+  if (!stateText || !task?.id || !effectiveStage) return false
+  let next = stateText
+  const replaceField = (name, value) => {
+    const pattern = new RegExp(`^${name}:\\s*.*$`, 'mi')
+    next = pattern.test(next) ? next.replace(pattern, `${name}: ${value}`) : next
+  }
+  replaceField('stage', effectiveStage)
+  replaceField('status', localStatusFromRemote(task.status))
+  if (next === stateText) return false
+  if (await readFile(statePath, 'utf8').catch(() => '') !== stateText) return false
+  const temp = `${statePath}.${process.pid}.${randomUUID()}.canonical.tmp`
+  try {
+    await writeFile(temp, next)
+    await rename(temp, statePath)
+  } finally {
+    await rm(temp, { force: true }).catch(() => {})
+  }
+  return true
+}
+
 function nextFromPlatformTask(task = {}, fallback = {}) {
   const action = task?.nextAction || {}
   const executionMode = text(task?.executionMode || task?.taskContract?.executionMode)
-  const stage = executionMode === 'verify_only' ? 'test' : canonicalStage(task?.currentStage) || fallback.stage || 'test'
+  const projectedStage = executionMode === 'verify_only' ? 'test' : canonicalStage(task?.currentStage) || fallback.stage || 'test'
+  const stage = canonicalWorkflowStage(task, projectedStage)
   if (task?.blocker?.remediation) {
     return { stage, action: text(task.blocker.remediation), reason: `${text(task.blocker.code) || 'platform_blocker'}：${text(task.blocker.detail) || '平台返回结构化阻塞'}`, blocker: task.blocker }
+  }
+  if (projectedStage === 'test' && stage === 'implement') {
+    return { stage, action: '形成最终候选 Commit', reason: '平台尚未同时确认 delivery_candidate=true 与 Test Action，不能称为正在测试验证' }
   }
   if (action.kind === 'action' && action.actionId) {
     const actionStage = action.actionType === 'review' ? 'review' : action.actionType === 'verify' ? 'test' : stage
@@ -210,16 +259,20 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
   const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
   const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
-  const pendingDeliveries = gitRoot && taskId && !offline && !localRun && !restartRequired && !boundary.blocked ? await flushPendingDeliveries(repo, { activeTaskRef: taskId, fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
+  const pendingDeliveries = gitRoot && taskId && !offline && !localRun && !restartRequired && !boundary.blocked ? await flushPendingDeliveries(repo, { activeTaskRef: taskId, canonicalTask: stateTask, fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
   const emptyOutbox = { totalPending: 0, pending: 0, historicalPending: 0, retainedHistoricalPending: 0, unscopedPending: 0, retainedUnscopedPending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
   const outbox = gitRoot && !localRun ? await inspectOutbox(repo, { activeTaskRef: taskId }).catch(() => emptyOutbox) : emptyOutbox
   const localNext = resolveNextAction({ stateText, artifacts, dirty, allowStateGate: localRun || harnessMode === 'local-only' })
+  const guardedLocalNext = !remoteTask && teamConfigured && !localRun && localNext.stage === 'test'
+    ? { stage: 'implement', action: '通过 MCP 确认最终候选与 Test Action', reason: '尚未取得 Server canonical projection，不能称为正在测试验证', gated: true }
+    : localNext
   const localStage = canonicalStage(field(stateText, 'stage'))
+  const remoteWorkflowStage = remoteTask ? canonicalWorkflowStage(remoteTask, localStage) : ''
   const next = switchingTask
-    ? nextFromPlatformTask(remoteTask, localNext)
+    ? nextFromPlatformTask(remoteTask, guardedLocalNext)
     : remoteTask?.status === 'done'
     ? { stage: 'done', action: '归档并沉淀经验', reason: '平台 Task 的同 Commit 交付门禁已全部通过' }
-    : nextFromPlatformTask(remoteTask, localNext)
+    : nextFromPlatformTask(remoteTask, guardedLocalNext)
   const followUpBaseCommit = switchingTask ? text(remoteTask?.baseCommit || remoteTask?.taskContract?.baseCommit) : ''
   const deliveredHead = followUpBaseCommit || field(stateText, 'delivery-head')
   const stateHead = field(stateText, 'head') || field(stateText, 'task-context').match(/@\s*([0-9a-f]{7,40})/i)?.[1] || ''
@@ -240,9 +293,10 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     if (!taskId) reasons.push('task_not_attached')
     if (reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
   }
-  const correction = remoteTask && (canonicalStage(remoteTask.currentStage) !== localStage || (remoteTask.status === 'done' && field(stateText, 'status').toLowerCase() !== 'done'))
-    ? { required: true, reason: 'server_canonical_state_overrides_local_state', localStage, remoteStage: canonicalStage(remoteTask.currentStage), remoteStatus: remoteTask.status }
+  const correction = remoteTask && (remoteWorkflowStage !== localStage || localStatusFromRemote(remoteTask.status) !== field(stateText, 'status').toLowerCase())
+    ? { required: true, reason: 'server_canonical_state_overrides_local_state', localStage, remoteStage: remoteWorkflowStage, remoteStatus: remoteTask.status }
     : { required: false, reason: '' }
+  if (correction.required && !boundary.blocked) await persistCanonicalCursor(statePath, stateText, remoteTask, remoteWorkflowStage).catch(() => false)
   return {
     mode: explicitLocal
       ? 'local_explicit'
@@ -291,7 +345,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         ] }
       : boundary.blocked
       ? { currentStage: canonicalStage(field(stateText, 'stage')), status: 'blocked', stage: canonicalStage(field(stateText, 'stage')) || 'understand', action: '安全切换本次 Task 状态', reason: boundary.detail, gated: true }
-      : { currentStage: canonicalStage(field(stateText, 'stage')), status: field(stateText, 'status'), ...next },
+      : { currentStage: remoteWorkflowStage || next.stage || canonicalStage(field(stateText, 'stage')), status: remoteTask?.status || field(stateText, 'status'), ...next },
     reasons,
   }
 }
@@ -331,7 +385,7 @@ function render(result) {
     `原因：${result.workflow.reason}`,
     localRun ? '证据：测试与评审结果仅保留在本地' : restartRequired ? '' : result.reconciliation.needsDeliveryReconciliation ? `交付对账：发现 ${result.reconciliation.unrecordedCommits.length || 1} 个未登记提交，需补写平台 Delivery` : '交付对账：Git 与最近 Delivery 一致',
     localRun || restartRequired ? '' : result.reconciliation.pushRequired ? `远程验证门禁：当前 HEAD ${result.repository.head.slice(0, 12)} 尚未与上游分支对齐；创建 Test/Review Action 前需要明确授权并推送当前分支` : '远程验证门禁：当前 HEAD 已在上游分支可见',
-    result.platform.pendingDeliveries?.total ? `待发送补报：本次发送 ${result.platform.pendingDeliveries.sent}，剩余 ${result.platform.pendingDeliveries.pending}` : '',
+    result.platform.pendingDeliveries?.total ? `Delivery 对账：本次发送 ${result.platform.pendingDeliveries.sent}${result.platform.pendingDeliveries.confirmed ? `，确认已到账 ${result.platform.pendingDeliveries.confirmed}` : ''}，剩余 ${result.platform.pendingDeliveries.pending}` : '',
     result.platform.outbox?.pending ? `当前 Task 离线待同步：${result.platform.outbox.pending} 条（可重放 ${result.platform.outbox.ready}，阻塞 ${result.platform.outbox.blocked}）${result.platform.outbox.next ? `；下一条 ${result.platform.outbox.next.type}` : ''}` : '',
     result.platform.outbox?.historicalPending ? `历史 Outbox 已隔离：${result.platform.outbox.historicalPending} 条（不阻塞当前 Task，不会自动补报）` : '',
     result.platform.outbox?.unscopedPending ? `无 Task 归属 Outbox 已隔离：${result.platform.outbox.unscopedPending} 条（待人工归属，不会自动补报）` : '',
