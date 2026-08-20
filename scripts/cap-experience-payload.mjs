@@ -139,6 +139,17 @@ function actionRefs(value = '') {
   return [...new Set(String(value).match(/\baction_[a-z0-9][a-z0-9_-]{5,}\b/gi) || [])].map(id => `action:${id}`)
 }
 
+function finalOutcomeLines(lines = []) {
+  return lines
+    .filter(line => !/^\s*(?:RED|FAIL(?:ED)?|失败|错误)\s*[:：]/i.test(line))
+    .map(line => line
+      .replace(/\b0\s*(?:FAILED|FAILURES?|ERRORS?|失败|错误)(?=$|[\s、,，;；。])/gi, '')
+      .replace(/([、,，;；])(?:\s*[、,，;；])+/g, '$1')
+      .replace(/\s{2,}/g, ' ')
+      .trim())
+    .filter(Boolean)
+}
+
 export async function buildExperiencePayload({ repo = '.', commit = 'HEAD', intent = '' } = {}) {
   const root = await realpath(resolve(git(repo, ['rev-parse', '--show-toplevel'])))
   const documents = Object.fromEntries(await Promise.all(CAP_FILES.map(async path => [path, await safeRead(root, path)])))
@@ -162,7 +173,7 @@ export async function buildExperiencePayload({ repo = '.', commit = 'HEAD', inte
   ]
   const evidence = bullets(section(verifyText, ['Evidence', '验证证据']), 8)
   const journey = bullets(section(verifyText, ['External journey', '外部旅程']), 6)
-  const outcome = sanitize([...evidence, ...journey].slice(0, 10).join('；'))
+  const outcome = sanitize(finalOutcomeLines([...evidence, ...journey]).slice(0, 10).join('；'))
   const verified = positiveVerification(verifyText)
   const reviewed = positiveReview(reviewText)
   const missing = [
@@ -190,7 +201,7 @@ export async function buildExperiencePayload({ repo = '.', commit = 'HEAD', inte
       task_id: taskId,
       session_id: field(state, 'session-id'),
       commit_sha: commitSha,
-      idempotency_key: `experience:${taskId}:${identity}:deterministic-v1`,
+      idempotency_key: `experience:${taskId}:${identity}:deterministic-v2`,
       experience: {
         problem,
         solution,

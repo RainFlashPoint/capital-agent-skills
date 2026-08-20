@@ -5,6 +5,7 @@
 - 新增确定性经验载荷生成器，从标准 `.cap` 规格、决策、验证与评审产物生成完整结构化经验，不再把高质量任务交给模型二次萃取。
 - 证据不足时 fail closed，不调用旧式 LLM fallback 冒充可复用知识；结构化经验仍由同 Task、同 Commit 的 Server Gate 决定是否发布。
 - 增加 Markdown 提取、缺证据、软链逃逸和敏感信息脱敏回归，并将生成器接入 Skills 结构门禁。
+- 最终结果摘要排除 TDD RED 与零失败计数，避免被 Server 保守策略误判为交付失败；否定式验证和非 clean Review 不得生成 PASS。
 
 ## 0.7.2
 

@@ -24,7 +24,7 @@ function fixture({ complete = true, remote = true } = {}) {
   writeFileSync(join(repo, '.cap/STATE.md'), `# Cap State: 纠正支付产品线\n\nstage: done\nstatus: development-complete\ntask-id: task_payment\nsession-id: session_payment\n\n## Decisions log\n- 回调仅作验签后的查询唤醒，最终状态通过查询接口收敛。\n- 新渠道配置默认停用，验证后按反向顺序清理。\n`)
   if (complete) {
     writeFileSync(join(repo, '.cap/spec.md'), `# 支付产品线纠正规格\n\n## Goal\n将错误的快捷收银台实现纠正为行业直接支付，避免调用错误产品接口。\n\n## Contract\n- 编码前核对厂商产品线与交易码矩阵。\n- 处理中状态必须通过官方查询接口收敛。\n\n## Safety\n- 环境与 Host 必须显式配置，未知环境 fail closed。\n- 测试配置默认停用，只允许模拟卡和最小金额。\n\n## Out of scope\n- 生产真实卡和真实资金。\n`)
-    writeFileSync(join(repo, '.cap/verify/logic-report.md'), `# Logic Verification Report\n\nstatus: LOCAL_PASS_SERVER_ENV_BLOCKED\nsource-commit: pending\n\n## Evidence\n- 模块测试 145 个：144 通过，1 跳过。\n- SDK HTTP Mock 3/3 通过。\n\n## External journey\n- 唯一一笔 0.02 沙箱支付从 PROCESSING 查询收敛到 SUCCESS。\n\n## Environment exclusions\n- 独立 Provider 缺少历史 Maven 私有依赖，属于 ENV_BLOCKED。\n\n## Gate\n- Server Test Action: action_payment_test\n`)
+    writeFileSync(join(repo, '.cap/verify/logic-report.md'), `# Logic Verification Report\n\nstatus: LOCAL_PASS_SERVER_ENV_BLOCKED\nsource-commit: pending\n\n## Evidence\n- RED：旧实现断言失败，符合预期。\n- 模块测试 145 个：144 通过、0 失败、0 错误、1 跳过。\n- SDK HTTP Mock 3/3 通过。\n\n## External journey\n- 唯一一笔 0.02 沙箱支付从 PROCESSING 查询收敛到 SUCCESS。\n\n## Environment exclusions\n- 独立 Provider 缺少历史 Maven 私有依赖，属于 ENV_BLOCKED。\n\n## Gate\n- Server Test Action: action_payment_test\n`)
     writeFileSync(join(repo, '.cap/review/summary.md'), `# Review Summary\n\nstatus: clean\nfindings: 0\n`)
   }
   writeFileSync(join(repo, 'README.md'), 'fixture\n')
@@ -52,6 +52,7 @@ test('standard cap artifacts deterministically produce a complete record_experie
   assert.ok(result.payload.experience.counterexamples.some(item => /真实资金/.test(item)))
   assert.ok(result.payload.experience.evidence_refs.includes('.cap/verify/logic-report.md'))
   assert.ok(result.payload.experience.evidence_refs.includes('action:action_payment_test'))
+  assert.doesNotMatch(result.payload.experience.outcome, /\bfailed\b|失败|错误/i)
   assert.equal(result.payload.verify_verdict.logic.status, 'PASS')
   assert.equal(result.payload.review_verdict.status, 'PASS')
   assert.ok(result.payload.changed_files.includes('.cap/spec.md'))
