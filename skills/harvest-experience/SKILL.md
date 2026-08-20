@@ -42,7 +42,12 @@ git diff --name-only HEAD    # 未提交改动
 # 若本次已提交，可用：git diff --name-only HEAD~1 HEAD
 ```
 
-然后调用 MCP 工具 `record_experience`：
+然后从本 Skill 所属 package 根运行 `scripts/cap-experience-payload.mjs`，以当前仓库、最终 Commit 和本轮高信息量总结生成确定性载荷。脚本只读取受控的 `.cap/STATE.md`、`spec.md`、`verify/*.md`、`review/*.md` 和 Git 路径事实，拒绝软链逃逸、大文件及敏感值；不得让模型重新概括这些文件后手工拼装另一份载荷。
+
+- 返回 `ready=true`：把 `payload` 原样作为 MCP `record_experience` 的权威输入；Server 仍按同 Task、同 Commit 的可信 Gate 决定 candidate 或 validated，客户端不得自行发布。
+- 返回 `ready=false`：报告 `missing` 所列的证据缺口并补齐真实 `.cap` 产物。无法补齐时不调用旧式 LLM fallback，不得宣称已经形成可复用知识；纯问答或没有真实代码改动仍直接跳过沉淀。
+
+只有生成器 `ready=true` 后才调用 MCP 工具 `record_experience`：
 
 若当前 `.cap/STATE.md` 有 `task-id`，同时传 `task_id` 和本轮 `commit_sha`。Server 会核验该 Task 是否由同一 Commit 的测试、Review、安全与交付 Gate 收口，并据此生成可信的 `verify_verdict/review_verdict`；客户端不得脱离 Task 证据自行伪造 PASS。只有旧 Server 不支持这两个字段时，才退回显式 verdict。
 
@@ -59,7 +64,7 @@ git diff --name-only HEAD    # 未提交改动
   - `evidence_refs`: Commit、测试报告、Review 报告或 `.cap` 证据路径，只传引用不传代码正文。
   - `outcome`: 最终结果，例如 `tests_passed + review_passed + adopted`。
 
-结构化 `experience` 是权威输入：Server 应直接校验并入库，不再强制依赖模型二次萃取。旧客户端没有结构化字段时，Server 可以有限重试模型补全；仍失败只能保存为 candidate draft 并返回结构化失败原因，不能把整条经验丢弃。客户端只有在知识文档写入真正失败时才进入 Outbox。
+结构化 `experience` 是权威输入：Server 应直接校验并入库，不再强制依赖模型二次萃取。确定性生成器证据不足时必须 fail closed；禁止为了“有一条记录”退回旧式 LLM 萃取生成不可召回 draft。客户端只有在 `ready=true` 后知识文档写入真正失败时才进入 Outbox。
 
 **归因字段(可选)**：
 - `session_id`: 会话标识

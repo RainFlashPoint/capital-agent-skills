@@ -19,7 +19,7 @@ contains_old_skill_name(){
 }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-history-recon.mjs" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -151,6 +151,9 @@ ok "Git 分支意图与提交范围 Gate 检查完成"
 echo "== 4.3.3 显式本地运行模式 =="
 grep -q 'mode=local_explicit' "$ROOT/cap/SKILL.md" || err "cap 未识别显式本地模式"
 grep -q 'CAPITAL_AGENT_MODE=local' "$ROOT/harvest-experience/SKILL.md" || err "经验闭环未跳过显式本地模式"
+grep -q 'cap-experience-payload.mjs' "$ROOT/harvest-experience/SKILL.md" || err "经验闭环未使用确定性结构化载荷生成器"
+grep -q '返回 `ready=false`' "$ROOT/harvest-experience/SKILL.md" || err "经验闭环未对证据不足 fail closed"
+grep -q '不调用旧式 LLM fallback' "$ROOT/harvest-experience/SKILL.md" || err "经验闭环仍可能用 LLM fallback 冒充可复用知识"
 grep -q 'CAPITAL_AGENT_MODE=local' scripts/setup.mjs || err "setup 未持久化显式本地模式"
 grep -q 'local_explicit' scripts/cap-status.mjs || err "cap-status 未实现显式本地状态"
 grep -q -- '--local' README.md || err "README 未公开本地安装命令"
