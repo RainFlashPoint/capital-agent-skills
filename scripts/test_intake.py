@@ -138,7 +138,7 @@ def _read(path):
         return f.read()
 
 
-def _make_cap(cap, names=("spec.md", "plan.md", "STATE.md"),
+def _make_cap(cap, names=("spec.md", "plan.md", "experience.md", "STATE.md"),
               dirs=("verify", "review")):
     for name in names:
         with open(os.path.join(cap, name), "w", encoding="utf-8") as f:
@@ -175,6 +175,27 @@ class RetireTest(unittest.TestCase):
     def test_task_history_snapshot_is_indexed_and_clears_after_validation(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap)
+            with open(os.path.join(cap, "experience.md"), "w", encoding="utf-8") as f:
+                f.write("""---
+schema: cap-experience/v1
+title: 支付异步状态查询收敛
+source-commit: def
+---
+
+## 复用触发与检索线索 / Reuse triggers and retrieval cues
+- 触发：当支付同步返回处理中且存在官方查询接口时。
+- 关键词：PROCESSING、查询收敛、幂等终态。
+
+## 问题与根因 / Problem and cause
+- 问题：同步处理中被误写为成功。
+- 根因：把接口受理等同于支付终态。
+
+## 决策与行动 / Decision and actions
+- 决策：当同步状态为处理中时，必须通过官方查询收敛终态。
+
+## 失效信号 / Invalidation signals
+- 失效信号：厂商状态枚举或查询协议发生变化。
+""")
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: done\ntask-id: task_123\n")
             r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
@@ -193,7 +214,13 @@ class RetireTest(unittest.TestCase):
             self.assertEqual(manifest["parentTaskId"], "task_parent")
             self.assertEqual(manifest["deliveryCommit"], "def")
             self.assertEqual(index["artifactRoot"], ".cap/history/task_123")
+            self.assertEqual(index["experienceIndex"]["path"], ".cap/history/task_123/experience.md")
+            self.assertIn("查询收敛", " ".join(index["experienceIndex"]["retrievalCues"]))
+            self.assertIn("必须通过官方查询", " ".join(index["experienceIndex"]["decisionRules"]))
             self.assertTrue(any(item["path"] == "plan.md" and item["sha256"] for item in manifest["artifacts"]))
+            self.assertTrue(any(item["path"] == "experience.md" and item["sha256"] for item in manifest["artifacts"]))
+            self.assertTrue(os.path.isfile(os.path.join(history, "experience.md")))
+            self.assertFalse(os.path.exists(os.path.join(cap, "experience.md")))
             self.assertFalse(os.path.exists(os.path.join(cap, "STATE.md")))
 
     def test_strict_retire_refuses_without_done_and_preserves_active_files(self):
@@ -346,7 +373,7 @@ class RetireTest(unittest.TestCase):
             r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-06-16")
             self.assertEqual(r.returncode, 0, r.stderr)
             arch = os.path.join(cap, "archive", "2026-06-16-feat")
-            for name in ("spec.md", "plan.md", "STATE.md", "verify", "review"):
+            for name in ("spec.md", "plan.md", "experience.md", "STATE.md", "verify", "review"):
                 self.assertTrue(os.path.exists(os.path.join(arch, name)),
                                 f"archived missing {name}")
                 self.assertFalse(os.path.exists(os.path.join(cap, name)),

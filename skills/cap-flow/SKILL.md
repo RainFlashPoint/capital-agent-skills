@@ -457,7 +457,7 @@ Review 通过且已有有效 Commit 时，若 MCP 提供 `split_deferred_accepta
 
 若 capital-agent MCP 提供 `record_skill_event`，每次 HANDOFF 写完 STATE 后追加一条同 `session_id` 事件：阶段进入用 `stage_entered`，门通过用 `gate_passed`，阻塞用 `stage_blocked`；verify/review 阶段分别用对应完成事件。artifact_refs 只传已登记的 Artifact ID 或路径，不传文件正文。
 
-同一 HANDOFF 若 MCP 提供 `record_task_artifact`，先登记本阶段新建或更新的 `.cap` 文件，再记录事件：`PROFILE.md→profile`、`task-context.md→other`、`spec.md→spec`、`plan.md→plan`、`STATE.md→state`、`verify/*→verify`、`review/*→review`、`release/*→release`，其余为 `other`。每个文件只传 `task_id / kind / repo-root 相对 path / SHA-256 hash / git_ref / stage / status / 一句 summary`；禁止传正文、本机绝对路径、内部服务地址或密钥。已经通过入口握手后，没有 task-id、旧 MCP 缺少单个接口或调用失败时按离线规则降级；团队模式的完整 MCP 工具集未加载时先进入 `restart_required`，只有用户明确选择本次本地继续才跳过平台登记。同一路径同一 hash 不重复登记。
+同一 HANDOFF 若 MCP 提供 `record_task_artifact`，先登记本阶段新建或更新的 `.cap` 文件，再记录事件：`PROFILE.md→profile`、`task-context.md→other`、`spec.md→spec`、`plan.md→plan`、`experience.md→other`、`STATE.md→state`、`verify/*→verify`、`review/*→review`、`release/*→release`，其余为 `other`。每个文件只传 `task_id / kind / repo-root 相对 path / SHA-256 hash / git_ref / stage / status / 一句 summary`；禁止传正文、本机绝对路径、内部服务地址或密钥。已经通过入口握手后，没有 task-id、旧 MCP 缺少单个接口或调用失败时按离线规则降级；团队模式的完整 MCP 工具集未加载时先进入 `restart_required`，只有用户明确选择本次本地继续才跳过平台登记。同一路径同一 hash 不重复登记。
 
 若 STATE 尚无 `task-id` 且 MCP 提供 `create_or_attach_task`，在首次 shape/intake 前自动创建统一 Task 并写回 `task-id`/`session-id`；退场时用 `record_task_delivery` 回写真实 Commit 与验证证据。具体契约见 `../harvest-experience/references/platform-task-loop.md`。
 

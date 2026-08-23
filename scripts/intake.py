@@ -45,8 +45,9 @@ LEGACY_STAGE_ALIASES = {"map": "understand", "shape": "define", "build": "implem
 def normalize_stage(stage):
     value = str(stage or "").strip().lower()
     return LEGACY_STAGE_ALIASES.get(value, value)
-RETIRE_ARTIFACTS = ["task-context.md", "spec.md", "plan.md", "verify", "review", "STATE.md"]
+RETIRE_ARTIFACTS = ["task-context.md", "spec.md", "plan.md", "experience.md", "verify", "review", "STATE.md"]
 RETIRE_PHASES = {"snapshot": 0, "cleanup": 1, "index": 2, "leaf": 3, "backflow": 4, "complete": 5}
+MAX_EXPERIENCE_INDEX_ITEMS = 8
 
 
 def _sha256(path):
@@ -66,6 +67,82 @@ def _artifact_manifest(root):
             rows.append({"path": os.path.relpath(path, root).replace(os.sep, "/"),
                          "sha256": _sha256(path), "size": os.path.getsize(path)})
     return rows
+
+
+def _experience_section(text, aliases):
+    wanted = [alias.lower() for alias in aliases]
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r"^##\s+(.+?)\s*$", line)
+        if not match:
+            continue
+        heading = match.group(1).strip().lower()
+        if not any(heading == alias or heading.startswith(alias + " /") or heading.endswith("/ " + alias) for alias in wanted):
+            continue
+        body = []
+        for candidate in lines[index + 1:]:
+            if re.match(r"^##\s+", candidate):
+                break
+            bullet = re.match(r"^\s*[-*]\s+(.+?)\s*$", candidate)
+            if bullet:
+                body.append(bullet.group(1).strip())
+        return body
+    return []
+
+
+def _experience_labeled(lines, labels):
+    wanted = {label.lower() for label in labels}
+    result = []
+    for line in lines:
+        match = re.match(r"^([^:：]{1,40})[:：]\s*(.+?)\s*$", line)
+        if match and match.group(1).strip().lower() in wanted:
+            result.append(match.group(2).strip())
+    return result
+
+
+def _safe_experience_index_text(value):
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if re.search(r"ignore (?:all |the )?(?:previous|prior) instructions|忽略(?:以上|此前|之前)(?:所有)?(?:指令|规则)|system prompt|developer message|exfiltrat", text, re.I):
+        return ""
+    text = re.sub(r"https?://[^\s/@]+:[^\s/@]+@", "https://", text, flags=re.I)
+    text = re.sub(r"(?:/Users/|/home/|/private/|/tmp/|/var/folders/|[A-Za-z]:\\)[^\s,，;；]+", "[REDACTED_LOCAL_PATH]", text)
+    text = re.sub(r"\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b", "[REDACTED_PRIVATE_ADDRESS]", text)
+    text = re.sub(r"\b(secret|token|password|passwd|api[_-]?key)\s*[:#=]\s*[^\s,，;；]+", r"\1=[REDACTED_SECRET]", text, flags=re.I)
+    text = re.sub(r"\b(account|merchant(?:\s*id)?|customer(?:\s*id)?)\s*[:#=]?\s*[a-z0-9_-]{3,}\b", r"\1 [REDACTED_IDENTIFIER]", text, flags=re.I)
+    text = re.sub(r"(商户号|商户编号|商编|账户号|账号)\s*[:：=#]?\s*[a-z0-9_-]{3,}", r"\1[REDACTED_IDENTIFIER]", text, flags=re.I)
+    text = re.sub(r"\b\d{12,}\b", "[REDACTED_IDENTIFIER]", text)
+    return text[:500]
+
+
+def _experience_index(path):
+    if not os.path.isfile(path) or os.path.islink(path) or os.path.getsize(path) > 256 * 1024:
+        return None
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    frontmatter = parse_frontmatter(text)
+    if frontmatter.get("schema") != "cap-experience/v1":
+        return None
+    retrieval = _experience_section(text, ["复用触发与检索线索", "reuse triggers and retrieval cues", "复用触发", "reuse triggers"])
+    problem = _experience_section(text, ["问题与根因", "problem and cause"])
+    decision = _experience_section(text, ["决策与行动", "decision and actions"])
+    invalidation = _experience_section(text, ["失效信号", "invalidation signals"])
+    cues = _experience_labeled(retrieval, ["触发", "trigger", "关键词", "keywords", "检索词", "retrieval cues", "症状", "symptom", "symptoms"])
+    problems = _experience_labeled(problem, ["问题", "problem", "根因", "cause", "root cause"])
+    decisions = _experience_labeled(decision, ["决策", "decision", "决策规则", "decision rule"])
+    invalidations = _experience_labeled(invalidation, ["失效信号", "invalidation signal"])
+    if not frontmatter.get("title") or not cues or not problems or not decisions or not invalidations:
+        return None
+    clean = lambda values: [item for item in (_safe_experience_index_text(value) for value in values) if item][:MAX_EXPERIENCE_INDEX_ITEMS]
+    return {
+        "schema": "cap-experience-index/v1",
+        "title": _safe_experience_index_text(frontmatter.get("title", "")),
+        "sourceCommit": _safe_experience_index_text(frontmatter.get("source-commit", "")),
+        "retrievalCues": clean(cues),
+        "problemPatterns": clean(problems),
+        "decisionRules": clean(decisions),
+        "invalidationSignals": clean(invalidations),
+        "path": "experience.md",
+    }
 
 
 def _atomic_write_text(path, text):
@@ -733,6 +810,10 @@ def cmd_retire(args):
         if current_phase() < RETIRE_PHASES["index"]:
             index_item = {key: manifest[key] for key in ("schemaVersion", "taskId", "parentTaskId", "title", "intentSummary", "keywords", "branch", "baseCommit", "deliveryCommit", "completedAt", "status")}
             index_item["artifactRoot"] = f".cap/history/{task_id}"
+            experience_index = _experience_index(os.path.join(archive_dir, "experience.md"))
+            if experience_index:
+                index_item["experienceIndex"] = experience_index
+                index_item["experienceIndex"]["path"] = f".cap/history/{task_id}/experience.md"
             _atomic_write_json(index_path, index_item)
             _fail_retire_after("index")
             advance("index")

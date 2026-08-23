@@ -251,11 +251,11 @@ python3 scripts/intake.py move --root <root> --leaf <leaf-id> --to <domain>/<sub
 
 | 步 | 动作 | 谁做 | 适用 |
 |---|---|---|---|
-| ① 历史快照 | `.cap/{task-context.md,spec.md,plan.md,verify,review,STATE.md}` → `.cap/history/<task-id>/`，生成 manifest/hash 与单 Task 索引 | 脚本 | 全部特性 |
+| ① 历史快照 | `.cap/{task-context.md,spec.md,plan.md,experience.md,verify,review,STATE.md}` → `.cap/history/<task-id>/`，生成 manifest/hash；把经验标题、召回线索、问题模式、决策摘要和精确原稿路径写入单 Task 索引 | 脚本 | 全部特性 |
 | ② 回流 | 从 `STATE.Decisions log` 蒸馏耐久决策 / 教训 / 新风险成一行,append `.cap/EVOLUTION.md` | 模型蒸馏 + 脚本追加 | 全部特性 |
 | ③ 标 shipped + 写叶记录 | 源叶 `status=shipped` → ready-queue 自动解锁下游;若传了 `--evolution-entry`,同条也 append 进该源叶的 `## cap 记录` 段 | 脚本 | 仅源自需求树的特性 |
 | ④ 清栈 | STATE.md 随①移走 → 顶层留空,交还给下个特性 | 脚本 | 全部特性 |
-| ⑤ 吐带标签数据点 | 组装本特性的 labeled datapoint,经 harvest-experience 的 `record_experience` 吐进中心 KB(见下) | 模型组装 + MCP 调用 | 有 MCP 时;无则跳过 |
+| ⑤ 校验经验并吐数据点 | 按 harvest-experience 契约校验 `.cap/experience.md`；团队模式再经 `record_experience` 吐进中心 KB(见下) | 确定性质量门 + 可选 MCP 调用 | 全部特性；本地只归档 |
 
 ```
 python3 scripts/intake.py retire --cap <target>/.cap --slug <feat> --date <YYYY-MM-DD> \
@@ -284,9 +284,10 @@ phase 推进。任一步中断后重跑同一 Retire 会从已提交 phase 继�
 
 ### 步⑤ 带标签数据点(飞轮适应度函数的原料)
 
-脚本①–④ 收完尾后,cap-flow 在退场编排层**组装一条完整的 labeled datapoint** 并经 harvest-experience 的
-`record_experience` 吐进中心 KB。**每片 shipped 叶天然产出一条**——eval F1 基准集 = 这些数据点的累积,不是从零
-单独搭的数据集。字段:
+Retire 前，cap-flow 必须先按 harvest-experience 的 `experience-contract.md` 形成并通过质量门的
+`.cap/experience.md`；它随①归档，成为可逐字审计的本地经验原稿。团队模式再把原稿确定性转换为完整 labeled
+datapoint，经 `record_experience` 吐进中心 KB。每片 shipped 叶应产出一条**合格候选**，不因追求数量把调用链或
+空泛总结冒充经验。eval F1 基准集来自通过质量门的数据点累积。字段:
 
 ```
 intent          # 叶意图(叶 title + spec 目标)
@@ -303,9 +304,8 @@ session_id      # 会话标识
 
 - **predicted vs changed 是关键一对**:predicted_files(plan 时的预测)对 changed_files(退场时的真值)打文件预测
   F1——这是"接入 KB/经验后模型预测有没有变准"的**适应度函数**,也是并行分支 A/B 测 skill 变体的第一把尺。
-- **组装 = 模型判断 + 读文件**:脚本不碰 MCP;数据点由编排层读 plan / git diff / verify / review 汇总后经
-  `record_experience` 吐出。字段**前向兼容**——server 现在忽略它不认识的字段不报错(见 `harvest-experience`)。
-- **显式本地或已加载 MCP 的单次调用失败 → 跳过/离线补报**：`local_explicit` / `local_fallback_explicit` 跳过步⑤；MCP 已加载但 `record_experience` 调用失败时按 Outbox 规则补报。团队模式完整 MCP 工具集未加载时，入口先完成 `restart_required` 选择。
+- **原稿判断 + 确定性转换**：模型负责从 plan / task-context / diff / verify / review 提炼原稿；脚本只解析 `experience.md` 并用 Git、verify、review 核对，不从其他文件猜经验。字段**前向兼容**——server 现在忽略它不认识的字段不报错(见 `harvest-experience`)。
+- **显式本地或已加载 MCP 的单次调用失败 → 本地保留/离线补报**：`local_explicit` / `local_fallback_explicit` 仍生成、校验并归档 `experience.md`，但不调用 MCP、不写 Outbox；MCP 已加载但 `record_experience` 调用失败时按 Outbox 规则补报。团队模式完整 MCP 工具集未加载时，入口先完成 `restart_required` 选择。
 
 **回流去向**:`<cap>/EVOLUTION.md`(脚本统一 append,缺则建头)。PROFILE.md 不承载流水,仅留一行指针——
 Evolution log 是无界流水、PROFILE 是有界快照,本性不同故分文件。这是长寿、可跨会话复用的演进记忆,区别于

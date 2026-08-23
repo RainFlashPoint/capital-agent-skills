@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url'
 import { inspectTaskBoundary } from './cap-status.mjs'
 import { archiveHistoricalOutboxEvents } from './cap-outbox.mjs'
 
-const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'verify', 'review', 'release']
+const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'experience.md', 'verify', 'review', 'release']
 
 function git(repo, args) {
   return execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()

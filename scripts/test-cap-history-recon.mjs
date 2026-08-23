@@ -28,7 +28,15 @@ function fixture() {
   git(repo, ['switch', '-q', 'main'])
   mkdirSync(join(repo, '.cap/history/index'), { recursive: true })
   mkdirSync(join(repo, '.cap/history/task-secret'), { recursive: true })
-  writeFileSync(join(repo, '.cap/history/index/task_1147.json'), JSON.stringify({ task_id: 'task_1147', title: '快乐通宝 1147 协议', branch: 'history/huiyuan-1147-contract' }))
+  writeFileSync(join(repo, '.cap/history/index/task_1147.json'), JSON.stringify({
+    task_id: 'task_1147', title: '快乐通宝 1147 协议', branch: 'history/huiyuan-1147-contract',
+    experienceIndex: {
+      schema: 'cap-experience-index/v1',
+      retrievalCues: ['当再次处理电子协议签署顺序时', '签署传递节点、异步协议回执'],
+      decisionRules: ['当回执异步到达时，必须先绑定协议版本再推进签署状态'],
+      path: '.cap/history/task_1147/experience.md',
+    },
+  }))
   writeFileSync(join(repo, '.cap/history/task-secret/STATE.md'), 'NEVER_RECURSIVELY_LOAD_ME 独占绝密召回词\n')
   return repo
 }
@@ -45,6 +53,16 @@ test('one read-only invocation surfaces the relevant historical branch, commit a
   assert.ok(result.matches.some(item => item.source_type === 'cap_index' && /task_1147/.test(item.file)))
   assert.equal(git(repo, ['branch', '--show-current']), beforeBranch)
   assert.equal(git(repo, ['status', '--porcelain=v1']), beforeStatus)
+})
+
+test('local experience retrieval cues make an archived task discoverable without scanning its body', () => {
+  const repo = fixture()
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', '异步协议回执应该如何处理', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  const match = result.matches.find(item => item.source_type === 'cap_index' && /task_1147/.test(item.file))
+  assert.ok(match)
+  assert.equal(match.inspect.value, '.cap/history/index/task_1147.json')
 })
 
 test('history reconnaissance does not recursively read cap history snapshots', () => {

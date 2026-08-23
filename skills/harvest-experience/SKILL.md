@@ -10,15 +10,15 @@ allowed-tools:
 这个 skill 让本地 CLI 会话和 capital-agent 知识层形成闭环：**登记会话 → 注入 → 编码 → 沉淀 → 结束**。
 它不改变正常编码方式，只补充轻量元数据事件；绝不上传代码正文。
 
-前置：MCP server `capital-agent` 已在本 CLI 注册（提供 `enrich_context`、`record_experience`、`search_knowledge` 等工具）。必须区分两种失败：团队模式已配置但当前会话根本没有暴露 MCP 工具时，按 `cap-status.mode=restart_required` 让用户选择重启或本次本地继续；本地继续返回 `local_fallback_explicit`，本 Skill 整体跳过且不写 Outbox。MCP 工具已经加载、但远端调用临时失败时，正常编码可离线继续，本轮已经形成的 Task/Artifact/Delivery/Experience/Skill Event 元数据必须进入 `.cap/outbox.jsonl`，不能静默丢失。
+团队平台链路的前置是 MCP server `capital-agent` 已在本 CLI 注册（提供 `enrich_context`、`record_experience`、`search_knowledge` 等工具）。必须区分两种失败：团队模式已配置但当前会话根本没有暴露 MCP 工具时，按 `cap-status.mode=restart_required` 让用户选择重启或本次本地继续；本地继续返回 `local_fallback_explicit`，跳过平台连接且不写 Outbox，但任务完成后仍形成本地经验原稿。MCP 工具已经加载、但远端调用临时失败时，正常编码可离线继续，本轮已经形成的 Task/Artifact/Delivery/Experience/Skill Event 元数据必须进入 `.cap/outbox.jsonl`，不能静默丢失。
 
-若 `scripts/cap-status.mjs` 返回 `mode=local_explicit`（配置 `CAPITAL_AGENT_MODE=local`）或 `mode=local_fallback_explicit`（用户只为本次任务明确本地继续），本 Skill 整体跳过：不登记平台会话、不调用 MCP、不创建 Task / Artifact / Delivery / Experience 事件，也不写或重放 Outbox。`.cap/` 文件与 Git 历史仍作为本地项目记忆；本地测试和评审结论不得包装成 Server Gate。
+若 `scripts/cap-status.mjs` 返回 `mode=local_explicit`（配置 `CAPITAL_AGENT_MODE=local`）或 `mode=local_fallback_explicit`（用户只为本次任务明确本地继续），只跳过**平台半链路**：不登记平台会话、不调用 MCP、不创建 Task / Artifact / Delivery / Experience 事件，也不写或重放 Outbox。实现与验证完成后仍按第 2 节编写并校验本地 `.cap/experience.md`，让 Git 历史保留可复用项目记忆；本地测试和评审结论不得包装成 Server Gate。
 
 ## 1. 会话开始 —— 登记 + 注入
 
 若当前目录属于 Git 仓库，开始实质工作前静默运行仓库自带的 `scripts/install-git-governance.mjs`（从本 skill 所属 package 根定位）。它幂等安装 `prepare-commit-msg`，保留并先执行项目原 Hook，把 `.cap/STATE.md` 中有效的 Task/Session 自动追加到 Commit，并在代码提交时检查 `.cap` 研发产物没有被遗漏或本地 exclude；安装失败时降级，不阻塞编码。不要要求用户手工安装或理解 Hook。
 
-若 MCP 提供 `create_or_attach_task`，优先按 `references/platform-task-loop.md` 创建/复用统一 Task；把返回的 `task_id`、`session_id` 写入 `.cap/STATE.md`。当 `cap-status` 已解析出活动 follow-up Task 时，必须切换到该 Task 并新建 Session，不能沿用已结束父 Task 的 session_id。仅当已加载的兼容 MCP 只提供旧接口时才退回 `start_skill_session`。团队模式下 MCP 工具集合完全缺失属于 `restart_required`；用户选择本次本地继续后整体跳过本 Skill，工具存在但调用失败才进入离线流程。
+若 MCP 提供 `create_or_attach_task`，优先按 `references/platform-task-loop.md` 创建/复用统一 Task；把返回的 `task_id`、`session_id` 写入 `.cap/STATE.md`。当 `cap-status` 已解析出活动 follow-up Task 时，必须切换到该 Task 并新建 Session，不能沿用已结束父 Task 的 session_id。仅当已加载的兼容 MCP 只提供旧接口时才退回 `start_skill_session`。团队模式下 MCP 工具集合完全缺失属于 `restart_required`；用户选择本次本地继续后跳过平台登记和注入，工具存在但调用失败才进入离线补报流程。
 
 在开始实质编码前，用本次任务的意图调用一次 MCP 工具 `enrich_context`：
 
@@ -34,7 +34,11 @@ allowed-tools:
 
 ## 2. 会话结束 —— 沉淀经验（harvest）
 
-当本次编码任务基本完成（改动已成形，无论是否已提交），收集改动文件并沉淀一条经验：
+当本次编码任务完成验证并形成最终 Commit 后，先按 [`references/experience-contract.md`](references/experience-contract.md) 编写 `.cap/experience.md`。不要只摘录调用链或 diff 摘要；主动从 `spec / task-context / diff / verify / review` 中提炼：召回线索、问题根因、失败做法、条件化决策、可执行行动、实现锚点、不变量、验证配方、禁用场景和失效信号。原始材料只帮助写作，`experience.md` 才是唯一经验真值。
+
+这一步不是要求越写越长，而是要求**每一段都能改变下一次 Agent 的定位、决策或验收动作**。完整调用链继续留在 `task-context.md`；`experience.md` 只保留最小实现入口、关键文件/符号和不可破坏的不变量。
+
+随后收集改动文件并生成沉淀载荷：
 
 ```bash
 # 收集本次改动的文件路径（只要路径，不要内容）
@@ -42,10 +46,12 @@ git diff --name-only HEAD    # 未提交改动
 # 若本次已提交，可用：git diff --name-only HEAD~1 HEAD
 ```
 
-然后从本 Skill 所属 package 根运行 `scripts/cap-experience-payload.mjs`，以当前仓库、最终 Commit 和本轮高信息量总结生成确定性载荷。脚本只读取受控的 `.cap/STATE.md`、`spec.md`、`verify/*.md`、`review/*.md` 和 Git 路径事实，拒绝软链逃逸、大文件及敏感值；不得让模型重新概括这些文件后手工拼装另一份载荷。
+然后从本 Skill 所属 package 根运行 `scripts/cap-experience-payload.mjs`，以当前仓库、最终 Commit 和本轮高信息量总结生成确定性载荷。脚本把 `.cap/experience.md` 作为唯一内容源，只用 `.cap/STATE.md`、`verify/*.md`、`review/*.md` 和 Git 事实核对 Task、Commit 与证据；拒绝软链逃逸、大文件、绝对路径及敏感值，不再从 spec/STATE 猜经验，也不得让模型手工拼装另一份载荷。
 
 - 返回 `ready=true`：把 `payload` 原样作为 MCP `record_experience` 的权威输入；Server 仍按同 Task、同 Commit 的可信 Gate 决定 candidate 或 validated，客户端不得自行发布。
-- 返回 `ready=false`：报告 `missing` 所列的证据缺口并补齐真实 `.cap` 产物。无法补齐时不调用旧式 LLM fallback，不得宣称已经形成可复用知识；纯问答或没有真实代码改动仍直接跳过沉淀。
+- 返回 `ready=false`：报告 `missing` 所列的原稿或证据缺口并补齐真实 `.cap` 产物。无法补齐时不调用旧式 LLM fallback，不得宣称已经形成可复用知识；纯问答或没有真实代码改动仍直接跳过沉淀。
+
+显式本地模式到此为止：保留通过质量门的 `.cap/experience.md`，供 Retire 归档和后续本地 Agent 读取，但不调用 MCP、不写 Outbox。团队模式才继续执行下方 `record_experience`。
 
 只有生成器 `ready=true` 后才调用 MCP 工具 `record_experience`：
 
