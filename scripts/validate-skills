@@ -19,7 +19,7 @@ contains_old_skill_name(){
 }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-runtime.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "scripts/setup.ps1" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -168,6 +168,13 @@ grep -q 'experience.md' scripts/intake.py || err "Retire 未归档经验原稿"
 grep -q 'CAPITAL_AGENT_MODE=local' scripts/setup.mjs || err "setup 未持久化显式本地模式"
 grep -q 'local_explicit' scripts/cap-status.mjs || err "cap-status 未实现显式本地状态"
 grep -q -- '--local' README.md || err "README 未公开本地安装命令"
+grep -q 'setup.ps1' README.md || err "README 未公开 Windows PowerShell 安装命令"
+grep -q 'localTestProviderPolicy' scripts/setup.mjs || err "setup 未使用 Windows Provider 能力策略"
+grep -q "platform === 'win32'" scripts/setup-lib.mjs || err "setup 未声明 Windows Provider remote-only 边界"
+grep -q 'cap-runtime.mjs context' "$REF/runtime-adapters/codex.md" || err "Codex adapter 未提供 Windows Node Context Guard"
+grep -q '原生 Windows 不调用该脚本' "$ROOT/cap/SKILL.md" || err "cap 未让 Windows Test Action 等待 Server/Linux Runner"
+grep -q 'Windows 的 `remote-only` 是受支持的执行策略' "$REF/harness-action-protocol.md" || err "Harness 协议仍可能把 Windows remote-only 当成 Provider 失败"
+grep -q 'localTestProviderLaunchPolicy(process.platform)' scripts/cap-local-test-provider.mjs || err "本机 Provider 脚本未拒绝 Windows 误调用"
 ok "显式本地运行模式检查完成"
 
 echo "== 4.3.4 P0 运行边界与发布门禁 =="

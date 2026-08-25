@@ -26,7 +26,7 @@ description: >
 - `references/harness-action-protocol.md`：Test/Review/Patch 的可信执行边界；STATE 是游标，不是 Gate 证明。
 
 任一阶段被直接调用时也必须遵守这两条契约。没有新鲜 `task-context.md` 时，不得直接进入计划或编码。
-准备进入 `plan / implement / test / review / release` 时，必须运行 `scripts/cap-context-guard`；失败就留在当前阶段刷新代码调查，不能只靠模型自判“应该没问题”。
+准备进入 `plan / implement / test / review / release` 时，必须运行确定性 Context Guard；POSIX 沿用 `scripts/cap-context-guard`，原生 Windows 通过 package 根 `scripts/cap-runtime.mjs context` 执行同一契约。失败就留在当前阶段刷新代码调查，不能只靠模型自判“应该没问题”。
 
 ## 第三条硬契约：上下文预算（单会话多阶段强制）
 
@@ -148,6 +148,8 @@ Test/Review 的最终可信状态来自 Server Action。STATE 中的阶段结论
 sh <cap-flow 目录>/scripts/cap-guard    # 脚本自包含;确定性比对 STATE 记录的 branch/worktree 与当前
 ```
 
+原生 Windows / PowerShell 没有 POSIX shell 时，使用 package 根的 Node 入口 `node scripts/cap-runtime.mjs guard <target-repo>`；Git for Windows Hook 仍由其自带的 `sh` 执行现有脚本。两条入口必须保持相同的 branch/worktree/session-root 阻断语义。
+
 - **守卫报错(串台)** → `cap-status` 必须投影为 `mode=boundary_blocked`。要续接旧任务就切回原分支/worktree；要执行已创建的新 Task，就用 package 根 `scripts/cap-task-state-switch.mjs` 先原子保存旧活动态、初始化新 STATE，再重跑守卫。串台状态下不要继续推进，不能只写一句说明后绕过。
 - **会话根报错** → `cap-status` 投影为 `mode=session_root_blocked`，其优先级高于 STATE 自洽检查。不得读取当前错误目录的 STATE 来决定去哪；回到锁定仓库，或由用户新建会话显式切换目标。
 - **守卫通过、但本次意图是"开新特性"而 STATE 里还有进行中的特性** → 用编号文本警告:
@@ -184,8 +186,8 @@ sh <cap-flow 目录>/scripts/cap-guard    # 脚本自包含;确定性比对 STAT
    └─ 有 PROFILE.md                                     → 在 STATE.stage 处续接
 ```
 
-**优先判定:上个特性走完但没退场(`STATE.stage == done`)。** 每次准备创建新需求前先运行
-`python3 scripts/intake.py prepare-next --cap <target>/.cap`。根 `.cap` 只允许一个活动 Task；存在进行中 Task
+**优先判定:上个特性走完但没退场(`STATE.stage == done`)。** 每次准备创建新需求前先运行确定性的 `prepare-next`：POSIX 沿用
+`python3 scripts/intake.py prepare-next --cap <target>/.cap`，原生 Windows 使用 `node scripts/cap-runtime.mjs prepare-next <target>/.cap`。根 `.cap` 只允许一个活动 Task；存在进行中 Task
 必须续接或换 branch/worktree，禁止覆盖。入口读到 `stage==done`(特性到终点但工件还没收尾)→ **先触发退场仪式**
 (在 Server 确认同一 Commit 的 Gate PASS 后，将活动工件快照到 `.cap/history/<task-id>/`、把耐久决策从
 `STATE.Decisions log` 蒸馏回 `PROFILE.md ## Evolution log`、若特性源自需求树叶则标该叶 `shipped`、清空

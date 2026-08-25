@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'child_process'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { sanitizeRepositoryUrl } from './client-delivery.mjs'
+import { localTestProviderLaunchPolicy } from './setup-lib.mjs'
 
 function fail(message, detail = '') {
   process.stdout.write(`${JSON.stringify({ ok: false, code: message, detail }, null, 2)}\n`)
@@ -12,7 +13,10 @@ function fail(message, detail = '') {
 
 const repo = resolve(process.argv[2] || process.cwd())
 const actionId = String(process.argv[3] || '').trim()
-if (!existsSync(resolve(repo, '.git'))) {
+const launchPolicy = localTestProviderLaunchPolicy(process.platform)
+if (!launchPolicy.allowed) {
+  fail(launchPolicy.code, `${launchPolicy.detail}；客户端应继续等待 Server/Linux Runner，不应在 Windows 唤醒本机 Provider。`)
+} else if (!existsSync(resolve(repo, '.git'))) {
   fail('repo_not_found', repo)
 } else if (!/^action_[a-zA-Z0-9-]+$/.test(actionId)) {
   fail('action_id_required', '必须传入本次 create_task_action 返回的精确 Action ID。')

@@ -13,6 +13,33 @@ export const minimumMcpNodeVersion = '20.18.1'
 export const minimumLocalNodeVersion = '18.0.0'
 export const clientRestartNotice = () => '重要：已经打开的客户端不会热加载新 Skill/MCP。请完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，然后新建任务继续；现有分支和工作区改动不会丢失。'
 
+export function localTestProviderPolicy(platform = process.platform) {
+  if (platform === 'win32') {
+    return {
+      supported: false,
+      required: false,
+      mode: 'remote-only',
+      detail: 'Windows 原生不启用本机 Test Provider；独立验证由 Server/Linux Runner 执行',
+    }
+  }
+  if (platform === 'darwin' || platform === 'linux') {
+    return {
+      supported: true,
+      required: true,
+      mode: 'local-provider',
+      detail: '本机 Test Provider 必须安装并通过健康检查',
+    }
+  }
+  throw new Error(`本地 Test Provider 不支持的平台：${platform}`)
+}
+
+export function localTestProviderLaunchPolicy(platform = process.platform) {
+  const policy = localTestProviderPolicy(platform)
+  return policy.supported
+    ? { allowed: true, code: '', detail: policy.detail }
+    : { allowed: false, code: 'windows_remote_only', detail: policy.detail }
+}
+
 function isCompatibleNode(version = '', minimum = [18, 0, 0]) {
   const parts = String(version).replace(/^v/, '').split('.').map(Number)
   if (parts.length < 3 || parts.some(Number.isNaN)) return false
@@ -201,11 +228,25 @@ export async function hasActivationRule(filePath) {
   return content.includes(ACTIVATION_START) && content.includes(ACTIVATION_END)
 }
 
-export async function hasSkillLink(sourceDir, targetDir, name = 'cap') {
+function windowsComparablePath(value = '') {
+  return String(value).replace(/^\\\\\?\\/, '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+async function linkPointsTo(target, source, platform = process.platform) {
+  try {
+    const linked = await readlink(target)
+    if (linked === source) return true
+    if (platform !== 'win32') return false
+    const [actual, expected] = await Promise.all([realpath(target), realpath(source)])
+    return windowsComparablePath(actual) === windowsComparablePath(expected)
+  } catch { return false }
+}
+
+export async function hasSkillLink(sourceDir, targetDir, name = 'cap', platform = process.platform) {
   try {
     const target = join(targetDir, name)
     const stat = await lstat(target)
-    return stat.isSymbolicLink() && await readlink(target) === join(sourceDir, name)
+    return stat.isSymbolicLink() && await linkPointsTo(target, join(sourceDir, name), platform)
   } catch { return false }
 }
 
@@ -309,7 +350,22 @@ export async function inspectClaudeMcpConfig(filePath) {
   } catch { return withEntryValidity({}) }
 }
 
-export async function installSkillLinks(sourceDir, targetDir, skillNames = publicSkillNames) {
+export async function installClaudeMcpConfig(filePath, nodePath, wrapperPath) {
+  await mkdir(dirname(filePath), { recursive: true, mode: 0o700 })
+  const existing = await readFile(filePath, 'utf8').catch(() => '')
+  let config = {}
+  if (existing.trim()) {
+    try { config = JSON.parse(existing) } catch { throw new Error(`Claude MCP 配置不是有效 JSON，未覆盖：${filePath}`) }
+  }
+  if (!config || Array.isArray(config) || typeof config !== 'object') throw new Error(`Claude MCP 配置必须是 JSON 对象，未覆盖：${filePath}`)
+  const mcpServers = config.mcpServers && !Array.isArray(config.mcpServers) && typeof config.mcpServers === 'object' ? config.mcpServers : {}
+  const nextConfig = { ...config, mcpServers: { ...mcpServers, 'capital-agent': { type: 'stdio', command: nodePath, args: [wrapperPath], env: {} } } }
+  const next = `${JSON.stringify(nextConfig, null, 2)}\n`
+  await writeFile(filePath, next, { mode: 0o600 })
+  return { filePath, changed: next !== existing }
+}
+
+export async function installSkillLinks(sourceDir, targetDir, skillNames = publicSkillNames, platform = process.platform) {
   const { readdir } = await import('fs/promises')
   await mkdir(targetDir, { recursive: true })
   const entries = await readdir(sourceDir, { withFileTypes: true })
@@ -322,15 +378,14 @@ export async function installSkillLinks(sourceDir, targetDir, skillNames = publi
     const target = join(targetDir, entry.name)
     try {
       const stat = await lstat(target)
-      if (stat.isSymbolicLink() && (await readlink(target)) === join(sourceDir, entry.name)) await unlink(target)
+      if (stat.isSymbolicLink() && await linkPointsTo(target, join(sourceDir, entry.name), platform)) await unlink(target)
     } catch {}
   }
   for (const name of legacySkillNames) {
     const target = join(targetDir, name)
     try {
       const stat = await lstat(target)
-      const linked = stat.isSymbolicLink() ? await readlink(target) : ''
-      if (linked === join(sourceDir, name)) await unlink(target)
+      if (stat.isSymbolicLink() && await linkPointsTo(target, join(sourceDir, name), platform)) await unlink(target)
     } catch {}
   }
 
@@ -340,10 +395,10 @@ export async function installSkillLinks(sourceDir, targetDir, skillNames = publi
     try {
       const stat = await lstat(target)
       if (!stat.isSymbolicLink()) continue
-      if (await readlink(target) === source) { installed.push(name); continue }
+      if (await linkPointsTo(target, source, platform)) { installed.push(name); continue }
       await unlink(target)
     } catch {}
-    await symlink(source, target, process.platform === 'win32' ? 'junction' : 'dir')
+    await symlink(source, target, platform === 'win32' ? 'junction' : 'dir')
     installed.push(name)
   }
   return installed

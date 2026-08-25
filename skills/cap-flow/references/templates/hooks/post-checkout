@@ -40,6 +40,13 @@ for c in \
 done
 [ -n "$ik" ] || exit 0
 
-python3 "$ik" set-status --root "$req" --leaf "$leaf" --to "$to" >/dev/null 2>&1 \
-  || echo "ℹ post-checkout: flush 叶 '$leaf' -> $to 失败(非阻断;手动可 intake.py set-status)" >&2
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$ik" set-status --root "$req" --leaf "$leaf" --to "$to" >/dev/null 2>&1 \
+    || echo "ℹ post-checkout: flush 叶 '$leaf' -> $to 失败(非阻断;手动可 intake.py set-status)" >&2
+elif command -v py >/dev/null 2>&1; then
+  py -3 "$ik" set-status --root "$req" --leaf "$leaf" --to "$to" >/dev/null 2>&1 \
+    || echo "ℹ post-checkout: flush 叶 '$leaf' -> $to 失败(非阻断;手动可 intake.py set-status)" >&2
+else
+  echo "ℹ post-checkout: 未找到 Python 3，跳过需求叶状态同步(非阻断)" >&2
+fi
 exit 0

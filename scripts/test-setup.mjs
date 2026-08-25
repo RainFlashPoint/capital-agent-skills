@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -71,6 +71,17 @@ test('doctor reads the actual Cursor and Claude MCP commands instead of probing 
   const claude = join(home,'.claude.json'); await writeFile(claude,JSON.stringify({mcpServers:{'capital-agent':{type:'stdio',command:'/opt/node',args:[wrapper],env:{}}}}))
   assert.deepEqual(await inspectCursorMcpConfig(cursor),{registered:true,command:'/opt/node',args:[wrapper],wrapperPath:wrapper,valid:true})
   assert.deepEqual(await inspectClaudeMcpConfig(claude),{registered:true,command:'/opt/node',args:[wrapper],wrapperPath:wrapper,valid:true})
+})
+test('installs Claude MCP config directly on Windows without depending on a cmd shim', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-claude-windows-')); const wrapper = join(home,'installed','mcp-remote.mjs')
+  await mkdir(join(home,'installed'),{recursive:true}); await writeFile(wrapper,'// fixture\n')
+  const target = join(home,'.claude.json')
+  await writeFile(target,JSON.stringify({theme:'dark',mcpServers:{other:{command:'other'}}}))
+  await installClaudeMcpConfig(target,'C:\\Program Files\\nodejs\\node.exe',wrapper)
+  const config = JSON.parse(await readFile(target,'utf8'))
+  assert.equal(config.theme,'dark')
+  assert.equal(config.mcpServers.other.command,'other')
+  assert.deepEqual(config.mcpServers['capital-agent'],{type:'stdio',command:'C:\\Program Files\\nodejs\\node.exe',args:[wrapper],env:{}})
 })
 test('system DNS fallback parses platform resolvers and gives curl the resolved address without changing TLS hostname', () => {
   const calls=[]
@@ -177,6 +188,17 @@ test('installs only the cap public entry without replacing an existing directory
   assert.equal(await hasSkillLink(source,target), true)
   assert.equal((await lstat(join(target,'harvest-experience'))).isDirectory(), true)
   await assert.rejects(readlink(join(target,'cap-flow')))
+})
+
+test('Windows junction discovery compares canonical targets instead of raw readlink text', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-windows-link-'))
+  const source = join(home,'source','skills')
+  const target = join(home,'target')
+  await mkdir(join(source,'cap'),{recursive:true})
+  await mkdir(target,{recursive:true})
+  await symlink(join(source,'cap'),join(target,'cap'),'dir')
+  assert.equal(await hasSkillLink(source,target,'cap','win32'),true)
+  assert.deepEqual(await installSkillLinks(source,target,['cap'],'win32'),['cap'])
 })
 test('upgrade removes only old internal links owned by this skill package', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cap-setup-clean-')); const source = join(root,'source'); const target = join(root,'target'); const other = join(root,'other')

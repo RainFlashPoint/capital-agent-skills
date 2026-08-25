@@ -92,4 +92,6 @@
 bash <cap-flow>/scripts/cap-context-guard --stage <stage> [--intent "<当前任务原文>"] <repo>
 ```
 
+原生 Windows / PowerShell 使用 package 根的跨平台入口：`node scripts/cap-runtime.mjs context <repo> --stage <stage> --intent "<当前任务原文>"`。POSIX 继续使用上面的既有 Shell 入口；两者必须保持相同的失败关闭语义。
+
 门禁先核对宿主稳定会话 ID 对应的锁定根，再从该 canonical Git root 运行，检查文件存在、必填段、intent、branch、HEAD、index/worktree/untracked fingerprint、PROFILE 的 `index-only` 声明，以及入口/测试/影响范围、证据来源和外部操作边界。任一工作区事实变化都先刷新 `task-context.md`，不得口头解释后绕过。会话根不一致时必须在读取错误仓 task-context 前停止。

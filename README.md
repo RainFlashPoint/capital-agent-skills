@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.8.1，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.9.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.9.0 更新
+
+- 新增 Windows 10/11 原生 PowerShell 安装、升级和 Doctor 入口，不要求 WSL。
+- Windows 支持 Skill/MCP 配置、Git 交付、团队 Task 与知识闭环；关键阶段门禁提供纯 Node 入口。
+- Windows 本机独立 Test Provider 暂不启用，可信 Test/Review 交给 Server/Linux Runner；macOS/Linux 的本机 Provider 与现有全量门禁保持不变。
 
 ## v0.8.1 更新
 
@@ -149,11 +155,24 @@ cd capital-agent-skills
 bash scripts/setup.sh --local
 ```
 
+Windows 10/11 使用 PowerShell（需要 Git for Windows、Node.js 18+；完整需求树与任务退场操作另需 Python 3，可通过 `py -3` 调用）：
+
+```powershell
+git clone https://github.com/RainFlashPoint/capital-agent-skills.git
+Set-Location capital-agent-skills
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --local
+```
+
 升级和诊断：
 
 ```bash
 bash scripts/setup.sh --local --upgrade
 bash scripts/setup.sh --local --doctor
+```
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --local --upgrade
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --local --doctor
 ```
 
 安装或升级后，请完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务使用新版本。已打开的会话不会可靠地热加载 Skill；现有 Git 分支和工作区改动不会丢失。
@@ -162,10 +181,16 @@ bash scripts/setup.sh --local --doctor
 
 ### 团队增强模式：接入 Cap Server
 
-有 Cap Server 时，推荐使用一键安装器。它会打开浏览器完成授权，并自动配置 Codex、Claude Code、Cursor、Capital Agent MCP 和本地 Test Provider：
+有 Cap Server 时，推荐使用一键安装器。它会打开浏览器完成授权，并自动配置 Codex、Claude Code、Cursor 与 Capital Agent MCP；macOS/Linux 同时配置本机 Test Provider：
 
 ```bash
 bash /path/to/capital-agent-skills/scripts/setup.sh --server "https://your-server"
+```
+
+Windows 团队模式需要 Node.js 20.18.1+，本机不启用独立 Test Provider，Test/Review Gate 由 Server/Linux Runner 执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --server "https://your-server"
 ```
 
 升级和诊断：
@@ -173,6 +198,11 @@ bash /path/to/capital-agent-skills/scripts/setup.sh --server "https://your-serve
 ```bash
 bash scripts/setup.sh --upgrade
 bash scripts/setup.sh --doctor
+```
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --upgrade
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --doctor
 ```
 
 安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。安装或升级后建议完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务让 MCP 生效。若团队配置已经存在、但当前会话没有加载 Capital Agent MCP，Skills 会让用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；本地继续不会修改机器配置，但本任务不创建平台 Task、不回写经验或 Server Gate。需要手工连接自建 Server 时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。

@@ -6,7 +6,7 @@ tech-stack: [markdown skills, node.js scripts, python utilities, shell validatio
 test-commands: { unit: "node --test scripts/test-*.mjs && python3 -m unittest scripts/test_intake.py scripts/test_contrast_check.py", coverage: "none — 纯文件协议未配置覆盖率门", e2e: "bash scripts/validate-skills", typecheck: "node --check <changed-js-file>", build: "none — 纯文件 Skill 与脚本无需构建" }
 
 ## Verification environment
-- runtime: node >=18 + python3 + bash
+- runtime: node >=18 + Python 3 + Bash（macOS/Linux/Git Hook）或 PowerShell + Git for Windows（Windows 原生）
 - execution-zone: local
 - package-registry: none
 - credential-refs: [可选 Capital Agent MCP 本地配置]
@@ -22,7 +22,7 @@ test-commands: { unit: "node --test scripts/test-*.mjs && python3 -m unittest sc
 | 研发协议 | Markdown SKILL/references | 纯文件、跨 Codex/Claude/Cursor 可移植 |
 | 客户端脚本 | Node ESM | 安装、握手、状态、Outbox、Git Hook 与本地 Provider |
 | 需求树工具 | Python | 提供确定性 intake 数据操作与测试 |
-| 结构校验 | Bash/Node/Python | 防悬空引用、字典漂移和跨文件契约不一致 |
+| 结构校验 | Bash/PowerShell/Node/Python | 防悬空引用、字典漂移和跨文件契约不一致；Windows 日常阶段门禁走 Node，Git Hook 复用 Git for Windows 的 sh |
 
 ## Surface map
 - workflow-skills: globs[ skills/** ] roles[skill-maintainer, qa] checks[logic]

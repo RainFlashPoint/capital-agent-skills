@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0
+
+- 新增 Windows 10/11 原生 PowerShell 安装、升级与 Doctor 入口，复用现有 Node 安装真值，不要求 WSL。
+- Windows 支持 Codex、Claude Code、Cursor 的 Skill/MCP 配置、Git 交付、团队 Task 和知识闭环；新增 Node 版 branch/worktree、session-root、task-context 与新任务守卫。
+- Windows 本机 Test Provider 明确为 `remote-only`，独立 Gate 交给 Server/Linux Runner；Doctor 显示 SKIP 而不伪造 PASS。
+- Darwin/Linux 继续强制安装并检查本机 Test Provider，完整既有发布回归保持为升级硬门。
+
 ## 0.8.1
 
 - 新增会话级 canonical Git root 锁：首次 `cap-status` 以用户打开的仓库建立唯一目标，旧 `.cap` 的 worktree、task-context 绝对路径和历史元数据只作校验，不能反向导航到 sibling worktree。

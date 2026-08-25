@@ -18,6 +18,16 @@ This adapter is data, not a skill. It defines how the cap playbooks map their po
 | Capital Agent MCP visibility | Inspect the tools exposed to the current task and pass `loaded` or `missing` to `cap-status --mcp-runtime` | Use `unknown` only when the host cannot expose tool visibility |
 | Session repository identity | `cap-status` binds the first canonical Git root to `CODEX_THREAD_ID` / `CODEX_SESSION_ID`; every stage and Commit verifies it | Without a stable host session ID, retain the portable STATE branch/worktree guard |
 
+## Windows native adapter
+
+On Windows 10/11, use PowerShell, Git for Windows and Node.js. Do not require WSL and do not translate repository paths into a sibling WSL checkout.
+
+- Run installation, upgrade and Doctor through `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 ...`.
+- Run the stage boundary with `node <package>\scripts\cap-runtime.mjs guard <repo>` and the task-context boundary with `node <package>\scripts\cap-runtime.mjs context <repo> --stage <stage> --intent "<intent>"`.
+- Run the normal new-task guard with `node <package>\scripts\cap-runtime.mjs prepare-next <repo>\.cap`; advanced requirements-tree operations remain Python-backed and use `py -3` when invoked on Windows.
+- Let Git for Windows execute installed Git Hooks with its bundled `sh`; do not replace working hooks with PowerShell copies.
+- In team mode, Windows does not install or claim the local Test Provider because the supported sandbox boundary is macOS/Linux. Treat Doctor's Provider result as `SKIP / remote-only`, and use Server/Linux Runner for independent Gate execution. This exception never converts failures in platform auth, MCP, Skill discovery or Git delivery into PASS.
+
 ## Session root adapter
 
 Codex can expose sibling worktrees in one workspace, so repository-local STATE cannot prove which directory the user opened for this task. The first `cap-status` call must therefore run from the current task directory and capture its canonical Git root under the stable Codex thread/session ID. Later `.cap` paths are verify-only evidence: they may confirm a mismatch but must never navigate to or select another root. A mismatch returns `session_root_blocked` before reading that directory's STATE; stage guards and Git Hooks recheck the same identity. Deliberately changing repositories or sibling worktrees requires a new Codex task so the boundary is explicit.
