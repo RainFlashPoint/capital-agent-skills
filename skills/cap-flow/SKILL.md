@@ -116,7 +116,7 @@ Claude、Codex 或其它 CLI 上都能跑。
 
 # 一、Orient —— 定位现在在哪
 
-目标仓 = 当前工作目录(或用户指定的 `<target-repo>`)。所有状态都落在 `<target-repo>/.cap/`:
+目标仓 = 本会话第一次从用户当前打开目录解析出的 canonical Git root。显式 `<target-repo>` 只能在首次锁定前指定；锁定后不能被 `.cap`、历史索引、绝对路径或 sibling worktree 覆盖。所有状态都落在 `<target-repo>/.cap/`，其中 `worktree` 字段只用于 verify-only 边界比较，禁止作为 target resolver：
 
 进入 Git 仓库后先静默确保 Capital Agent 项目 Hook 已安装（复用 package 根 `scripts/install-git-governance.mjs`）；幂等失败不阻断流程，也不要求用户执行额外命令。Hook 会自动追加 Task/Session trailer；当提交包含代码时，还会阻止遗漏或本地 exclude 的 `.cap` 研发产物进入交付盲区。
 
@@ -149,6 +149,7 @@ sh <cap-flow 目录>/scripts/cap-guard    # 脚本自包含;确定性比对 STAT
 ```
 
 - **守卫报错(串台)** → `cap-status` 必须投影为 `mode=boundary_blocked`。要续接旧任务就切回原分支/worktree；要执行已创建的新 Task，就用 package 根 `scripts/cap-task-state-switch.mjs` 先原子保存旧活动态、初始化新 STATE，再重跑守卫。串台状态下不要继续推进，不能只写一句说明后绕过。
+- **会话根报错** → `cap-status` 投影为 `mode=session_root_blocked`，其优先级高于 STATE 自洽检查。不得读取当前错误目录的 STATE 来决定去哪；回到锁定仓库，或由用户新建会话显式切换目标。
 - **守卫通过、但本次意图是"开新特性"而 STATE 里还有进行中的特性** → 用编号文本警告:
   ```
   ⚠ 当前分支已有进行中特性 '<F1>'(stage=<x>)。同分支再开一个会文件冲突 + STATE 互相覆盖。

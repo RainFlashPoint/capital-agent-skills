@@ -10,6 +10,12 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const guard = join(root, 'skills/cap-flow/scripts/cap-context-guard')
 const boundaryGuard = join(root, 'skills/cap-flow/scripts/cap-guard')
 const fingerprintScript = join(root, 'scripts/cap-context-fingerprint.mjs')
+const sessionRootScript = join(root, 'scripts/cap-session-root.mjs')
+const portableEnv = () => {
+  const env = { ...process.env }
+  for (const key of ['CAPITAL_AGENT_RUNTIME_SESSION_ID', 'CAPITAL_AGENT_SESSION_LOCK_DIR', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDE_CODE_SESSION_ID']) delete env[key]
+  return env
+}
 
 function fixture() {
   const repo = mkdtempSync(join(tmpdir(), 'cap-context-fixture-'))
@@ -29,7 +35,7 @@ function fixture() {
 }
 
 function run(repo, ...args) {
-  return spawnSync('bash', [guard, ...args, repo], { cwd: repo, encoding: 'utf8' })
+  return spawnSync('bash', [guard, ...args, repo], { cwd: repo, encoding: 'utf8', env: portableEnv() })
 }
 
 function fingerprints(repo) {
@@ -196,11 +202,28 @@ test('context and boundary guards resolve the canonical Git root from a nested d
   const nested = join(repo, 'src', 'nested'); mkdirSync(nested, { recursive: true })
   const branch = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()
   writeFileSync(join(repo, '.cap/STATE.md'), `# Cap State: fixture\nbranch: ${branch}\nworktree: ${repo}\nstage: implement\nstatus: in-progress\n`)
-  const contextResult = spawnSync('bash', [guard, '--stage', 'implement', nested], { cwd: nested, encoding: 'utf8' })
+  const contextResult = spawnSync('bash', [guard, '--stage', 'implement', nested], { cwd: nested, encoding: 'utf8', env: portableEnv() })
   assert.equal(contextResult.status, 0, contextResult.stderr)
-  const boundaryResult = spawnSync('sh', [boundaryGuard], { cwd: nested, encoding: 'utf8' })
+  const boundaryResult = spawnSync('sh', [boundaryGuard], { cwd: nested, encoding: 'utf8', env: portableEnv() })
   assert.equal(boundaryResult.status, 0, boundaryResult.stderr)
   assert.match(boundaryResult.stdout, /边界一致/)
+})
+
+test('context guard rejects a self-consistent sibling worktree after the session locks another root', () => {
+  const repoA = fixture()
+  const repoB = `${repoA}-sibling`
+  const lockRoot = `${repoA}-session-locks`
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'feature/sibling', repoB], { cwd: repoA })
+  mkdirSync(join(repoB, '.cap'), { recursive: true })
+  writeContext(repoB)
+  const branchB = execFileSync('git', ['branch', '--show-current'], { cwd: repoB, encoding: 'utf8' }).trim()
+  writeFileSync(join(repoB, '.cap/STATE.md'), `# Cap State: sibling\nbranch: ${branchB}\nworktree: ${repoB}\nstage: implement\nstatus: in-progress\n`)
+  const env = { ...process.env, CODEX_THREAD_ID: 'context-guard-a-b', CAPITAL_AGENT_SESSION_LOCK_DIR: lockRoot }
+  execFileSync(process.execPath, [sessionRootScript, 'capture', repoA], { cwd: repoA, env })
+
+  const result = spawnSync('bash', [guard, '--stage', 'implement', repoB], { cwd: repoB, encoding: 'utf8', env })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /本会话锁定.*拒绝切换/)
 })
 
 test('missing test evidence blocks the workflow', () => {

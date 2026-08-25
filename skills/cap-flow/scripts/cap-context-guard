@@ -17,9 +17,10 @@ fail() { printf 'cap-context: BLOCKED — %s\n' "$1" >&2; exit 1; }
 git_root="$(git -C "$repo_candidate" rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$git_root" ] || fail "目标路径不在 Git 仓库中：$repo_candidate"
 repo="$(cd "$git_root" 2>/dev/null && pwd -P)" || fail "无法解析 canonical Git root：$git_root"
-context="$repo/.cap/task-context.md"
 script_dir="$(cd "$(dirname "$0")" && pwd -P)"
 package_root="$(cd "$script_dir/../../.." && pwd -P)"
+session_check="$(node "$package_root/scripts/cap-session-root.mjs" verify "$repo" 2>&1)" || fail "$session_check"
+context="$repo/.cap/task-context.md"
 field() { sed -n "s/^- $1:[[:space:]]*//p" "$context" | head -1 | sed 's/[[:space:]]*$//'; }
 section_has_path() {
   awk -v heading="$1" '

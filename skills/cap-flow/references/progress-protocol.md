@@ -6,6 +6,8 @@
 
 先检查当前宿主是否实际暴露 Capital Agent MCP 工具，再运行 package 根的 `scripts/cap-status.mjs <target-repo> --json --mcp-runtime <loaded|missing|unknown>`。结合 `create_or_attach_task` 的真实结果，第一条状态必须包含：平台连接、仓库、分支、Task ID、当前阶段、下一动作。
 
+`cap-status.mode=session_root_blocked` 是最高优先级仓库身份门禁：本会话第一次解析的 canonical Git root 是后续读写、测试和提交的唯一根。错误目录里的 STATE 即使与其 branch/worktree 完全自洽也不能覆盖它；停止读取该目录的 `.cap` 与源码，回到锁定仓库，确需切换则新建会话。
+
 `cap-status.mode=restart_required` 是客户端选择门禁：团队模式配置已经落盘，但当前会话没有加载 MCP。此时必须显示“代码修改尚未开始 / 分支和工作区不会丢失”，并提供两个选项：重启后使用团队模式（推荐），或本次明确改用本地模式继续。用户选第二项后，以 `--allow-local-once` 重跑并获得 `local_fallback_explicit`；它只对当前任务生效，不修改持久团队配置，不创建平台 Task、Experience、Delivery、Server Gate 或 Outbox。用户尚未选择时不得继续，也不得静默本地化。
 
 直接 HTTP 探测不是平台连通性的最终判据。`handshake.reason=direct_probe_unavailable` 只表示当前执行进程无法完成直连探测；当 MCP runtime 为 `loaded|unknown` 时必须继续用 Capital Agent MCP 确认，此时禁止向用户报告 `network_error`、平台断网或连接失败。MCP 成功后最终快报必须覆盖直接探测结果并显示“平台已连接”；MCP 已加载且两条通道都失败才进入离线执行。runtime 为 `missing` 时不探测、不发送，进入 `restart_required` 让用户选择重启或本次本地继续。

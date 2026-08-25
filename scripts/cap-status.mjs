@@ -11,6 +11,7 @@ import { checkPlatformHandshake, normalizeServerUrl } from './setup-lib.mjs'
 import { flushPendingDeliveries, readHarnessMode, sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { inspectOutbox } from './cap-outbox.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
+import { inspectSessionRoot } from './cap-session-root.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
@@ -213,7 +214,7 @@ export function stageLabel(stage = '') {
   return ({ understand: '项目了解', define: '需求确认', plan: '开发计划', implement: '编码实现', test: '测试验证', review: '代码评审', release: '交付收口', done: '完成退场' })[stage] || '项目了解'
 }
 
-export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fetchImpl = fetch, offline = false, environment = {}, mcpRuntime = 'unknown', allowLocalFallback = false } = {}) {
+export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fetchImpl = fetch, offline = false, environment = {}, mcpRuntime = 'unknown', allowLocalFallback = false, sessionRootRegistry = '' } = {}) {
   const repo = resolve(repoRoot)
   const configPath = join(homeDir, '.config/capital-agent/env')
   const configText = await readFile(configPath, 'utf8').catch(() => '')
@@ -225,8 +226,35 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const userKey = text(config.CAPITAL_AGENT_USER_KEY)
   const teamConfigured = !explicitLocal && Boolean(serverUrl && userKey)
   const gitRoot = git(repo, ['rev-parse', '--show-toplevel'])
+  const sessionRoot = gitRoot
+    ? await inspectSessionRoot({ repoRoot: gitRoot, environment, registryRoot: sessionRootRegistry })
+    : { enforced: false, blocked: false, code: '', reason: 'not_git_repository', currentRoot: repo }
   const branch = git(repo, ['branch', '--show-current'])
   const head = git(repo, ['rev-parse', 'HEAD'])
+  if (sessionRoot.blocked) {
+    const emptyOutbox = { totalPending: 0, pending: 0, historicalPending: 0, retainedHistoricalPending: 0, unscopedPending: 0, retainedUnscopedPending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
+    const boundary = {
+      blocked: true,
+      code: sessionRoot.code,
+      mismatches: ['session-root'],
+      state: { taskId: '', sessionId: '', branch: '', worktree: sessionRoot.expectedRoot },
+      current: { branch, worktree: sessionRoot.currentRoot },
+      detail: `本会话首次锁定仓库为 ${sessionRoot.expectedRoot}，当前目标为 ${sessionRoot.currentRoot}`,
+      remediation: '回到本会话最初打开的仓库继续；如确需切换仓库或 sibling worktree，请新建会话',
+      sessionRoot,
+    }
+    return {
+      mode: 'session_root_blocked',
+      platform: { configured: teamConfigured, connected: null, serverUrl: explicitLocal ? '' : serverUrl || '', handshake: null, mcpRuntime: mcpRuntimeState, localFallback: false, runtime: null, pendingDeliveries: { total: 0, sent: 0, pending: 0 }, outbox: emptyOutbox },
+      repository: { root: sessionRoot.currentRoot, remote: '', branch, head, upstream: '', upstreamHead: '', dirty: false, harnessMode: '', harnessEligible: false, sessionRoot },
+      task: { id: '', previousId: '', sessionId: '', previousSessionId: '', requiresNewSession: false, remoteStatus: '', remoteStage: '', gatesReady: false, currentCommit: '', currentGate: '', currentAction: null, blocker: { code: boundary.code, detail: boundary.detail, remediation: boundary.remediation }, nextAction: null, executionMode: '', verificationCommands: [], parentTaskId: '', retirementStatus: '', historyArtifactRoot: '' },
+      reconciliation: { recordedHead: '', headPushed: false, pushRequired: false, initialDeliveryNeeded: false, localUnrecorded: false, remoteUnrecorded: false, needsDeliveryReconciliation: false, unrecordedCommits: [] },
+      boundary,
+      correction: { required: false, reason: '' },
+      workflow: { currentStage: '', status: 'blocked', stage: 'understand', action: '回到本会话最初打开的仓库', reason: boundary.detail, gated: true },
+      reasons: ['session_root_mismatch'],
+    }
+  }
   const upstream = git(repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
   const upstreamHead = upstream ? git(repo, ['rev-parse', upstream]) : ''
   const remote = sanitizeRepositoryUrl(git(repo, ['remote', 'get-url', 'origin']))
@@ -312,7 +340,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
     platform: { configured: teamConfigured, connected: localRun ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, mcpRuntime: mcpRuntimeState, localFallback: explicitLocalFallback, runtime: runtime ? { buildCommit: runtime.build?.commit || '', schemaRevision: runtime.schemaRevision || '', taskStoreMode: runtime.taskStoreMode || '', database: runtime.database || '' } : null, pendingDeliveries, outbox },
-    repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty, harnessMode, harnessEligible: harnessMode === 'server' },
+    repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty, harnessMode, harnessEligible: harnessMode === 'server', sessionRoot },
     task: {
       id: remoteTask?.id || taskId,
       previousId: switchingTask ? taskId : '',
@@ -355,6 +383,7 @@ function render(result) {
   const explicitLocalFallback = result.mode === 'local_fallback_explicit'
   const localRun = explicitLocal || explicitLocalFallback
   const restartRequired = result.mode === 'restart_required'
+  const sessionRootBlocked = result.mode === 'session_root_blocked'
   const connected = explicitLocal ? '本地模式主动跳过' : explicitLocalFallback ? '本次已明确改用本地模式（团队配置保持不变）' : restartRequired ? '已配置，当前会话未加载 MCP' : result.platform.connected === true ? '已连接' : result.platform.handshake?.reason === 'direct_probe_unavailable' ? '直接探测不可用，等待 MCP 确认' : result.platform.connected === false ? '握手未通过，等待 MCP 确认' : result.platform.configured ? '未探测' : '未配置'
   const task = result.task.id || (result.mode === 'platform_ready' ? '待创建' : '未关联')
   return [
@@ -370,7 +399,7 @@ function render(result) {
     restartRequired ? '现有分支和工作区改动不会丢失' : '',
     restartRequired ? '选项 1（推荐）：完全退出并重新打开客户端，新建任务后使用团队模式' : '',
     restartRequired ? '选项 2：回复“本次本地继续”，本任务不创建平台 Task、不回写经验或 Server Gate' : '',
-    result.boundary?.blocked ? `边界阻断：${result.boundary.code}；STATE 分支 ${result.boundary.state.branch || '-'} / 当前分支 ${result.boundary.current.branch || '-'}` : '',
+    sessionRootBlocked ? `会话仓库阻断：已锁定 ${result.boundary.state.worktree}，拒绝目标 ${result.boundary.current.worktree}` : result.boundary?.blocked ? `边界阻断：${result.boundary.code}；STATE 分支 ${result.boundary.state.branch || '-'} / 当前分支 ${result.boundary.current.branch || '-'}` : '',
     result.task.requiresNewSession ? `任务接续：${result.task.previousId} → ${result.task.id}（必须新建 Session）` : '',
     result.task.remoteStatus ? `平台 Task：${result.task.remoteStatus}${result.task.gatesReady ? ' · Gate 已通过' : ''}` : '',
     result.task.currentCommit ? `当前候选 Commit：${result.task.currentCommit.slice(0, 12)}` : '',

@@ -12,6 +12,16 @@
 
 cur_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cur_root=$(cd "$cur_root" 2>/dev/null && pwd -P) || exit 1
+script_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)
+session_guard=""
+for candidate in \
+  "$script_dir/../../../scripts/cap-session-root.mjs" \
+  "$script_dir/cap-session-root.mjs"; do
+  [ -f "$candidate" ] && { session_guard="$candidate"; break; }
+done
+if [ -n "$session_guard" ]; then
+  node "$session_guard" verify "$cur_root" || exit 1
+fi
 STATE="$cur_root/.cap/STATE.md"
 [ -f "$STATE" ] || exit 0   # 无活跃特性 → 放行
 

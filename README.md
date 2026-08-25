@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.8.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.8.1，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.8.1 更新
+
+- 会话第一次进入仓库即锁定 canonical Git root，旧 `.cap` 中的 worktree 或绝对路径只能校验，不能把 Agent 导航到 sibling worktree。
+- 入口、阶段门禁和 Git Commit 三层共同阻断跨目录读写与误提交；B 目录即使拥有与自身完全一致的遗留 STATE，也不能覆盖 A 会话的仓库身份。
+- 没有稳定会话 ID 的宿主保持原有可移植行为，继续使用 branch/worktree STATE 边界，不影响既有安装和本地模式。
 
 ## v0.8.0 更新
 

@@ -2,12 +2,28 @@
 import { readFile, appendFile } from 'fs/promises'
 import { resolve } from 'path'
 import { execFileSync } from 'child_process'
+import { inspectSessionRoot } from './cap-session-root.mjs'
 
 const messageFile = process.argv[2]
 const source = String(process.argv[3] || '')
-if (!messageFile || ['merge', 'squash', 'commit'].includes(source)) process.exit(0)
+if (!messageFile) process.exit(0)
 let repoRoot = ''
 try { repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim() } catch { process.exit(0) }
+try {
+  const sessionRoot = await inspectSessionRoot({ repoRoot, environment: process.env, capture: false, requireExisting: true })
+  if (sessionRoot.blocked) {
+    if (sessionRoot.code === 'session_root_uninitialized') {
+      process.stderr.write('✗ cap: 本会话尚未从用户当前打开的仓库运行 cap-status，拒绝提交。先完成 Cap 入口握手。\n')
+      process.exit(1)
+    }
+    process.stderr.write(`✗ cap: 本会话锁定仓库为 ${sessionRoot.expectedRoot}，拒绝在 ${sessionRoot.currentRoot} 提交。请回到原仓库；如需切换 worktree，请新建会话。\n`)
+    process.exit(1)
+  }
+} catch (error) {
+  process.stderr.write(`✗ cap: 无法验证会话仓库边界：${error?.message || error}\n`)
+  process.exit(1)
+}
+if (['merge', 'squash', 'commit'].includes(source)) process.exit(0)
 const state = await readFile(resolve(repoRoot, '.cap/STATE.md'), 'utf8').catch(() => '')
 if (!state) process.exit(0)
 const git = args => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()

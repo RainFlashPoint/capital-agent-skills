@@ -182,7 +182,7 @@ Phase A 采证(纯 bash) → Phase B 类型+入口识别 → Phase C 自建 surf
    ```
    硬门选装 → 把 `cap-flow/references/templates/hooks/{pre-commit,pre-push,post-checkout}` 拷到 `<repo>/.git/hooks/`
    并 `chmod +x`;**仅 git 仓装**。pre-commit 调 `cap-guard`(脚本在 `cap-flow/scripts/cap-guard`);为让 hook 在
-   任何安装方式下都能找到,把它拷 / 软链到 `<repo>/.cap/bin/cap-guard`(hook 优先找这里)。post-checkout 调
+   任何安装方式下都能找到,把它拷 / 软链到 `<repo>/.cap/bin/cap-guard`(hook 优先找这里)，并把 package 根 `scripts/cap-session-root.mjs` 放到同目录供会话根复核。post-checkout 调
    `intake.py set-status` 做 flush。装完一句话说明各自管什么。
 
 ---

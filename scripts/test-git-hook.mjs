@@ -8,7 +8,13 @@ import { execFileSync, spawnSync } from 'child_process'
 import { fileURLToPath } from 'url'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
-const run = (cwd, command, args) => execFileSync(command, args, { cwd, encoding: 'utf8' })
+const sessionRootScript = join(root, 'scripts/cap-session-root.mjs')
+const portableEnv = () => {
+  const env = { ...process.env }
+  for (const key of ['CAPITAL_AGENT_RUNTIME_SESSION_ID', 'CAPITAL_AGENT_SESSION_LOCK_DIR', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDE_CODE_SESSION_ID']) delete env[key]
+  return env
+}
+const run = (cwd, command, args) => execFileSync(command, args, { cwd, encoding: 'utf8', env: portableEnv() })
 const runPrePush = (repo, branch, state = '') => {
   const hook = join(root, 'skills/cap-flow/references/templates/hooks/pre-push')
   if (state) {
@@ -81,6 +87,43 @@ test('project hook allows recommended ignored in-flight state while preserving t
   const message = run(repo, 'git', ['log', '-1', '--pretty=%B'])
   assert.match(message, /Task: task_demo123/)
   assert.match(message, /Session: session_demo456/)
+})
+
+test('project hook blocks commit in a self-consistent sibling worktree from another Codex session root', async () => {
+  const repoA = await fixtureRepo('cap-hook-session-root-a-')
+  const repoB = `${repoA}-sibling`
+  const lockRoot = `${repoA}-session-locks`
+  run(repoA, 'git', ['worktree', 'add', '-q', '-b', 'feature/sibling', repoB])
+  await mkdir(join(repoB, '.cap'), { recursive: true })
+  await writeFile(join(repoB, '.cap/STATE.md'), `task-id: task_wrong_b\nbranch: feature/sibling\nworktree: ${repoB}\nstage: implement\nstatus: in-progress\n`)
+  await writeFile(join(repoB, '.gitignore'), '.cap/\n')
+  await writeFile(join(repoB, 'sibling.txt'), 'wrong target\n')
+  run(repoB, 'git', ['add', '.gitignore', 'sibling.txt'])
+  run(repoB, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
+  const env = { ...process.env, CODEX_THREAD_ID: 'git-hook-a-b', CAPITAL_AGENT_SESSION_LOCK_DIR: lockRoot }
+  execFileSync(process.execPath, [sessionRootScript, 'capture', repoA], { cwd: repoA, env })
+
+  const result = spawnSync('git', ['commit', '-m', 'must not land in sibling'], { cwd: repoB, encoding: 'utf8', env })
+  assert.notEqual(result.status, 0)
+  assert.match(`${result.stdout}${result.stderr}`, /本会话锁定仓库.*拒绝/)
+  const amend = spawnSync('git', ['commit', '--amend', '-m', 'must not amend sibling'], { cwd: repoB, encoding: 'utf8', env })
+  assert.notEqual(amend.status, 0)
+  assert.match(`${amend.stdout}${amend.stderr}`, /本会话锁定仓库.*拒绝/)
+  assert.equal(run(repoB, 'git', ['rev-list', '--count', 'HEAD']).trim(), '1')
+})
+
+test('project hook requires cap-status to establish a stable Codex session root before commit', async () => {
+  const repo = await fixtureRepo('cap-hook-session-root-uninitialized-')
+  const lockRoot = `${repo}-session-locks`
+  await writeFile(join(repo, 'pending.txt'), 'pending\n')
+  run(repo, 'git', ['add', 'pending.txt'])
+  run(repo, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
+  const env = { ...process.env, CODEX_THREAD_ID: 'git-hook-uninitialized', CAPITAL_AGENT_SESSION_LOCK_DIR: lockRoot }
+
+  const result = spawnSync('git', ['commit', '-m', 'must handshake first'], { cwd: repo, encoding: 'utf8', env })
+  assert.notEqual(result.status, 0)
+  assert.match(`${result.stdout}${result.stderr}`, /尚未从用户当前打开的仓库运行 cap-status/)
+  assert.equal(run(repo, 'git', ['rev-list', '--count', 'HEAD']).trim(), '1')
 })
 
 test('pre-push allows development branch while environment verification is pending', async () => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- 新增会话级 canonical Git root 锁：首次 `cap-status` 以用户打开的仓库建立唯一目标，旧 `.cap` 的 worktree、task-context 绝对路径和历史元数据只作校验，不能反向导航到 sibling worktree。
+- `cap-status` 在读取错误仓 STATE/Outbox 前返回 `session_root_blocked`；`cap-context-guard`、`cap-guard`、Task 状态切换和 `prepare-commit-msg` 在阶段与提交边界再次复核。
+- 增加 A/B 双 worktree 对抗回归：覆盖 B 的 STATE 与 B 完全自洽、路径别名、无稳定会话 ID 的兼容降级、锁目录软链和错误目录 Git Commit。
+
 ## 0.8.0
 
 - 新增 `.cap/experience.md` 作为人和 AI 共读的唯一经验原稿；`task-context.md` 继续保存调用链和代码事实，生成器不再从 spec/STATE 自动猜经验。

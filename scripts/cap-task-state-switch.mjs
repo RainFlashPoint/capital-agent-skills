@@ -7,6 +7,7 @@ import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { inspectTaskBoundary } from './cap-status.mjs'
 import { archiveHistoricalOutboxEvents } from './cap-outbox.mjs'
+import { inspectSessionRoot } from './cap-session-root.mjs'
 
 const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'experience.md', 'verify', 'review', 'release']
 
@@ -21,11 +22,13 @@ function safeSegment(value = '', fallback = 'unknown') {
   return String(value || fallback).replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || fallback
 }
 
-export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expectedOldTaskId = '', title = '新研发任务', intentSummary = '', stage = 'understand' } = {}) {
+export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expectedOldTaskId = '', title = '新研发任务', intentSummary = '', stage = 'understand', environment = {}, sessionRootRegistry = '' } = {}) {
   if (!taskId || !sessionId) throw new Error('taskId and sessionId are required')
   const repo = resolve(repoRoot)
   const gitRoot = git(repo, ['rev-parse', '--show-toplevel'])
   if (await realpath(gitRoot) !== await realpath(repo)) throw new Error(`repoRoot must be the Git root: ${gitRoot}`)
+  const sessionRoot = await inspectSessionRoot({ repoRoot: gitRoot, environment, registryRoot: sessionRootRegistry, capture: false, requireExisting: Boolean(Object.keys(environment).length) })
+  if (sessionRoot.blocked) throw new Error(`${sessionRoot.code}: expected ${sessionRoot.expectedRoot || 'captured session root'}, received ${sessionRoot.currentRoot}`)
   const capRoot = join(repo, '.cap')
   const statePath = join(capRoot, 'STATE.md')
   const oldState = await readFile(statePath, 'utf8').catch(() => '')
@@ -84,6 +87,6 @@ function args(argv) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const input = args(process.argv.slice(2))
-  const result = await switchTaskState({ repoRoot: input.repo || '.', taskId: input['task-id'], sessionId: input['session-id'], expectedOldTaskId: input['expected-old-task'], title: input.title, intentSummary: input.intent, stage: input.stage })
+  const result = await switchTaskState({ repoRoot: input.repo || '.', taskId: input['task-id'], sessionId: input['session-id'], expectedOldTaskId: input['expected-old-task'], title: input.title, intentSummary: input.intent, stage: input.stage, environment: process.env })
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
 }
