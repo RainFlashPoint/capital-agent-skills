@@ -105,11 +105,36 @@ test('project hook blocks commit in a self-consistent sibling worktree from anot
 
   const result = spawnSync('git', ['commit', '-m', 'must not land in sibling'], { cwd: repoB, encoding: 'utf8', env })
   assert.notEqual(result.status, 0)
-  assert.match(`${result.stdout}${result.stderr}`, /本会话锁定仓库.*拒绝/)
+  assert.match(`${result.stdout}${result.stderr}`, /本会话当前主仓.*拒绝/)
   const amend = spawnSync('git', ['commit', '--amend', '-m', 'must not amend sibling'], { cwd: repoB, encoding: 'utf8', env })
   assert.notEqual(amend.status, 0)
-  assert.match(`${amend.stdout}${amend.stderr}`, /本会话锁定仓库.*拒绝/)
+  assert.match(`${amend.stdout}${amend.stderr}`, /本会话当前主仓.*拒绝/)
   assert.equal(run(repoB, 'git', ['rev-list', '--count', 'HEAD']).trim(), '1')
+})
+
+test('an explicit independent-project switch allows target commits and blocks the old root', async () => {
+  const repoA = await fixtureRepo('cap-hook-project-switch-a-')
+  const repoB = await fixtureRepo('cap-hook-project-switch-b-')
+  const lockRoot = `${repoA}-session-locks`
+  const env = { ...process.env, CODEX_THREAD_ID: 'git-hook-project-switch', CAPITAL_AGENT_SESSION_LOCK_DIR: lockRoot }
+  execFileSync(process.execPath, [sessionRootScript, 'capture', repoA], { cwd: repoA, env })
+  execFileSync(process.execPath, [sessionRootScript, 'switch', repoA, repoB], { cwd: repoA, env })
+
+  await writeFile(join(repoB, '.gitignore'), '.cap/\n')
+  await mkdir(join(repoB, '.cap'), { recursive: true })
+  await writeFile(join(repoB, '.cap/STATE.md'), `task-id: task_b\nsession-id: session_b\nbranch: main\nworktree: ${repoB}\n`)
+  await writeFile(join(repoB, 'target.txt'), 'target project\n')
+  run(repoB, 'git', ['add', '.gitignore', 'target.txt'])
+  run(repoB, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
+  const targetCommit = spawnSync('git', ['commit', '-m', 'target change'], { cwd: repoB, encoding: 'utf8', env })
+  assert.equal(targetCommit.status, 0, `${targetCommit.stdout}${targetCommit.stderr}`)
+
+  await writeFile(join(repoA, 'old-root.txt'), 'must stay blocked\n')
+  run(repoA, 'git', ['add', 'old-root.txt'])
+  run(repoA, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
+  const oldCommit = spawnSync('git', ['commit', '-m', 'wrong old root'], { cwd: repoA, encoding: 'utf8', env })
+  assert.notEqual(oldCommit.status, 0)
+  assert.match(`${oldCommit.stdout}${oldCommit.stderr}`, /当前主仓.*拒绝/)
 })
 
 test('project hook requires cap-status to establish a stable Codex session root before commit', async () => {

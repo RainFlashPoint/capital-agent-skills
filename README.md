@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.9.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.9.1，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.9.1 更新
+
+- 支持在同一聊天中显式切换到另一个独立项目继续开发，同时保留唯一可写主仓和误提交保护。
+- 跨项目只传递带来源项目、Commit 和待验证状态的业务交接摘要；目标项目重新建立 Task、Session、代码事实和验证证据。
+- 同一项目的不同 clone/worktree 仍需新会话，旧项目的 Gate、Delivery 和 Outbox 不会串到新项目。
 
 ## v0.9.0 更新
 
@@ -14,7 +20,7 @@
 
 ## v0.8.1 更新
 
-- 会话第一次进入仓库即锁定 canonical Git root，旧 `.cap` 中的 worktree 或绝对路径只能校验，不能把 Agent 导航到 sibling worktree。
+- 会话首次进入仓库会锁定 canonical Git root；切换到另一个独立项目必须显式执行交接切换，同一项目的 worktree 或绝对路径仍不能导航主仓。
 - 入口、阶段门禁和 Git Commit 三层共同阻断跨目录读写与误提交；B 目录即使拥有与自身完全一致的遗留 STATE，也不能覆盖 A 会话的仓库身份。
 - 没有稳定会话 ID 的宿主保持原有可移植行为，继续使用 branch/worktree STATE 边界，不影响既有安装和本地模式。
 
@@ -90,7 +96,7 @@ Capital Agent Skills 在 Coding Agent 之上补齐研发流程、可信门禁、
 
 ### 与真实代码版本绑定的可信交付
 
-本地模式会把测试、评审和发布证据随研发状态保存；接入 Cap Server 后，编码、测试和评审进一步职责分离，由独立 Test / Review Harness 针对精确 Commit 产出可信 Gate。出现问题时，修复产生新 Commit，并重新进入验证闭环。
+本地模式会把测试、评审和发布证据随研发状态保存；接入 Cap Server 后，编码、测试和评审进一步职责分离，由独立 Test / Review Harness 针对精确 Commit 产出可信 Gate。出现问题时，修复产生新 Commit，并重新进入验证闭环。需要连续处理不同项目时，可显式切换唯一可写主仓；目标项目重新建立 Task、Session 和验证事实，来源项目只通过带来源 Commit 的交接摘要提供业务线索。
 
 团队模式下，统一 Task 是唯一业务真值：普通开发 Commit 只记录过程，最终候选 Commit 才进入 Test → Review；客户端直接展示当前 Commit、阻塞原因、处理动作与最终证据，不再从历史 Action 猜测状态。Provider 健康由实时心跳和容量推导，过期执行器不会继续显示为可用。
 

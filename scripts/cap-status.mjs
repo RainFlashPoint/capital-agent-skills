@@ -239,8 +239,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       mismatches: ['session-root'],
       state: { taskId: '', sessionId: '', branch: '', worktree: sessionRoot.expectedRoot },
       current: { branch, worktree: sessionRoot.currentRoot },
-      detail: `本会话首次锁定仓库为 ${sessionRoot.expectedRoot}，当前目标为 ${sessionRoot.currentRoot}`,
-      remediation: '回到本会话最初打开的仓库继续；如确需切换仓库或 sibling worktree，请新建会话',
+      detail: `本会话当前主仓为 ${sessionRoot.expectedRoot}，当前目标为 ${sessionRoot.currentRoot}`,
+      remediation: '回到本会话当前主仓继续；只读参考按 cross-project-handoff 处理；如需在另一独立项目开发，先显式执行 cap-session-root.mjs switch 并重建 Task/Session；同一项目的 sibling worktree 请新建会话',
       sessionRoot,
     }
     return {

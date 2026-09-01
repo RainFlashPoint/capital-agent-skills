@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { inspectSessionRoot } from './cap-session-root.mjs'
+import { inspectSessionRoot, switchSessionRoot } from './cap-session-root.mjs'
 import { inspectCapStatus } from './cap-status.mjs'
 
 async function worktreeFixture() {
@@ -19,6 +19,26 @@ async function worktreeFixture() {
   execFileSync('git', ['add', 'README.md'], { cwd: repoA })
   execFileSync('git', ['commit', '-qm', 'fixture'], { cwd: repoA })
   execFileSync('git', ['worktree', 'add', '-q', '-b', 'feature/b', repoB], { cwd: repoA })
+  return { parent, repoA, repoB, registryRoot: join(parent, 'session-locks') }
+}
+
+async function independentReposFixture({ sameRemote = false } = {}) {
+  const parent = await mkdtemp(join(tmpdir(), 'cap-session-project-switch-'))
+  const repoA = join(parent, 'project-a')
+  const repoB = join(parent, 'project-b')
+  for (const [index, repo] of [repoA, repoB].entries()) {
+    await mkdir(repo)
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'fixture@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: repo })
+    await writeFile(join(repo, 'README.md'), `fixture-${index}\n`)
+    execFileSync('git', ['add', 'README.md'], { cwd: repo })
+    execFileSync('git', ['commit', '-qm', 'fixture'], { cwd: repo })
+    const remote = sameRemote
+      ? (index === 0 ? 'git@git.example.com:team/shared.git' : 'https://git.example.com/team/shared.git')
+      : `https://git.example.com/team/project-${index}.git`
+    execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo })
+  }
   return { parent, repoA, repoB, registryRoot: join(parent, 'session-locks') }
 }
 
@@ -50,6 +70,46 @@ test('a sibling worktree cannot override the session root with self-consistent c
   const result = await inspectSessionRoot({ repoRoot: repoB, environment, registryRoot })
   assert.equal(result.blocked, true)
   assert.equal(result.expectedRoot, await realpath(repoA))
+})
+
+test('an explicit switch moves the single writable root between independent projects', async () => {
+  const { repoA, repoB, registryRoot } = await independentReposFixture()
+  const environment = { CODEX_THREAD_ID: 'thread-explicit-project-switch' }
+  await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+
+  const switched = await switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, environment, registryRoot })
+  assert.equal(switched.switched, true)
+  assert.equal(switched.previousRoot, await realpath(repoA))
+  assert.equal(switched.currentRoot, await realpath(repoB))
+
+  const oldRoot = await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+  const newRoot = await inspectSessionRoot({ repoRoot: repoB, environment, registryRoot })
+  assert.equal(oldRoot.blocked, true)
+  assert.equal(newRoot.blocked, false)
+})
+
+test('same-project sibling worktrees cannot use the explicit project switch', async () => {
+  const { repoA, repoB, registryRoot } = await worktreeFixture()
+  const environment = { CODEX_THREAD_ID: 'thread-reject-worktree-switch' }
+  await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+
+  await assert.rejects(
+    switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, environment, registryRoot }),
+    /session_root_same_project/,
+  )
+  assert.equal((await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })).blocked, false)
+})
+
+test('separate clones with the same sanitized origin remain the same project', async () => {
+  const { repoA, repoB, registryRoot } = await independentReposFixture({ sameRemote: true })
+  const environment = { CODEX_THREAD_ID: 'thread-reject-same-origin' }
+  await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+
+  await assert.rejects(
+    switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, environment, registryRoot }),
+    /session_root_same_project/,
+  )
+  assert.equal((await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })).blocked, false)
 })
 
 test('cap-status blocks before reading a sibling worktree cap state', async () => {

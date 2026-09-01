@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { link, lstat, mkdir, open, readFile, realpath, rm } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -23,8 +23,42 @@ function gitRoot(candidate = '.') {
   return root
 }
 
+function gitValue(candidate, args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: resolve(candidate),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    return ''
+  }
+}
+
 async function canonicalGitRoot(candidate = '.') {
   return realpath(gitRoot(candidate))
+}
+
+function normalizeRemote(value = '') {
+  let remote = String(value || '').trim()
+  const scp = remote.match(/^[^@]+@([^:]+):(.+)$/)
+  if (scp) remote = `${scp[1]}/${scp[2]}`
+  else {
+    try {
+      const parsed = new URL(remote)
+      remote = `${parsed.hostname}${parsed.port ? `:${parsed.port}` : ''}${parsed.pathname}`
+    } catch {
+      remote = remote.replace(/^[^@]+@/, '')
+    }
+  }
+  return remote.replace(/\.git\/?$/, '').replace(/\/$/, '').toLowerCase()
+}
+
+async function projectIdentity(repoRoot) {
+  const remote = normalizeRemote(gitValue(repoRoot, ['remote', 'get-url', 'origin']))
+  if (remote) return `remote:${remote}`
+  const commonDir = gitValue(repoRoot, ['rev-parse', '--git-common-dir'])
+  return `git-dir:${await realpath(resolve(repoRoot, commonDir || '.git')).catch(() => resolve(repoRoot, commonDir || '.git'))}`
 }
 
 function sessionIdentity(environment = {}) {
@@ -67,11 +101,29 @@ async function writeLockOnce(path, payload) {
   }
 }
 
+async function replaceLock(path, payload) {
+  const info = await lstat(path)
+  if (info.isSymbolicLink() || !info.isFile()) throw new Error('session_root_lock_unsafe_type')
+  const temp = join(resolve(path, '..'), `.${process.pid}.${randomUUID()}.switch.tmp`)
+  const handle = await open(temp, 'wx', 0o600)
+  try {
+    await handle.writeFile(`${JSON.stringify(payload)}\n`)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  try {
+    await rename(temp, path)
+  } finally {
+    await rm(temp, { force: true }).catch(() => {})
+  }
+}
+
 async function readLock(path) {
   const info = await lstat(path)
   if (info.isSymbolicLink() || !info.isFile()) throw new Error('session_root_lock_unsafe_type')
   const parsed = JSON.parse(await readFile(path, 'utf8'))
-  if (parsed?.schema !== 1 || typeof parsed?.root !== 'string' || !parsed.root) throw new Error('session_root_lock_invalid')
+  if (![1, 2].includes(parsed?.schema) || typeof parsed?.root !== 'string' || !parsed.root) throw new Error('session_root_lock_invalid')
   return parsed
 }
 
@@ -99,7 +151,7 @@ export async function inspectSessionRoot({ repoRoot = '.', environment = {}, reg
         currentRoot,
       }
     }
-    created = await writeLockOnce(lockPath, { schema: 1, kind: identity.kind, root: currentRoot })
+    created = await writeLockOnce(lockPath, { schema: 2, kind: identity.kind, root: currentRoot, project: await projectIdentity(currentRoot) })
   }
 
   const lock = await readLock(lockPath)
@@ -109,10 +161,56 @@ export async function inspectSessionRoot({ repoRoot = '.', environment = {}, reg
     enforced: true,
     blocked,
     code: blocked ? 'session_root_mismatch' : '',
-    reason: blocked ? '当前命令目标仓库与本会话首次锁定仓库不一致' : 'session_root_verified',
+    reason: blocked ? '当前命令目标仓库与本会话当前主仓不一致' : 'session_root_verified',
     expectedRoot,
     currentRoot,
     created,
+  }
+}
+
+/**
+ * Explicitly switch the single writable root of a session to another project.
+ * Same-project worktrees/clones remain blocked; callers must carry business
+ * context through a reviewed handoff and create a fresh Task/Session.
+ */
+export async function switchSessionRoot({ fromRepoRoot = '.', targetRepoRoot, environment = {}, registryRoot = '' } = {}) {
+  if (!targetRepoRoot) throw new Error('targetRepoRoot is required')
+  const fromRoot = await canonicalGitRoot(fromRepoRoot)
+  const targetRoot = await canonicalGitRoot(targetRepoRoot)
+  const identity = sessionIdentity(environment)
+  if (!identity) throw new Error('session_identity_unavailable')
+  const registry = await ensureSafeRegistry(resolve(registryRoot || defaultRegistryRoot(environment)))
+  const identityHash = createHash('sha256').update(`${identity.kind}:${identity.value}`).digest('hex')
+  const lockPath = join(registry, `${identityHash}.json`)
+  const switchLockPath = `${lockPath}.switch`
+  let switchHandle
+  try {
+    switchHandle = await open(switchLockPath, 'wx', 0o600)
+  } catch (error) {
+    if (error?.code === 'EEXIST') throw new Error('session_root_switch_in_progress')
+    throw error
+  }
+  try {
+    const lock = await readLock(lockPath)
+    const expectedRoot = await realpath(lock.root).catch(() => resolve(lock.root))
+    if (expectedRoot !== fromRoot) throw new Error(`session_root_mismatch: expected ${expectedRoot}, received ${fromRoot}`)
+    if (fromRoot === targetRoot) throw new Error('session_root_same_project')
+
+    const sourceProject = lock.project || await projectIdentity(fromRoot)
+    const targetProject = await projectIdentity(targetRoot)
+    if (sourceProject === targetProject) throw new Error('session_root_same_project')
+    await replaceLock(lockPath, {
+      schema: 2,
+      kind: identity.kind,
+      root: targetRoot,
+      project: targetProject,
+      switchedFrom: fromRoot,
+      switchedAt: new Date().toISOString(),
+    })
+    return { switched: true, previousRoot: fromRoot, currentRoot: targetRoot, sourceProject, targetProject }
+  } finally {
+    await switchHandle.close().catch(() => {})
+    await rm(switchLockPath, { force: true }).catch(() => {})
   }
 }
 
@@ -126,8 +224,13 @@ function render(result) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
-  const [command = 'capture', repoRoot = '.'] = process.argv.slice(2)
-  if (!['capture', 'verify'].includes(command)) throw new Error(`unknown command: ${command}`)
+  const [command = 'capture', repoRoot = '.', targetRepoRoot = ''] = process.argv.slice(2)
+  if (!['capture', 'verify', 'switch'].includes(command)) throw new Error(`unknown command: ${command}`)
+  if (command === 'switch') {
+    const result = await switchSessionRoot({ fromRepoRoot: repoRoot, targetRepoRoot, environment: process.env })
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+    process.exit(0)
+  }
   const result = await inspectSessionRoot({
     repoRoot,
     environment: process.env,
