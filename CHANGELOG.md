@@ -1,9 +1,9 @@
 # Changelog
 
-## 0.9.2
+## 0.9.3
 
 - 将项目本地 `.cap` 纳入需求确认、开发计划、编码实现、测试验证、代码评审和发布上线的必选前置，核对任务、分支、工作树、范围与门禁状态。
-- 明确知识库 `enrich_context` 是可失败增强步骤；失败可离线继续但必须留痕，真实代码或配置改动必须调用 `record_experience`，并遵守敏感信息边界。
+- 明确双模式经验闭环：团队/Server 模式使用 `enrich_context` / `record_experience`；显式本地模式不调用 MCP，改用并校验 `.cap/experience.md`。
 - 交付前统一复核改动文件、`git diff --check`、`.cap` 证据、验证结果和提交范围。
 
 ## 0.9.1

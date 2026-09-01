@@ -30,8 +30,8 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 1. **锁定当前 Git 根目录**：以用户当前打开的仓库为唯一工作根，核对分支、HEAD、工作树和远程地址；历史 `.cap`、其他 clone 或 worktree 只能用于校验，不能反向选择目录。
 2. **检查项目本地 `.cap`**：读取存在的 `.cap/STATE.md`、`.cap/task-context.md`、`.cap/plan.md`，以及 `.cap/review/`、`.cap/verify/`。核对任务、分支、工作树、改动范围、已通过门禁和未完成项是否与当前 Git 状态一致。
 3. **本地事实不可降级**：`.cap` 缺失、状态不一致或存在未解决门禁时，先报告事实并按本地状态处理；不得假设上下文正确或直接进入下一阶段。知识库不可用不能成为跳过 `.cap` 的理由。
-4. **知识库是增强步骤**：完成 `.cap` 检查后，按 `../harvest-experience/SKILL.md` 尝试 `enrich_context`。调用失败允许离线继续，但交付说明必须记录注入失败、影响和降级方式，不得宣称已同步。
-5. **交付前复核与沉淀**：复核 `git diff --name-only`、`git diff --check`、`.cap` 证据是否覆盖实际改动、本地验证结果和提交范围。存在真实代码或配置改动时必须按 harvest-experience 调用 `record_experience`，只传意图、变更文件路径、仓库地址和验证信息，禁止传代码正文、私钥、密码、完整证书、完整签名或敏感业务数据。
+4. **知识库是增强步骤**：完成 `.cap` 检查后，团队/Server 模式按 `../harvest-experience/SKILL.md` 尝试 `enrich_context`；调用失败允许离线继续，但交付说明必须记录注入失败、影响和降级方式，不得宣称已同步。显式本地模式不调用 MCP，改用项目本地历史索引和经验原稿。
+5. **交付前复核与沉淀**：复核 `git diff --name-only`、`git diff --check`、`.cap` 证据是否覆盖实际改动、本地验证结果和提交范围。团队/Server 模式存在真实代码或配置改动时必须按 harvest-experience 调用 `record_experience`；显式本地模式必须生成并校验 `.cap/experience.md`，不调用 MCP。两种模式都只处理意图、变更文件路径、仓库地址和验证信息，禁止传代码正文、私钥、密码、完整证书、完整签名或敏感业务数据。
 
 用户显式调用 `$cap` 后：
 
