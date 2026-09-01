@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1
+
+- 放开同一聊天内的跨独立项目顺序开发：仍保持一个唯一可写主仓，但可通过显式 `cap-session-root.mjs switch` 切换。
+- 切换时重新建立目标项目的 Task、Session、分支、HEAD、工作区指纹和验证证据；来源项目只通过带来源 Commit、待验证标记的交接摘要传递业务上下文。
+- 同一远程项目的不同 clone/worktree 继续阻断；旧 `.cap`、Gate、Delivery、Outbox 和完成结论不能自动跨项目继承。
+- 新增跨项目切换与同项目拒绝的对抗回归，保留切换失败时原主仓锁不变的安全边界。
+
 ## 0.9.0
 
 - 新增 Windows 10/11 原生 PowerShell 安装、升级与 Doctor 入口，复用现有 Node 安装真值，不要求 WSL。

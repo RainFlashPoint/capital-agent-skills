@@ -16,7 +16,7 @@ try {
       process.stderr.write('✗ cap: 本会话尚未从用户当前打开的仓库运行 cap-status，拒绝提交。先完成 Cap 入口握手。\n')
       process.exit(1)
     }
-    process.stderr.write(`✗ cap: 本会话锁定仓库为 ${sessionRoot.expectedRoot}，拒绝在 ${sessionRoot.currentRoot} 提交。请回到原仓库；如需切换 worktree，请新建会话。\n`)
+    process.stderr.write(`✗ cap: 本会话当前主仓为 ${sessionRoot.expectedRoot}，拒绝在 ${sessionRoot.currentRoot} 提交。只读参考请按 cross-project-handoff；如需在另一独立项目开发，先显式执行 cap-session-root.mjs switch；同一项目 worktree 请新建会话。\n`)
     process.exit(1)
   }
 } catch (error) {

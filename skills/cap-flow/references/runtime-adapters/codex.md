@@ -16,7 +16,7 @@ This adapter is data, not a skill. It defines how the cap playbooks map their po
 | Headless/non-interactive | Do not ask questions; write `needs-human` and choose the safe default | Block rather than accepting risk |
 | Cross-model adversary | Do not call `codex` from inside Codex | Run the adversarial pass inline |
 | Capital Agent MCP visibility | Inspect the tools exposed to the current task and pass `loaded` or `missing` to `cap-status --mcp-runtime` | Use `unknown` only when the host cannot expose tool visibility |
-| Session repository identity | `cap-status` binds the first canonical Git root to `CODEX_THREAD_ID` / `CODEX_SESSION_ID`; every stage and Commit verifies it | Without a stable host session ID, retain the portable STATE branch/worktree guard |
+| Session repository identity | `cap-status` binds the current explicit canonical Git root to `CODEX_THREAD_ID` / `CODEX_SESSION_ID`; every stage and Commit verifies it; an explicit independent-project switch rebinds it after handoff | Without a stable host session ID, retain the portable STATE branch/worktree guard |
 
 ## Windows native adapter
 
@@ -30,7 +30,7 @@ On Windows 10/11, use PowerShell, Git for Windows and Node.js. Do not require WS
 
 ## Session root adapter
 
-Codex can expose sibling worktrees in one workspace, so repository-local STATE cannot prove which directory the user opened for this task. The first `cap-status` call must therefore run from the current task directory and capture its canonical Git root under the stable Codex thread/session ID. Later `.cap` paths are verify-only evidence: they may confirm a mismatch but must never navigate to or select another root. A mismatch returns `session_root_blocked` before reading that directory's STATE; stage guards and Git Hooks recheck the same identity. Deliberately changing repositories or sibling worktrees requires a new Codex task so the boundary is explicit.
+Codex can expose sibling worktrees in one workspace, so repository-local STATE cannot prove which directory the user opened for this task. The first `cap-status` call must therefore run from the current task directory and capture its canonical Git root under the stable Codex thread/session ID. Later `.cap` paths are verify-only evidence: they may confirm a mismatch but must never navigate to or select another root. A mismatch returns `session_root_blocked` before reading that directory's STATE; stage guards and Git Hooks recheck the same identity. A deliberate switch to an independent repository is allowed in the same chat only through `scripts/cap-session-root.mjs switch <source-repo> <target-repo>` and a source/Commit/verification-status handoff; it creates a new target Task/Session and never carries Gate, Delivery or Outbox. Switching same-project clones or sibling worktrees still requires a new Codex task.
 
 ## Multi-agent adapter
 

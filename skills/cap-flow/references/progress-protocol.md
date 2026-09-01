@@ -6,7 +6,7 @@
 
 先检查当前宿主是否实际暴露 Capital Agent MCP 工具，再运行 package 根的 `scripts/cap-status.mjs <target-repo> --json --mcp-runtime <loaded|missing|unknown>`。结合 `create_or_attach_task` 的真实结果，第一条状态必须包含：平台连接、仓库、分支、Task ID、当前阶段、下一动作。
 
-`cap-status.mode=session_root_blocked` 是最高优先级仓库身份门禁：本会话第一次解析的 canonical Git root 是后续读写、测试和提交的唯一根。错误目录里的 STATE 即使与其 branch/worktree 完全自洽也不能覆盖它；停止读取该目录的 `.cap` 与源码，回到锁定仓库，确需切换则新建会话。
+`cap-status.mode=session_root_blocked` 是最高优先级仓库身份门禁：本会话当前显式选定的 canonical Git root 是后续读写、测试和提交的唯一主根。错误目录里的 STATE 即使与其 branch/worktree 完全自洽也不能覆盖它；停止读取该目录的 `.cap` 与源码。只读参考可按 `cross-project-handoff.md` 取有限代码事实；确需在另一独立项目开发时，必须由用户显式切换主根，生成带来源项目/Commit/待验证标记的交接摘要，并重新创建目标项目 Task/Session。不得自动跟随目录变化；同一远程项目的 clone/worktree 仍需新会话。
 
 `cap-status.mode=restart_required` 是客户端选择门禁：团队模式配置已经落盘，但当前会话没有加载 MCP。此时必须显示“代码修改尚未开始 / 分支和工作区不会丢失”，并提供两个选项：重启后使用团队模式（推荐），或本次明确改用本地模式继续。用户选第二项后，以 `--allow-local-once` 重跑并获得 `local_fallback_explicit`；它只对当前任务生效，不修改持久团队配置，不创建平台 Task、Experience、Delivery、Server Gate 或 Outbox。用户尚未选择时不得继续，也不得静默本地化。
 
