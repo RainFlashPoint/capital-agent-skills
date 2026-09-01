@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.9.1，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.9.2，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.9.2 更新
+
+- 将项目本地 `.cap` 纳入所有研发阶段的必选前置：锁定 Git 根目录，核对任务、分支、工作树、计划、评审、验证和未完成门禁。
+- 知识库注入作为增强步骤：`enrich_context` 失败可离线继续，但必须记录降级；真实代码或配置改动必须沉淀 `record_experience`。
+- 交付前统一复核实际改动、diff、验证结果和 `.cap` 证据，减少上下文串台、重复调查和经验丢失。
 
 ## v0.9.1 更新
 

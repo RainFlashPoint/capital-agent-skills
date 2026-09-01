@@ -23,6 +23,16 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 
 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布` 是可选快捷表达；日常直接 `$cap` 加需求即可。
 
+## 研发上下文门禁（所有阶段必经）
+
+以下规则适用于需求确认、开发计划、编码实现、测试验证、代码评审和发布上线；任何实质工作前都必须执行：
+
+1. **锁定当前 Git 根目录**：以用户当前打开的仓库为唯一工作根，核对分支、HEAD、工作树和远程地址；历史 `.cap`、其他 clone 或 worktree 只能用于校验，不能反向选择目录。
+2. **检查项目本地 `.cap`**：读取存在的 `.cap/STATE.md`、`.cap/task-context.md`、`.cap/plan.md`，以及 `.cap/review/`、`.cap/verify/`。核对任务、分支、工作树、改动范围、已通过门禁和未完成项是否与当前 Git 状态一致。
+3. **本地事实不可降级**：`.cap` 缺失、状态不一致或存在未解决门禁时，先报告事实并按本地状态处理；不得假设上下文正确或直接进入下一阶段。知识库不可用不能成为跳过 `.cap` 的理由。
+4. **知识库是增强步骤**：完成 `.cap` 检查后，按 `../harvest-experience/SKILL.md` 尝试 `enrich_context`。调用失败允许离线继续，但交付说明必须记录注入失败、影响和降级方式，不得宣称已同步。
+5. **交付前复核与沉淀**：复核 `git diff --name-only`、`git diff --check`、`.cap` 证据是否覆盖实际改动、本地验证结果和提交范围。存在真实代码或配置改动时必须按 harvest-experience 调用 `record_experience`，只传意图、变更文件路径、仓库地址和验证信息，禁止传代码正文、私钥、密码、完整证书、完整签名或敏感业务数据。
+
 用户显式调用 `$cap` 后：
 
 1. 先检查当前宿主是否实际暴露 Capital Agent MCP 工具，再从**用户当前打开的仓库**运行 package 根的 `scripts/cap-status.mjs <target-repo> --json --mcp-runtime <loaded|missing|unknown>`，获得 Git、平台配置、Task 和确定性下一动作。第一次调用会把 canonical Git root 锁定为本会话主仓；后续 `.cap/STATE.md`、`task-context.md`、历史索引及其中的 `worktree` / 绝对路径都只能校验和定位仓内证据，**绝不能自动反向选择、跳转或覆盖目标仓库**。只读参考仓按 `cap-flow/references/cross-project-handoff.md` 处理；确需在另一独立项目开发时，用户必须明确说“切换到项目 B 继续开发”，再用 `scripts/cap-session-root.mjs switch <A> <B>` 切换唯一可写主仓，并重建 B 的 Task/Session。来源项目只传带来源 Commit 和待验证标记的业务摘要，不传递 Gate、Delivery、Outbox 或完成结论；同一远程项目的 sibling worktree 仍需新会话。若返回 `mode=session_root_blocked`，停止读取错误仓的 `.cap` 与源码，回到锁定仓库。能检查工具列表时必须传 `loaded` 或 `missing`；只有宿主无法提供工具可见性时才传 `unknown`。若返回 `mode=restart_required`，说明团队模式配置已经落盘但当前会话没有加载 MCP：先暂停阶段推进，并给用户两个直白选择：①完全退出并重新打开客户端、新建任务后恢复团队模式；②回复“本次本地继续”，以 `--allow-local-once` 重跑状态检查。第二种只对本任务生效，不修改机器团队配置；允许继续代码侦察和本地研发，但不创建平台 Task、不回写 Experience/Delivery/Server Gate，也不写 Outbox。不得未经用户选择就静默降级。
@@ -41,7 +51,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
    `cap-status` 返回 `direct_probe_unavailable` 且 `platform.mcpRuntime=loaded|unknown` 时，只能表述为“直接探测不可用，等待 MCP 确认”，不得报告平台断网、网络错误或连接失败；必须继续调用 MCP 做最终确认。MCP 成功即按平台已连接继续，只有 MCP 已加载且直接探测与 MCP 调用都失败时才报告平台暂时不可用。`platform.mcpRuntime=missing` 不等待确认，直接执行 `restart_required`。
    快报必须同时显示 Outbox 待同步数、可重放数、阻塞数与下一事件类型；存在待同步事件时不得只说“平台已连接”。
    若待同步项属于历史 Task，快报必须标记“等待历史元数据补报授权”，不能直接执行，也不能含糊描述成普通连接恢复。
-6. 调用中心知识层注入与本需求相关的历史经验。
+6. 在完成“研发上下文门禁”后，调用中心知识层注入与本需求相关的历史经验；失败按门禁章节记录离线降级。
 7. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
    普通开发 Commit 和入口对账只登记 Delivery，不触发 Test Action。仅当 `repository.harnessMode=server`，编码实现完成、精确 Commit 已在远端可见且没有人工门禁时，才对同一 Commit 再调用一次 `record_task_delivery(delivery_candidate=true)` 提交最终候选版本；Server 幂等创建 Test Action，客户端有界等待。Test 成功后由 Server 自动创建 Review Action，客户端继续读取/等待新的 Action，直到成功、明确阻塞或达到等待上限。`local-only` 仓库到本地验证与维护评审 PASS 即进入发布收口，不创建 Action。历史 Outbox 永远不能打断当前 Task 主线。
 8. 按阶段使用唯一 Action 协议，禁止双写：
@@ -52,7 +62,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
    - 代码修复：只续接 Server Review 生成的 Harness Patch Action；由受控 Patch Provider 回写新 Commit 与 Patch Evidence，Skills 不自行伪造完成结果。
    Server 返回新 Commit 的 Test/Review Action 时在同一会话继续；统一 Task `done` 后才进入 Delivery 与经验沉淀。
    `get_task_action / wait_task_action` 返回终态时，必须同步刷新 `.cap/STATE.md` 与对应 `.cap/verify/*.md` 或 `.cap/review/*.md`，替换已经失效的“未提交、未推送、Action 未创建”等描述。两处统一记录 Action ID、源 Commit、Provider 终态、Server Gate、分类和解除条件；`ENV_BLOCKED` 不得写 PASS。
-9. 会话结束时沉淀意图与改动文件路径，并维护统一 Task/Skills Session。
+9. 会话结束时按门禁章节沉淀意图、改动文件路径和验证信息，并维护统一 Task/Skills Session。
 
 进入测试验证或代码评审前同时加载 `../cap-flow/references/harness-action-protocol.md`。验证阶段优先使用 `create_task_action → wait_task_action/get_task_action` 请求独立 Test Provider；STATE 只保存 Action 引用，不能用本地 `PASS` 自证平台 Gate。Review 默认只读；可修 Finding 生成独立 Patch Action，不在同一 Review Run 中修改源码并自签 PASS。
 

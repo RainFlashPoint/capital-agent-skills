@@ -14,6 +14,8 @@ description: >
 
 # cap-test — 验证中枢（调度层）
 
+> 入口先执行 `../cap/SKILL.md` 的“研发上下文门禁”：`.cap` 检查不可跳过，知识库注入失败可记录后离线继续。
+
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
 同时读取 `../cap-flow/references/harness-action-protocol.md`。本阶段本地报告是诊断与 Provider 输入；当平台 Action API 可用且已有精确 Commit 时，必须创建独立 Test Action 并等待 Server 判定。Skills/STATE 不得自行证明质量 Gate PASS。

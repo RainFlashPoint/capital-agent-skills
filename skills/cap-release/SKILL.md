@@ -15,6 +15,8 @@ description: >
 
 # cap-release — 发布:目标选择器 + 晋级门引擎
 
+> 入口先执行 `../cap/SKILL.md` 的“研发上下文门禁”：`.cap` 检查不可跳过，知识库注入失败可记录后离线继续。
+
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
 你正在执行研发主线的**发布阶段**。显式 local / local-only 仓使用与当前 HEAD 一致的本地 `cap-gate`；团队模式必须由 Server canonical state 证明同一 Commit 的 Review Action 已通过。现在由你把它**逐级晋级**

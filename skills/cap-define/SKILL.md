@@ -10,6 +10,8 @@ description: >
 
 # cap-define — 收敛阶段：模糊点子 → 获批规格
 
+> 入口先执行 `../cap/SKILL.md` 的“研发上下文门禁”：`.cap` 检查不可跳过，知识库注入失败可记录后离线继续。
+
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
 把"想做点什么"变成一份**获批的、无歧义、能被 cap-plan 直接吃进去**的规格。
