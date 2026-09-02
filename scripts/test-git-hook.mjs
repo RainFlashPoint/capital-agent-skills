@@ -118,7 +118,10 @@ test('an explicit independent-project switch allows target commits and blocks th
   const lockRoot = `${repoA}-session-locks`
   const env = { ...process.env, CODEX_THREAD_ID: 'git-hook-project-switch', CAPITAL_AGENT_SESSION_LOCK_DIR: lockRoot }
   execFileSync(process.execPath, [sessionRootScript, 'capture', repoA], { cwd: repoA, env })
-  execFileSync(process.execPath, [sessionRootScript, 'switch', repoA, repoB], { cwd: repoA, env })
+  const outgoing = join(repoA, '.cap/handoff/outgoing/project-switch.md')
+  await mkdir(join(repoA, '.cap/handoff/outgoing'), { recursive: true })
+  await writeFile(outgoing, 'source: project-a @ main / fixture\ntarget: project-b\nintent: continue in target\nconfirmed: source commit exists\nto-verify: target behavior\ntarget-work: commit target file\nnon-transferable: Task / Session / Gate / Delivery / Outbox / PASS\n')
+  execFileSync(process.execPath, [sessionRootScript, 'switch', repoA, repoB, '--handoff', outgoing], { cwd: repoA, env })
 
   await writeFile(join(repoB, '.gitignore'), '.cap/\n')
   await mkdir(join(repoB, '.cap'), { recursive: true })

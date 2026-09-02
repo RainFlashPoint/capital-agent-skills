@@ -21,7 +21,9 @@ script_dir="$(cd "$(dirname "$0")" && pwd -P)"
 package_root="$(cd "$script_dir/../../.." && pwd -P)"
 session_check="$(node "$package_root/scripts/cap-session-root.mjs" verify "$repo" 2>&1)" || fail "$session_check"
 context="$repo/.cap/task-context.md"
+state="$repo/.cap/STATE.md"
 field() { sed -n "s/^- $1:[[:space:]]*//p" "$context" | head -1 | sed 's/[[:space:]]*$//'; }
+state_field() { [ -f "$state" ] && sed -n "s/^$1:[[:space:]]*//p" "$state" | head -1 | sed 's/[[:space:]]*$//' || true; }
 section_has_path() {
   awk -v heading="$1" '
     $0 == heading { active=1; next }
@@ -70,6 +72,12 @@ for key in environment authorization minimum-impact recovery invalidates-on; do
   grep -qE "^- ${key}:[[:space:]]*[^[:space:]]" "$context" || fail "External operation boundary 缺少 ${key}"
 done
 grep -qE '^- (modify|inspect-only|out-of-scope): `[^`]+`' "$context" || fail "Impact surface 没有带路径的范围证据"
+task_id="$(state_field task-id)"
+if [ -n "$task_id" ]; then
+  overlap_result="$(node "$package_root/scripts/cap-worktree-baseline.mjs" check "$repo" "$task_id" 2>&1)"
+  overlap_status=$?
+  [ "$overlap_status" -eq 0 ] || fail "计划修改路径与本 Task 开始前的未归属改动重叠；请先续接原任务、提交明确基线或使用干净 worktree。$overlap_result"
+fi
 
 case "$stage" in
   plan|implement|test|review|release|'') ;;

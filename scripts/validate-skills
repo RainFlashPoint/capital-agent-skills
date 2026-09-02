@@ -19,7 +19,7 @@ contains_old_skill_name(){
 }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/cross-project-handoff.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-runtime.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "scripts/setup.ps1" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/cross-project-handoff.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-worktree-baseline.mjs" "scripts/cap-runtime.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "scripts/setup.ps1" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -89,6 +89,9 @@ grep -q 'mode=boundary_blocked' "$ROOT/cap/SKILL.md" || err "cap 未把旧 Task/
 grep -q 'mode=session_root_blocked' "$ROOT/cap/SKILL.md" || err "cap 未把会话仓库身份冲突作为最高优先级硬阻断"
 grep -q 'inspectSessionRoot' scripts/cap-status.mjs || err "cap-status 未在读取错误仓 STATE 前锁定会话根"
 grep -q 'switchSessionRoot' scripts/cap-session-root.mjs || err "会话根未提供显式跨独立项目切换"
+grep -q 'project_handoff_required' scripts/cap-session-root.mjs || err "跨项目切换未强制原子落地已审阅 handoff"
+grep -q 'tracked_cap_active_state' scripts/cap-task-state-switch.mjs || err "Task 切换未阻止 tracked .cap 移入 ignored local-state"
+grep -q 'preexisting_dirty_overlap' scripts/cap-runtime.mjs || err "Context Guard 未阻止目标仓旧脏改动混入新 Task"
 grep -q 'cap-session-root.mjs.*verify' "$ROOT/cap-flow/scripts/cap-context-guard" || err "Context Guard 未复核会话根"
 grep -q 'inspectSessionRoot' scripts/prepare-commit-msg.mjs || err "Git Commit Hook 未复核会话根"
 grep -q 'worktree.*verify-only' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未禁止 STATE worktree 反向解析目标仓"

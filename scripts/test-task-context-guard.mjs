@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -11,6 +11,7 @@ const guard = join(root, 'skills/cap-flow/scripts/cap-context-guard')
 const boundaryGuard = join(root, 'skills/cap-flow/scripts/cap-guard')
 const fingerprintScript = join(root, 'scripts/cap-context-fingerprint.mjs')
 const sessionRootScript = join(root, 'scripts/cap-session-root.mjs')
+const baselineScript = join(root, 'scripts/cap-worktree-baseline.mjs')
 const portableEnv = () => {
   const env = { ...process.env }
   for (const key of ['CAPITAL_AGENT_RUNTIME_SESSION_ID', 'CAPITAL_AGENT_SESSION_LOCK_DIR', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDE_CODE_SESSION_ID']) delete env[key]
@@ -187,6 +188,44 @@ test('unstaged tracked changes make the worktree fingerprint stale', () => {
   const result = run(repo, '--stage', 'test')
   assert.equal(result.status, 1)
   assert.match(result.stderr, /worktree fingerprint 已变化/)
+})
+
+test('pre-existing dirty files in the planned modify surface block a new Task', () => {
+  const repo = fixture()
+  appendFileSync(join(repo, 'src/payment-service.js'), '// previous task change\n')
+  mkdirSync(join(repo, '.cap'), { recursive: true })
+  execFileSync(process.execPath, [baselineScript, 'capture', repo, 'task_new'], { cwd: repo })
+  writeFileSync(join(repo, '.cap/STATE.md'), `task-id: task_new\nbranch: ${execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()}\nworktree: ${repo}\n`)
+  writeContext(repo)
+
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /未归属改动重叠/)
+  assert.match(result.stderr, /src\/payment-service\.js/)
+})
+
+test('pre-existing dirty files outside the planned modify surface remain allowed', () => {
+  const repo = fixture()
+  appendFileSync(join(repo, 'README.md'), 'previous task note\n')
+  execFileSync(process.execPath, [baselineScript, 'capture', repo, 'task_new'], { cwd: repo })
+  writeFileSync(join(repo, '.cap/STATE.md'), `task-id: task_new\nbranch: ${execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()}\nworktree: ${repo}\n`)
+  writeContext(repo)
+
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 0, result.stderr)
+})
+
+test('retries cannot overwrite the original dirty ownership baseline', () => {
+  const repo = fixture()
+  appendFileSync(join(repo, 'src/payment-service.js'), '// original dirty change\n')
+  const first = JSON.parse(execFileSync(process.execPath, [baselineScript, 'capture', repo, 'task_retry'], { cwd: repo, encoding: 'utf8' }))
+  appendFileSync(join(repo, 'README.md'), 'later dirty change\n')
+  const second = JSON.parse(execFileSync(process.execPath, [baselineScript, 'capture', repo, 'task_retry'], { cwd: repo, encoding: 'utf8' }))
+  const saved = JSON.parse(readFileSync(first.path, 'utf8'))
+
+  assert.equal(first.created, true)
+  assert.equal(second.created, false)
+  assert.deepEqual(saved.dirtyPaths.map(item => item.path), ['src/payment-service.js'])
 })
 
 test('untracked source changes make the untracked fingerprint stale', () => {

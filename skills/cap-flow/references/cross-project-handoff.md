@@ -19,9 +19,13 @@
 显式说“切换到项目 B 继续开发”后：
 
 1. 记录 A 的当前状态；未提交改动不搬运、不自动提交。
-2. 使用 package 根 `scripts/cap-session-root.mjs switch <A> <B>` 原子切换会话的可写主仓。
+2. 使用 package 根 `scripts/cap-session-root.mjs switch <A> <B> --handoff <A>/.cap/handoff/outgoing/<name>.md`，把已审阅摘要原子复制到 B 后再切换可写主仓。摘要缺失、冲突或复制失败时保持 A 为主仓。
 3. B 重新创建/绑定自己的 Task 和 Skills Session，重新读取 B 的 `.cap` 和代码事实。
 4. 交接摘要只作为 B 的侦察输入；所有验证、提交和回写只发生在 B。
+
+目标 Task 初始化时会记录 B 当时已有的非 `.cap` 脏文件。任务侦察声明的 `modify` 路径与这些旧脏文件重叠时，编码门禁必须停止；只能续接旧任务、先形成明确基线 Commit，或改用干净 worktree。不得用“只 add 文件名”冒充改动归属隔离。
+
+若 B 的 `.cap/STATE.md`、`spec.md`、`plan.md`、`verify/` 或 `review/` 已被 Git 跟踪，Task 状态切换不得把它们移动到 ignored `local-state`。先显式完成一次仓库 `.cap` 生命周期迁移；失败时原文件和 Git 状态必须保持不变。
 
 最小摘要结构：
 
@@ -43,3 +47,4 @@ non-transferable: Task / Session / Gate / Delivery / Outbox / PASS
 - 切换后旧 Task/Session 的事件不能进入新项目 Outbox；历史事件仍按原项目边界保留。
 - 目标项目的 `HEAD`、branch、工作区指纹和验证命令必须重新建立；来源项目的证据只能作为待验证参考。
 - 如果切换失败，会话仍锁定原主仓，不得部分切换。
+- Codex 页面显示的启动 cwd 可能仍是来源仓；切换结果中的 canonical root 才是逻辑主仓，后续文件和命令操作必须显式使用该目录。

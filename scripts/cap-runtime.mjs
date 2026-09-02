@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
+import { inspectPreexistingDirtyOverlap } from './cap-worktree-baseline.mjs'
 
 const validStages = new Set(['', 'plan', 'implement', 'test', 'review', 'release'])
 
@@ -107,6 +108,14 @@ export async function inspectTaskContext(repoCandidate = '.', { stage = '', inte
   }
   if (!/^- (?:modify|inspect-only|out-of-scope): `[^`]+`/m.test(section(context, '## Impact surface'))) {
     fail('cap-context', 'impact_surface_missing', 'Impact surface 没有带路径的范围证据')
+  }
+  const state = await readFile(join(repo, '.cap', 'STATE.md'), 'utf8').catch(() => '')
+  const taskId = field(state, 'task-id')
+  if (taskId) {
+    const dirtyOwnership = await inspectPreexistingDirtyOverlap(repo, taskId, context)
+    if (dirtyOwnership.overlap.length) {
+      fail('cap-context', 'preexisting_dirty_overlap', `计划修改路径在本 Task 开始前已存在未归属改动：${dirtyOwnership.overlap.join(', ')}；请先续接原任务、提交明确基线或使用干净 worktree`)
+    }
   }
   return { ok: true, repo, stage, intent: recorded.intent, fingerprints }
 }

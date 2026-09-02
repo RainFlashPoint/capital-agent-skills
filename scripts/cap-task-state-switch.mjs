@@ -8,11 +8,17 @@ import { pathToFileURL } from 'node:url'
 import { inspectTaskBoundary } from './cap-status.mjs'
 import { archiveHistoricalOutboxEvents } from './cap-outbox.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
+import { captureTaskBaseline, removeTaskBaseline } from './cap-worktree-baseline.mjs'
 
 const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'experience.md', 'verify', 'review', 'release']
 
 function git(repo, args) {
   return execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+}
+function trackedActivePaths(repo) {
+  const pathspecs = ACTIVE_PATHS.map(name => `.cap/${name}`)
+  const output = execFileSync('git', ['ls-files', '-z', '--', ...pathspecs], { cwd: repo, encoding: 'buffer', stdio: ['ignore', 'pipe', 'ignore'] })
+  return output.toString('utf8').split('\0').filter(Boolean).sort()
 }
 async function exists(path) { try { await stat(path); return true } catch { return false } }
 function field(markdown = '', name = '') {
@@ -39,6 +45,11 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
   const explicitReplacement = expectedOldTaskId && expectedOldTaskId === oldTaskId && taskId !== oldTaskId
   if (oldState && !boundary.blocked && !explicitReplacement) throw new Error('active STATE matches the current branch/worktree; refusing implicit Task replacement without the exact old Task ID')
 
+  const tracked = trackedActivePaths(repo)
+  if (tracked.length) {
+    throw new Error(`tracked_cap_active_state: refusing to move tracked .cap files into ignored local-state (${tracked.slice(0, 5).join(', ')}${tracked.length > 5 ? `, +${tracked.length - 5} more` : ''})`)
+  }
+
   await mkdir(capRoot, { recursive: true })
   const fingerprint = createHash('sha256').update(`${oldState}\n${branch}\n${gitRoot}`).digest('hex').slice(0, 12)
   const snapshotRoot = join(capRoot, 'local-state', 'stale', safeSegment(oldTaskId), fingerprint)
@@ -46,8 +57,10 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
   await mkdir(snapshotRoot, { recursive: true })
 
   const moved = []
+  let taskBaseline = null
   let outboxArchive = { archived: 0, pending: 0, totalBefore: 0, archivePath: '', retainedHistoricalPending: 0 }
   try {
+    taskBaseline = await captureTaskBaseline(repo, taskId)
     for (const name of ACTIVE_PATHS) {
       const source = join(capRoot, name)
       if (!await exists(source)) continue
@@ -74,9 +87,10 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
     await rm(join(capRoot, 'task-context.md'), { force: true }).catch(() => {})
     for (const item of moved.reverse()) await rename(item.destination, item.source).catch(() => {})
     await rm(snapshotRoot, { recursive: true, force: true }).catch(() => {})
+    if (taskBaseline?.created) await removeTaskBaseline(taskBaseline.path).catch(() => {})
     throw error
   }
-  return { switched: true, snapshotRoot, oldTaskId, taskId, sessionId, branch, head, outboxArchive }
+  return { switched: true, snapshotRoot, oldTaskId, taskId, sessionId, branch, head, outboxArchive, taskBaseline: taskBaseline?.path || '' }
 }
 
 function args(argv) {

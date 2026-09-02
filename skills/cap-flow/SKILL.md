@@ -116,7 +116,7 @@ Claude、Codex 或其它 CLI 上都能跑。
 
 # 一、Orient —— 定位现在在哪
 
-目标仓 = 本会话当前显式选定的 canonical Git root。默认由用户当前打开目录首次锁定；锁定后不能被 `.cap`、历史索引、绝对路径或 sibling worktree 自动覆盖。跨独立项目顺序开发时，用户必须显式执行 `scripts/cap-session-root.mjs switch <source-repo> <target-repo>`，原子切换唯一可写主仓，并按 [`cross-project-handoff.md`](references/cross-project-handoff.md) 传递带来源 Commit 的业务摘要；同一远程项目的不同 clone/worktree 仍需新会话。所有状态都落在当前 `<target-repo>/.cap/`，其中 `worktree` 字段只用于 verify-only 边界比较，禁止作为 target resolver：
+目标仓 = 本会话当前显式选定的 canonical Git root。默认由用户当前打开目录首次锁定；锁定后不能被 `.cap`、历史索引、绝对路径或 sibling worktree 自动覆盖。跨独立项目顺序开发时，用户必须显式执行 `scripts/cap-session-root.mjs switch <source-repo> <target-repo> --handoff <reviewed-outgoing.md>`，原子复制已审阅摘要并切换唯一可写主仓，再按 [`cross-project-handoff.md`](references/cross-project-handoff.md) 重建目标 Task/Session；同一远程项目的不同 clone/worktree 仍需新会话。所有状态都落在当前 `<target-repo>/.cap/`，其中 `worktree` 字段只用于 verify-only 边界比较，禁止作为 target resolver：
 
 进入 Git 仓库后先静默确保 Capital Agent 项目 Hook 已安装（复用 package 根 `scripts/install-git-governance.mjs`）；幂等失败不阻断流程，也不要求用户执行额外命令。Hook 会自动追加 Task/Session trailer；当提交包含代码时，还会阻止遗漏或本地 exclude 的 `.cap` 研发产物进入交付盲区。
 

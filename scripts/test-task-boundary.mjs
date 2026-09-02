@@ -67,6 +67,23 @@ test('matching active boundary refuses implicit replacement', async () => {
   assert.equal(result.oldTaskId, 'task_old')
 })
 
+test('tracked active cap state blocks before any file is moved into ignored local-state', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/verify'), { recursive: true })
+  await writeFile(join(repo, '.cap/.gitignore'), 'local-state/\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_old\nbranch: feature/old\nworktree: /tmp/old\n')
+  await writeFile(join(repo, '.cap/verify/old.md'), 'tracked evidence\n')
+  execFileSync('git', ['add', '.cap'], { cwd: repo })
+  execFileSync('git', ['commit', '-qm', 'track legacy cap state'], { cwd: repo })
+
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }),
+    /tracked_cap_active_state/,
+  )
+  assert.equal(await readFile(join(repo, '.cap/verify/old.md'), 'utf8'), 'tracked evidence\n')
+  assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), '')
+})
+
 test('Task switch archives old Outbox metadata and leaves only the new Task active', async () => {
   const repo = await fixture()
   await mkdir(join(repo, '.cap'), { recursive: true })

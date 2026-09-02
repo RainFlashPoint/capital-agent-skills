@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.9.3，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.9.4，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.9.4 更新
+
+- 跨项目切换会原子复制已审阅交接摘要；摘要缺失或落地失败时不改变原主仓。
+- 新 Task 会记录目标仓原有脏路径，计划修改范围与旧改动重叠时主动阻断，避免混合提交。
+- 旧项目已跟踪 `.cap` 活动态时不再静默移入 ignored 目录，避免一次 Task 切换制造大量 Git 删除。
 
 ## v0.9.3 更新
 

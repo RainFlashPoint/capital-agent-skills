@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, realpath, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { inspectSessionRoot, switchSessionRoot } from './cap-session-root.mjs'
@@ -42,6 +42,14 @@ async function independentReposFixture({ sameRemote = false } = {}) {
   return { parent, repoA, repoB, registryRoot: join(parent, 'session-locks') }
 }
 
+async function handoffFixture(repo, name = 'project-a-to-b.md') {
+  const root = join(repo, '.cap', 'handoff', 'outgoing')
+  await mkdir(root, { recursive: true })
+  const path = join(root, name)
+  await writeFile(path, 'source: project-a @ main / abcdef\ntarget: project-b\nintent: continue work\nconfirmed: source fact\nto-verify: target contract\ntarget-work: implement target change\nnon-transferable: Task / Session / Gate / Delivery / Outbox / PASS\n')
+  return path
+}
+
 test('first repository becomes the immutable root for one Codex thread', async () => {
   const { repoA, repoB, registryRoot } = await worktreeFixture()
   const environment = { CODEX_THREAD_ID: 'thread-a-b-regression' }
@@ -76,16 +84,48 @@ test('an explicit switch moves the single writable root between independent proj
   const { repoA, repoB, registryRoot } = await independentReposFixture()
   const environment = { CODEX_THREAD_ID: 'thread-explicit-project-switch' }
   await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+  const handoff = await handoffFixture(repoA)
 
-  const switched = await switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, environment, registryRoot })
+  const switched = await switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, handoffSourcePath: handoff, environment, registryRoot })
   assert.equal(switched.switched, true)
   assert.equal(switched.previousRoot, await realpath(repoA))
   assert.equal(switched.currentRoot, await realpath(repoB))
+  assert.equal(await readFile(switched.handoff.destination, 'utf8'), await readFile(handoff, 'utf8'))
 
   const oldRoot = await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
   const newRoot = await inspectSessionRoot({ repoRoot: repoB, environment, registryRoot })
   assert.equal(oldRoot.blocked, true)
   assert.equal(newRoot.blocked, false)
+})
+
+test('a missing reviewed handoff leaves the original repository root unchanged', async () => {
+  const { repoA, repoB, registryRoot } = await independentReposFixture()
+  const environment = { CODEX_THREAD_ID: 'thread-handoff-required' }
+  await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+
+  await assert.rejects(
+    switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, environment, registryRoot }),
+    /project_handoff_required/,
+  )
+  assert.equal((await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })).blocked, false)
+  assert.equal((await inspectSessionRoot({ repoRoot: repoB, environment, registryRoot })).blocked, true)
+})
+
+test('a symlinked target handoff directory cannot escape the target repository', async () => {
+  const { parent, repoA, repoB, registryRoot } = await independentReposFixture()
+  const environment = { CODEX_THREAD_ID: 'thread-handoff-target-symlink' }
+  await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+  const handoff = await handoffFixture(repoA)
+  const outside = join(parent, 'outside-handoff')
+  await mkdir(outside)
+  await mkdir(join(repoB, '.cap', 'handoff'), { recursive: true })
+  await symlink(outside, join(repoB, '.cap', 'handoff', 'incoming'))
+
+  await assert.rejects(
+    switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, handoffSourcePath: handoff, environment, registryRoot }),
+    /project_handoff_target_escape/,
+  )
+  assert.equal((await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })).blocked, false)
 })
 
 test('same-project sibling worktrees cannot use the explicit project switch', async () => {
