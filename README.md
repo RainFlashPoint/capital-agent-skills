@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.9.4，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.9.5，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.9.5 更新
+
+- L3/L4 或命中支付、安全、权限、跨仓、MCP、状态机等高风险信号时，评审前自动启动 1 个全新上下文的只读复核 Agent。
+- 独立复核绑定 source/base Commit 与工作区指纹，报告与主评审隔离；启动失败、证据过期或运行时不支持隔离时不伪造 PASS。
+- L1/L2 简单改动保持原有短路径，不额外启动 Agent。
 
 ## v0.9.4 更新
 

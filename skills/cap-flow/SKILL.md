@@ -337,6 +337,8 @@ git -C <target-repo> status --porcelain             # 含未跟踪
 > 不是起一个独立人格。验证项同理:`cap-test/checks/<name>.md` 是厚 playbook,不是技能。
 > **多角色时一次只装一张、用完即弃**(见「上下文预算」):有子 agent 隔离就 fan-out,没有(如 Codex)就 serial-and-evict,绝不把多张角色卡同时堆进主上下文。
 
+进入 `cap-review` 前还要按 [`references/complexity-routing.md`](references/complexity-routing.md) 的独立复核策略判定：L3/L4 或命中高风险信号时，自动启动**恰好 1 个全新上下文的只读复核 Agent**，契约见 [`references/independent-review.md`](references/independent-review.md)。该证据与多角色评审、Server Review Action 相互独立，缺失时不能宣称 Review/Release PASS；L1/L2 未命中风险信号则明确记录 `not-required`，不增加额外成本。共享 STATE 仍由主流程单写者维护。
+
 主线形状(供参考,具体由各阶段执行):
 
 ```
@@ -378,6 +380,14 @@ stage: <stage>
 status: in-progress | gated | blocked
 verify-checks: [...]
 active-roles: [...]
+complexity: L1 | L2 | L3 | L4
+independent-review: required | satisfied | not-required | unavailable | failed | stale | invalid
+independent-review-evidence: <review/independent.md | none>
+independent-reviewer-id: <唯一 Agent/运行标识 | none>
+independent-review-source-commit: <完整 SHA | working-tree | none>
+independent-review-base-commit: <完整 SHA | none>
+independent-review-context-fingerprint: <index/worktree/untracked 指纹 | none>
+independent-review-launch-attempt: 0 | 1
 changed-files:
 - <path>
 branch-intent:

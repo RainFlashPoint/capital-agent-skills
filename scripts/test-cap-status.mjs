@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { inspectCapStatus, reconcileRepositoryState, resolveNextAction } from './cap-status.mjs'
+import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 
 async function fixture() {
   const repo = await mkdtemp(join(tmpdir(), 'cap-status-'))
@@ -40,6 +41,56 @@ test('deferred-only acceptance advances core task instead of leaving it permanen
 test('legacy verify state normalizes to test and follows explicit next action', () => {
   const result = resolveNextAction({ stateText: 'stage: verify\nstatus: in-progress\n## Next action\n-> cap-review\n' })
   assert.equal(result.stage, 'review')
+})
+
+test('one checked review item cannot advance without the complete local cap gate', () => {
+  const result = resolveNextAction({ stateText: 'stage: review\nstatus: in-progress\n- [x] review：多角色评审无 CRITICAL/未决项\n' })
+  assert.equal(result.stage, 'review')
+  assert.match(result.reason, /cap-gate PASS/)
+})
+
+test('required independent review blocks local release even when cap gate text says pass', () => {
+  const result = resolveNextAction({ stateText: 'stage: review\nstatus: in-progress\nindependent-review: required\ncap-gate: PASS reviewed-head=abc\n' })
+  assert.equal(result.stage, 'review')
+  assert.equal(result.gated, true)
+  assert.match(result.reason, /独立复核状态/)
+})
+
+test('satisfied independent review and complete local cap gate can advance', () => {
+  const head = 'a'.repeat(40)
+  const result = resolveNextAction({ stateText: `stage: review\nstatus: in-progress\nindependent-review: satisfied\ncap-gate: PASS reviewed-head=${head}\n`, currentHead: head, independentEvidence: { valid: true, sourceCommit: head } })
+  assert.equal(result.stage, 'release')
+})
+
+test('L3 complexity requires satisfied independent evidence even if state says not-required', () => {
+  const result = resolveNextAction({ stateText: 'stage: review\nstatus: in-progress\ncomplexity: L3\nindependent-review: not-required\ncap-gate: PASS reviewed-head=abc\n' })
+  assert.equal(result.stage, 'review')
+  assert.equal(result.gated, true)
+})
+
+test('current English security paths trigger independent review even with stale low-risk state', () => {
+  const head = 'a'.repeat(40)
+  const result = resolveNextAction({ stateText: `stage: review\nstatus: in-progress\ncomplexity: L1\nindependent-review: not-required\ncap-gate: PASS reviewed-head=${head}\n`, currentHead: head, changedFiles: ['src/security.ts'] })
+  assert.equal(result.stage, 'review')
+  assert.equal(result.gated, true)
+})
+
+test('legacy local cap gate without an independent field remains compatible', () => {
+  const head = 'a'.repeat(40)
+  const result = resolveNextAction({ stateText: `stage: review\nstatus: in-progress\ncap-gate: PASS reviewed-head=${head}\n`, currentHead: head })
+  assert.equal(result.stage, 'release')
+})
+
+test('satisfied independent review requires a bound fresh-context report', async () => {
+  const repo = await fixture(); const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+  await mkdir(join(repo, '.cap', 'review'), { recursive: true })
+  await writeFile(join(repo, '.cap', 'STATE.md'), `stage: review\nstatus: in-progress\ncomplexity: L3\nbase-commit: ${head}\nindependent-review: satisfied\nindependent-review-evidence: review/independent.md\ncap-gate: PASS reviewed-head=${head}\n`)
+  const blocked = await inspectCapStatus({ repoRoot: repo, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
+  assert.equal(blocked.workflow.stage, 'review'); assert.equal(blocked.workflow.gated, true)
+  const fp = await inspectContextFingerprint(repo)
+  await writeFile(join(repo, '.cap', 'review', 'independent.md'), `review-kind: fresh-context-independent\nsource-commit: ${head}\nbase-commit: ${head}\ncontext-fingerprint: ${fp.index}:${fp.worktree}:${fp.untracked}\nverdict: CLEAN\nindependence: fresh-context\nsource-mutated: false\n`)
+  const passed = await inspectCapStatus({ repoRoot: repo, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
+  assert.equal(passed.workflow.stage, 'release')
 })
 
 test('team mode cannot advance from editable STATE gate text while platform is unverified', async () => {

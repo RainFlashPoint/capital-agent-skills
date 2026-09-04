@@ -66,6 +66,17 @@ map → shape → plan → build → verify → review → release
 - 未验证项必须显式记录；
 - 安全、资金和生产风险必须升级人工。
 
+## 3.1 独立复核策略
+
+独立复核不是新阶段，也不替代 `cap-test`、多角色 `cap-review` 或 Server Review Action。它只在进入 `cap-review` 前按复杂度与改动信号触发：
+
+| 路由 | 独立复核 | 规则 |
+|---|---|---|
+| L1/L2，且未命中高风险信号 | `not-required` | 不启动额外 Agent，保持短路径 |
+| L3/L4，或人工将风险升级 | `required` | 自动启动**恰好 1 个** fresh-context、只读复核 Agent |
+
+进入评审时取 `max(STATE 已记录等级, 当前 diff 风险重算)`；后续新增敏感改动不能沿用旧的低等级。无真正隔离上下文的运行时只能记录 `unavailable/failed`，不能把串行 inline、并行读命令或对抗 pass 冒充独立复核完成。L3/L4 在缺少有效独立证据时保持 Review `BLOCKED`；用户可以明确接受降级后继续收集 findings，但不能解除该门或放行 Review/Release。
+
 ## 4. 产物最小化
 
 - L1：任务契约 + 验证证据即可；

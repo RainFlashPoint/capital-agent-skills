@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.5
+
+- 为 L3/L4 与支付、安全、权限、跨仓、MCP、状态机等高风险改动增加 fresh-context 独立复核门：评审前自动启动恰好 1 个只读 Agent，隔离主会话判断。
+- 独立报告绑定 source/base Commit、`cap-context-fingerprint` 和源码未变证据；`unavailable`、`failed`、`stale`、`invalid` 不得冒充 Review PASS。
+- L1/L2 未命中风险信号的任务保持原有短路径，不启动额外 Agent；对抗 pass 复用同一独立 Agent，不重复 fan-out。
+
 ## 0.9.4
 
 - 跨独立项目切换强制携带已审阅 outgoing 摘要，并将 incoming 落地与会话根替换组成可回滚事务，杜绝目录缺失造成的半切换。

@@ -19,7 +19,7 @@ contains_old_skill_name(){
 }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/cross-project-handoff.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-worktree-baseline.mjs" "scripts/cap-runtime.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "scripts/setup.ps1" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/cross-project-handoff.md" "$REF/independent-review.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-worktree-baseline.mjs" "scripts/cap-runtime.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "scripts/setup.ps1" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 
@@ -66,6 +66,10 @@ done
 grep -q 'stage: understand | define | plan | implement | test | review | release | done' "$REF/templates/STATE.md" || err "STATE 阶段枚举未迁移"
 grep -q 'cap-review → cap-release.*→ 退场' "$ROOT/cap-flow/SKILL.md" || err "主线顺序必须为 review → release → 退场"
 grep -q 'stage=release；只有 cap-release 完成后才 stage=done' "$ROOT/cap-review/SKILL.md" || err "Review PASS 不得跳过 Release 直接 done"
+grep -q 'independent-review.md' "$ROOT/cap-review/SKILL.md" || err "cap-review 未加载独立复核契约"
+grep -q '恰好 1 个' "$REF/complexity-routing.md" || err "复杂度路由未要求唯一独立复核 Agent"
+grep -q 'fork_turns=none' "$REF/runtime-adapters/codex.md" || err "Codex 适配器未要求 fresh-context 隔离"
+grep -q 'independent-review:' "$REF/templates/STATE.md" || err "STATE 未持久化独立复核状态"
 ok "阶段协议迁移检查完成"
 
 echo "== 4.3 progress and repository reconnaissance =="

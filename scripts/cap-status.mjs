@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -12,6 +12,7 @@ import { flushPendingDeliveries, readHarnessMode, sanitizeRepositoryUrl } from '
 import { inspectOutbox } from './cap-outbox.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
+import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
@@ -31,6 +32,71 @@ function field(markdown = '', name = '') {
 }
 function checked(markdown = '', keyword = '') {
   return String(markdown).split(/\r?\n/).some(line => /^\s*-\s*\[x\]/i.test(line) && line.toLowerCase().includes(keyword.toLowerCase()))
+}
+const INDEPENDENT_REVIEW_RISK = /(^|\/)(skills\/|.*SKILL\.md$|AGENTS\.md$|CLAUDE\.md$|.*(?:payment|billing|auth|credential|secret|security|permission|access|user[-_ ]?data|mcp|provider|harness|outbox|task|state|migration|database|sql|external[-_ ]?(?:api|interface)|concurr|lock|worktree|branch|release).*)/i
+function localReviewGate(markdown = '', { changedFiles = [], independentEvidence = null, currentHead = '' } = {}) {
+  const independent = field(markdown, 'independent-review').toLowerCase()
+  const complexity = field(markdown, 'complexity').toUpperCase()
+  const reason = field(markdown, 'complexity-reason')
+  const pathRisk = changedFiles.some(path => INDEPENDENT_REVIEW_RISK.test(String(path)))
+  const required = ['L3', 'L4'].includes(complexity) || independent === 'required' || pathRisk || /支付|资金|安全|权限|外部接口|数据库|迁移|并发|状态机|MCP|文件系统|跨仓|发布|payment|funds|security|auth|permission|external[-_ ]?(?:api|interface)|user[-_ ]?data|database|migration|concurr|state[-_ ]?machine|filesystem|cross[-_ ]?repo|release/i.test(reason)
+  const evidenceValid = independentEvidence?.valid === true && (!currentHead || independentEvidence.sourceCommit === currentHead)
+  const independentBlocked = required && (independent !== 'satisfied' || !evidenceValid)
+  const reviewedHead = String(markdown).match(/^cap-gate:\s*PASS\s+reviewed-head=([0-9a-f]{7,64})\s*$/mi)?.[1] || ''
+  const capGatePassed = Boolean(reviewedHead && currentHead && reviewedHead === currentHead)
+  return {
+    passed: capGatePassed && !independentBlocked,
+    independent,
+    required,
+    independentBlocked,
+    evidenceValid,
+    pathRisk,
+  }
+}
+function changedFilesForReview(repo, stateText = '', head = '') {
+  const paths = new Set()
+  const add = output => String(output || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).forEach(path => paths.add(path))
+  const base = field(stateText, 'base-commit')
+  if (base && head && gitSucceeds(repo, ['cat-file', '-e', `${base}^{commit}`])) add(git(repo, ['diff', '--name-only', `${base}...${head}`]))
+  add(git(repo, ['diff', '--name-only', 'HEAD']))
+  add(git(repo, ['diff', '--name-only', '--cached']))
+  String(git(repo, ['status', '--porcelain=v1']) || '').split(/\r?\n/).filter(Boolean).forEach(line => add(line.slice(3)))
+  return [...paths].filter(path => path !== '.cap/review/independent.md').sort()
+}
+async function inspectIndependentEvidence(repo, stateText = '', currentHead = '') {
+  const status = field(stateText, 'independent-review').toLowerCase()
+  if (status !== 'satisfied') return { valid: false, status, reason: status || 'missing' }
+  const reportRef = field(stateText, 'independent-review-evidence')
+  if (!reportRef || reportRef === 'none' || reportRef.startsWith('/') || reportRef.includes('..')) return { valid: false, status, reason: 'missing_report_path' }
+  const canonicalRepo = await realpath(repo).catch(() => resolve(repo))
+  const capPath = resolve(canonicalRepo, '.cap')
+  const reportPath = resolve(capPath, reportRef)
+  if (!reportPath.startsWith(`${canonicalRepo}/`)) return { valid: false, status, reason: 'report_outside_repo' }
+  const capInfo = await lstat(capPath).catch(() => null)
+  const reviewInfo = await lstat(resolve(capPath, 'review')).catch(() => null)
+  const reportInfo = await lstat(reportPath).catch(() => null)
+  if (!capInfo?.isDirectory() || capInfo.isSymbolicLink() || !reviewInfo?.isDirectory() || reviewInfo.isSymbolicLink() || !reportInfo?.isFile() || reportInfo.isSymbolicLink()) return { valid: false, status, reason: 'report_symlink_or_missing' }
+  const canonicalReport = await realpath(reportPath).catch(() => '')
+  if (!canonicalReport.startsWith(`${capPath}/`)) return { valid: false, status, reason: 'report_outside_repo' }
+  const report = await readFile(reportPath, 'utf8').catch(() => '')
+  const sourceCommit = field(report, 'source-commit')
+  const baseCommit = field(report, 'base-commit')
+  const fingerprint = field(report, 'context-fingerprint')
+  const expectedBase = field(stateText, 'base-commit')
+  const expectedFingerprint = field(stateText, 'independent-review-context-fingerprint')
+  const currentFingerprint = await inspectContextFingerprint(repo).catch(() => null)
+  const currentFingerprintText = currentFingerprint ? `${currentFingerprint.index}:${currentFingerprint.worktree}:${currentFingerprint.untracked}` : ''
+  const valid = Boolean(
+    /^review-kind:\s*fresh-context-independent$/mi.test(report) &&
+    /^verdict:\s*CLEAN$/mi.test(report) &&
+    /^independence:\s*fresh-context$/mi.test(report) &&
+    /^source-mutated:\s*false$/mi.test(report) &&
+    sourceCommit === currentHead &&
+    Boolean(expectedBase && baseCommit && baseCommit === expectedBase) &&
+    fingerprint && currentFingerprintText && fingerprint === currentFingerprintText &&
+    (!expectedFingerprint || expectedFingerprint === currentFingerprintText)
+  )
+  return { valid, status, sourceCommit, baseCommit, fingerprint, reason: valid ? '' : 'report_binding_mismatch', path: reportPath }
 }
 function nextFromState(markdown = '') {
   const section = String(markdown).split(/^##\s+Next action\s*$/mi)[1] || ''
@@ -172,7 +238,7 @@ export function inspectTaskBoundary({ stateText = '', branch = '', worktree = ''
   }
 }
 
-export function resolveNextAction({ stateText = '', artifacts = {}, dirty = false, allowStateGate = true } = {}) {
+export function resolveNextAction({ stateText = '', artifacts = {}, dirty = false, allowStateGate = true, changedFiles = [], independentEvidence = null, currentHead = '' } = {}) {
   if (!stateText) {
     return artifacts.profile
       ? { stage: 'define', action: '需求确认', reason: '尚无任务 STATE，已有项目画像' }
@@ -203,7 +269,11 @@ export function resolveNextAction({ stateText = '', artifacts = {}, dirty = fals
       return checked(stateText, 'test：logic') || checked(stateText, 'test: logic') ? { stage: 'review', action: '代码评审', reason: '基础验证已通过' } : { stage, action: '测试验证', reason: '仍需形成通过的验证证据' }
     case 'review':
       if (!allowStateGate) return { stage: 'review', action: '等待 Server Review Action', reason: '团队模式只接受绑定精确 Commit 的 Server Action 证据', gated: true }
-      return /cap-gate:\s*pass/i.test(stateText) || checked(stateText, 'review') ? { stage: 'release', action: '交付收口', reason: '评审门已通过' } : { stage, action: '代码评审', reason: '评审门尚未通过' }
+      {
+        const gate = localReviewGate(stateText, { changedFiles, independentEvidence, currentHead })
+        if (gate.independentBlocked) return { stage, action: '完成独立复核', reason: `独立复核状态为 ${gate.independent || 'required'}，不能进入交付收口`, gated: true }
+        return gate.passed ? { stage: 'release', action: '交付收口', reason: '评审门已通过' } : { stage, action: '代码评审', reason: '仍缺与当前 HEAD 一致的 cap-gate PASS，单个 review 勾选不能代表评审通过' }
+      }
     case 'release': return { stage: 'done', action: '完成退场', reason: '进入交付收口' }
     case 'done': return { stage: 'done', action: '归档并沉淀经验', reason: '任务已完成' }
     default: return { stage: 'understand', action: '项目了解', reason: '无法识别当前阶段' }
@@ -290,14 +360,20 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const pendingDeliveries = gitRoot && taskId && !offline && !localRun && !restartRequired && !boundary.blocked ? await flushPendingDeliveries(repo, { activeTaskRef: taskId, canonicalTask: stateTask, fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
   const emptyOutbox = { totalPending: 0, pending: 0, historicalPending: 0, retainedHistoricalPending: 0, unscopedPending: 0, retainedUnscopedPending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
   const outbox = gitRoot && !localRun ? await inspectOutbox(repo, { activeTaskRef: taskId }).catch(() => emptyOutbox) : emptyOutbox
-  const localNext = resolveNextAction({ stateText, artifacts, dirty, allowStateGate: localRun || harnessMode === 'local-only' })
+  const changedFiles = changedFilesForReview(repo, stateText, head)
+  const independentEvidence = await inspectIndependentEvidence(repo, stateText, head)
+  const reviewGate = localReviewGate(stateText, { changedFiles, independentEvidence, currentHead: head })
+  const localNext = resolveNextAction({ stateText, artifacts, dirty, changedFiles, independentEvidence, currentHead: head, allowStateGate: localRun || harnessMode === 'local-only' })
   const guardedLocalNext = !remoteTask && teamConfigured && !localRun && localNext.stage === 'test'
     ? { stage: 'implement', action: '通过 MCP 确认最终候选与 Test Action', reason: '尚未取得 Server canonical projection，不能称为正在测试验证', gated: true }
     : localNext
   const localStage = canonicalStage(field(stateText, 'stage'))
   const remoteWorkflowStage = remoteTask ? canonicalWorkflowStage(remoteTask, localStage) : ''
+  const remoteDoneBlocked = remoteTask?.status === 'done' && reviewGate.required && reviewGate.independentBlocked
   const next = switchingTask
     ? nextFromPlatformTask(remoteTask, guardedLocalNext)
+    : remoteDoneBlocked
+    ? { stage: 'review', action: '完成独立复核', reason: `独立复核状态为 ${reviewGate.independent || 'required'}，Server done 不能绕过本地独立证据`, gated: true }
     : remoteTask?.status === 'done'
     ? { stage: 'done', action: '归档并沉淀经验', reason: '平台 Task 的同 Commit 交付门禁已全部通过' }
     : nextFromPlatformTask(remoteTask, guardedLocalNext)

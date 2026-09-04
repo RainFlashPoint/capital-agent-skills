@@ -10,6 +10,7 @@ This adapter is data, not a skill. It defines how the cap playbooks map their po
 |---|---|---|
 | User choice | Use a native structured-input tool only when it is exposed and allowed by the current mode | `text_mode`: numbered plain-text options; stop at the gate and wait |
 | Multi-agent fan-out | Use Codex multi-agent tools only when explicitly available | Sequential inline execution of the same playbook |
+| Fresh independent review | For required L3/L4 review, spawn exactly one agent with no inherited history (`fork_turns=none` equivalent) and pass only the independent-review packet | `unavailable`/`failed`; inline review may continue for findings but cannot satisfy the independent gate |
 | Parallel shell/file reads | `multi_tool_use.parallel` is safe for read-only commands | Sequential `rg`/`sed`/`git` reads |
 | File edits | `apply_patch` for manual text edits; target scripts for mechanical writes | No shell heredocs or ad hoc file writes |
 | Long document review | `web-review` file mode or Live mode with blocking `/wait` | Plain text review gate |
@@ -40,6 +41,12 @@ Codex may expose different orchestration tools across environments. Treat them a
 2. If only `multi_tool_use.parallel` is available, use it for read-only evidence gathering, not as a replacement for independent writing agents.
 3. If no multi-agent tool is available, do not simply accumulate. Simulate isolation with **serial-and-evict**: process one unit at a time, loading only that unit's inputs (one role card, that unit's gathered evidence), write its output file (`review/<role>.md`, `verify/<name>-report.md`), then treat those inputs as dropped before loading the next unit. Never hold more than one role card plus one unit's evidence in context at once. The per-unit output file is the durable artifact — do not re-read prior units to continue. Peak context must stay ≈ one unit, not the sum of all units.
 4. The orchestrator remains the only writer for shared state files such as `.cap/STATE.md`.
+
+### Fresh-context independent review
+
+This is separate from multi-role fan-out and from the Step 7 adversarial pass. When the complexity router marks the review `required`, Codex must launch exactly one new sub-agent with no conversation history (the collaboration equivalent is `spawn_agent` with `fork_turns=none`). Pass only the canonical repo, base/source commit, changed-files and context fingerprint, concise intent/complexity, relevant spec/plan paths, and the read-only output contract from `references/independent-review.md`. Do not pass the main agent's findings, conclusions, full transcript, credentials, or platform write handles.
+
+The reviewer may inspect source and run demonstrably non-mutating checks, but must not edit source, tests, configuration, STATE, Outbox or review artifacts; it returns a report to the orchestrator. The orchestrator writes `.cap/review/independent.md` and verifies the commit, fingerprint and unchanged worktree before counting the evidence. `multi_tool_use.parallel`, serial-and-evict, or an inline change of perspective are not fresh-context evidence. If launch fails, times out, or the runtime has no true isolation, record `failed` or `unavailable`; do not start a second reviewer automatically and do not mark the L3/L4 gate PASS.
 
 Before any write fan-out, run a deterministic write-set preflight. For build waves, compute each phase's planned `files` set from `plan.md`; if two same-wave phases intersect, do not fan out. Either downgrade to sequential execution or return to `cap-plan` to repair the wave assignment.
 
@@ -81,6 +88,9 @@ stage: <stage>
 status: in-progress | gated | blocked
 checks: [...]
 active-roles: [...]
+complexity: L1 | L2 | L3 | L4
+independent-review: required | satisfied | not-required | unavailable | failed | stale | invalid
+independent-review-evidence: <review/independent.md | none>
 changed-files:
 - <path>
 branch-intent:

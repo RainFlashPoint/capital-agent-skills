@@ -30,6 +30,15 @@
 stage: understand | define | plan | implement | test | review | release | done
 status: in-progress | gated | blocked
 work-type: feature | remediation | hotfix     # 流程画像(中央旋钮):各阶段读它自适应走多重。见下方说明
+complexity: L1 | L2 | L3 | L4                 # 入口定级；review 以它与当前 diff 风险重算的较高者为准
+complexity-reason: <命中的信号；无则写 low-risk>
+independent-review: required | satisfied | not-required | unavailable | failed | stale | invalid
+independent-review-evidence: <review/independent.md 路径；not-required 时写 none>
+independent-reviewer-id: <唯一 Agent/运行标识；不可用时写 none>
+independent-review-source-commit: <复核对应 source commit 或 working-tree；不可用时写 none>
+independent-review-base-commit: <复核对应 base commit；不可用时写 none>
+independent-review-context-fingerprint: <index/worktree/untracked 指纹；不可用时写 none>
+independent-review-launch-attempt: 0 | 1   # 同一快照最多启动一次；失败/过期先更新快照再重试
 branch: <写 STATE 时记 `git rev-parse --abbrev-ref HEAD`>     # 并发边界戳:cap-guard 据此防串台
 branch-purpose: <feature/fix/hotfix/maintenance/fork + 本任务一句话意图>  # 分支意图 Gate 的结论
 base-branch: <本任务基于的默认主干或维护分支，例如 origin/main>
@@ -116,6 +125,7 @@ follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
 - [ ] test：journey 通过（用户旅程，若有可见面变更）
 - [ ] test：model 通过（达 rubric/阈值，若有 AI 变更）
 - [ ] review：多角色评审无 CRITICAL/未决项
+- [ ] review：独立 fresh-context 复核（L3/L4 或高风险必需；L1/L2 可记 not-required）
 - [ ] git：Commit scope 已确认，未混入本机配置或其他任务改动
 - [ ] release：晋级完成 / 收口通过
 

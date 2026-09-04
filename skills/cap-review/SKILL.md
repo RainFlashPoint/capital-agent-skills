@@ -5,7 +5,8 @@ description: >
   (1) scope-drift / plan-completion 审计——只做了该做的吗?该做的都做了吗?
   (2) 按改动代码动态加载的多角色专家透镜并行(或串行降级)评审,统一 severity + confidence;
   (3) 安全 10 域门控(verify-mitigation-exists + disposition + open=0 硬门);
-  (4) 只读处置 + 对抗 pass,把每条 finding 写进 `.cap/review/<role>.md`;可修问题生成独立 Patch Action，把门控结果写回 STATE。
+  (4) L3/L4 与高风险改动自动启动 1 个 fresh-context 只读复核 Agent;
+  (5) 只读处置 + 对抗 pass,把每条 finding 写进 `.cap/review/<role>.md`;可修问题生成独立 Patch Action，把门控结果写回 STATE。
   触发场景:用户说 "review 这次改动"、"评审一下代码"、"pre-landing review"、"check my diff"、
   "走 cap review"、"准备合并 / 落地前检查"、"cap-review"、"代码评审 + 收尾";
   cap-flow 判定 stage=review 时也路由进来,或在 verify 通过后主动建议。
@@ -20,6 +21,7 @@ description: >
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
 同时读取 `../cap-flow/references/harness-action-protocol.md`。Review Run 默认只读源码：只产 Findings 和 Review Evidence；任何修复都必须进入独立 Patch Action，新 Commit 再走新的 Test/Review，禁止“边审边改再给自己 PASS”。
+高风险改动还必须读取并执行 `../cap-flow/references/independent-review.md` 的 fresh-context 独立复核门。
 
 你正在执行研发主线的**评审阶段**。目标:在改动落地前,从**改动代码自动选出的多个专业角色视角**审一遍,
 做完整性 / 范围审计与安全门控,把每条问题分类处置,产出可审计的 findings,并把门控结论写回 `STATE.md`。
@@ -75,7 +77,19 @@ description: >
    - 若 verify 未跑且改动触及用户可见面 / AI 策略 → 提示"建议先跑 cap-test",但不阻断 review(review 可独立跑)。
 4. **能定位状态**:`<target-repo>/.cap/STATE.md` 可读(没有则按 stage=review 新建一份骨架,见 §5)。
 
+5. **复杂度可追溯**：读取 `STATE.complexity` 与当前 diff 风险重算结果，取较高等级；若为 L3/L4 或命中独立复核信号，先执行 §1A，不得沿用旧的低风险判断。
+
 > 独立调用也允许:用户直接 `/cap review` 审当前 diff。此时跳过 cap-flow,自己做 §2 的角色解析。
+
+### 1A. 独立复核门（风险触发，必须在主角色评审前执行）
+
+按 [`cap-flow/references/independent-review.md`](../cap-flow/references/independent-review.md) 判断是否命中。命中时，主流程必须先启动 1 个全新上下文的只读复核 Agent，再加载主评审角色卡；不得把主 Agent 的 findings 或结论传给它。
+
+- Codex 有真正的子 Agent 工具时，用无历史上下文的 fan-out（`fork_turns=none` 等价能力），只返回报告，不让复核 Agent 改源码。
+- 没有独立 Agent 能力时，不能把同一会话换个语气当作独立复核；高风险任务标记 `UNAVAILABLE / needs-human`，等待用户明确接受串行降级或换有隔离能力的会话。
+- 主流程把报告写入 `.cap/review/independent.md`，校验精确 source commit、base commit、context fingerprint、`source-mutated: false` 和工作树未变化后，才可进入 Step 1 的角色评审。
+
+`independent_review` 必须在 HANDOFF / SUMMARY 中镜像为 `required | satisfied | not-required | unavailable | failed | stale | invalid`，并带 reviewer id（若有）、source/base commit、context fingerprint、launch attempt 和报告路径。相同快照最多启动一次；只有快照变化或明确失败重置后才能重试。L3/L4 只有 `satisfied` 才能通过 G7；其它状态可以继续收集普通 findings，但不能写 Review/Release PASS。
 
 ---
 
@@ -277,14 +291,13 @@ findings。并行或串行见 §0.2。每个角色把自己的 findings 写进 `
 - 跨评审去重:本分支上一轮被用户 `skipped` 且相关文件未再变的 finding → 抑制(只抑制 skipped,绝不抑制
   fixed)。
 
-### Step 7 — 对抗 pass（always-on；纯 Codex 下跳过外脑）
+### Step 7 — 对抗 pass（always-on；不重复启动 Agent）
 
 换一个"攻击者 + 混沌工程师"视角再扫一遍,找前面遗漏的:边界条件 / 竞态 / 资源泄漏 / 静默数据损坏 / 吞错 /
 信任边界。
-- **有并行能力**:fan-out 一个 fresh-context 分支跑对抗扫(无前面 checklist 偏见),结果并入 findings。
-- **无并行能力**:自己换视角再过一遍 diff。
-- **可选外脑 codex**:仅当**本阶段不是在 Codex 下运行**时,可调 `codex` 做跨模型对抗(在 Codex 下跑时调
-  codex 是自指 / 冗余 → 跳过)。
+- 独立复核门为 `required` 时，复用 §1A **已经启动的唯一 fresh-context Agent** 的对抗 findings；不得为了本步骤再启动第二个 Agent。
+- 独立复核为 `not-required` 时，由主流程自己换视角再过一遍 diff；该 inline 结果不能标记为独立复核证据。
+- 不在 Codex 内递归调用 `codex`，也不把并行 shell/read 操作冒充独立 Agent。
 对抗 pass 的 FIXABLE finding 走同一 Patch Action 流；INVESTIGATE 类作信息性列出。
 
 > **护城河沉淀钩子**:对抗 pass 与多角色评审里**复发**的 finding(同类问题跨特性反复出现)——通过
@@ -303,6 +316,7 @@ findings。并行或串行见 §0.2。每个角色把自己的 findings 写进 `
 | `.cap/plan.md` | 读 | Step 2 plan-completion 审计的可执行项 |
 | `.cap/verify/*-report.md` | 读 | 引用 verify 证据(覆盖率 / journey / model 结论)佐证 findings |
 | `.cap/review/<role>.md` | **写**(每角色各一,parallel-safe) | 每个角色的 findings(并行不冲突) |
+| `.cap/review/independent.md` | **由主流程写** | fresh-context 独立复核报告；复核 Agent 不直接写入 |
 | `cap-flow/references/role-routing.md` | 读 | 路由规则表 |
 | `cap-flow/references/roles/<role>.md` | 读 | 角色透镜:关注点 / 检查清单 / 常见翻车 |
 
@@ -346,9 +360,10 @@ status: clean | issues_found
 - [ ] **G5 HIGH 已处置**:每条 `HIGH` 要么已修,要么用户 / 规则显式接受并记录(headless 态未获接受 → 标
       needs-human,门控为 DONE_WITH_CONCERNS 而非 PASS)。
 - [ ] **G6 验证声明完整**:findings 无"likely / probably"未验证断言;每条断言有证据或标 unverified。
+- [ ] **G7 独立复核证据**:仅 L3/L4 或命中高风险信号必需；报告为 fresh-context、Commit/指纹一致、源码未被复核 Agent 修改，且状态为 `satisfied`。
 
 **门控结论三态**:
-- **PASS / DONE** — G1–G6 全过,有证据。
+- **PASS / DONE** — G1–G7 中本轮适用项全过,有证据。
 - **DONE_WITH_CONCERNS** — 主门过但有 MEDIUM / LOW 未修或 headless 待人决项,列清单。
 - **BLOCKED** — G3(安全 open>0)或 G4(CRITICAL 未清)未过;写明 blocker + 已尝试 + 建议。
 
@@ -378,6 +393,7 @@ cap-gate: <见下>         # 仅显式 local / local-only 仓可写 `PASS review
 - [<x/ >] review: security open=0     (G3,跑了才有)
 - [<x/ >] review: critical=0          (G4)
 - [<x/ >] review: high handled        (G5)
+- [<x/ >] review: independent evidence (G7；L3/L4 / 高风险必需，其余 not-required)
 
 ## Active roles (from last diff scan)
 - <Step 1 解析出的 active roles>
@@ -389,6 +405,7 @@ cap-gate: <见下>         # 仅显式 local / local-only 仓可写 `PASS review
 - CRITICAL: <n> (<已处置 / 待决>)
 - HIGH: <n>   MEDIUM: <n>   LOW: <n>
 - security threats_open: <n>   verdict: <PASS/BLOCK/N-A>
+- independent review: <satisfied/not-required/unavailable/failed/stale/invalid> @ review/independent.md
 - 角色文件: review/server-dev.md, review/qa.md, ...
 
 ## Decisions log
@@ -421,6 +438,7 @@ review 门控 PASS 后做轻量验证把整个特性收口(不重复 verify 的�
 verdict: PASS | DONE_WITH_CONCERNS | BLOCKED
 scope: CLEAN | DRIFT | REQUIREMENTS_MISSING
 roles_reviewed: [server-dev, qa, ...]
+independent_review: required|satisfied|not-required|unavailable|failed|stale|invalid
 findings: critical=<n> high=<n> medium=<n> low=<n>
 security: threats_open=<n> verdict=PASS|BLOCK|N-A
 plan_completion: DONE=<n> PARTIAL=<n> NOT-DONE=<n> UNVERIFIABLE=<n>
