@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.7
+
+- README 新增自动升级命令：从 `~/.capital-agent/install-manifest.json` 读取 `sourceRoot`，无需手工填写源码目录。
+- 分别提供团队模式与本地模式的 macOS/Linux、Windows PowerShell 升级和 Doctor 命令，避免模式误用。
+
 ## 0.9.6
 
 - 收紧 fresh-context 独立复核报告格式：主流程统一写入并校验固定字段、Commit、三段工作区指纹和源码未变证据。
