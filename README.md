@@ -4,7 +4,12 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.9.5，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.9.6，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.9.6 更新
+
+- 收紧独立复核报告协议：由主流程写入固定机器头部并重新绑定 Commit、指纹和源码未变证据。
+- 非标准字段、缺失指纹或只有自然语言“已完成”的报告会保持阻断，不能冒充 Review PASS。
 
 ## v0.9.5 更新
 

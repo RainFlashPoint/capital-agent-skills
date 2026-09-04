@@ -28,7 +28,11 @@ L1/L2 且未命中上述信号的简单改动不启动，避免把每个小修�
 
 ## 输出与门控
 
-复核 Agent 只返回报告，不直接修改源码。主 Agent 将返回内容写入 `.cap/review/independent.md`，并填入：
+复核 Agent 只返回**评审正文**，不直接修改源码或 `.cap`。主 Agent 必须在复核结束后重新计算当前 HEAD、base commit 和
+`cap-context-fingerprint.mjs` 的三段指纹，再由自己写入 `.cap/review/independent.md` 的机器头部；不能把 Agent 的自然语言
+总结直接当作状态字段，也不能使用 `completed`、`independent-readonly`、`independence: true` 等自定义别名。
+
+报告头部必须逐行使用以下固定字段和值（字段名和值区分大小写）：
 
 ```text
 review-kind: fresh-context-independent
@@ -39,6 +43,13 @@ verdict: CLEAN | ISSUES_FOUND | INCONCLUSIVE | UNAVAILABLE
 independence: fresh-context | unavailable
 source-mutated: true | false
 ```
+
+只有 `verdict: CLEAN` 且所有绑定字段有效时，STATE 才能写 `independent-review: satisfied`。如果 Agent 返回的正文缺少指纹、
+使用了非标准字段、只给出“已完成”之类的总结，主 Agent 仍可补写当前快照的指纹；若无法确定复核确实来自 fresh context，
+必须写 `invalid` 或 `unavailable`，不能猜测为 `satisfied`。
+
+STATE 与报告的唯一关联字段是 `independent-review-evidence: review/independent.md`；不要另造
+`independent-review-report` 等别名。`independent-review-launch-attempt` 只能是 `0` 或 `1`，同一快照不得重复启动。
 
 `context-fingerprint` 的机器格式为 `<index>:<worktree>:<untracked>`，必须与 STATE 和复核结束时重新计算的指纹完全一致；本地 Release 还要求 `cap-gate: PASS reviewed-head=<当前 HEAD>`。
 

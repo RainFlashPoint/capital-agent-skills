@@ -88,6 +88,7 @@ description: >
 - Codex 有真正的子 Agent 工具时，用无历史上下文的 fan-out（`fork_turns=none` 等价能力），只返回报告，不让复核 Agent 改源码。
 - 没有独立 Agent 能力时，不能把同一会话换个语气当作独立复核；高风险任务标记 `UNAVAILABLE / needs-human`，等待用户明确接受串行降级或换有隔离能力的会话。
 - 主流程把报告写入 `.cap/review/independent.md`，校验精确 source commit、base commit、context fingerprint、`source-mutated: false` 和工作树未变化后，才可进入 Step 1 的角色评审。
+- 复核 Agent 返回的是正文，不是可直接信任的 STATE；主流程必须按独立复核契约重新计算并写入固定机器头部。若正文没有指纹或使用非标准状态词，不能写 `satisfied`，也不能把 `completed`、`independence: true` 当作通过。
 
 `independent_review` 必须在 HANDOFF / SUMMARY 中镜像为 `required | satisfied | not-required | unavailable | failed | stale | invalid`，并带 reviewer id（若有）、source/base commit、context fingerprint、launch attempt 和报告路径。相同快照最多启动一次；只有快照变化或明确失败重置后才能重试。L3/L4 只有 `satisfied` 才能通过 G7；其它状态可以继续收集普通 findings，但不能写 Review/Release PASS。
 

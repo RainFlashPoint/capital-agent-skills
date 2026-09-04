@@ -93,6 +93,16 @@ test('satisfied independent review requires a bound fresh-context report', async
   assert.equal(passed.workflow.stage, 'release')
 })
 
+test('non-canonical independent report cannot satisfy the gate', async () => {
+  const repo = await fixture(); const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+  await mkdir(join(repo, '.cap', 'review'), { recursive: true })
+  await writeFile(join(repo, '.cap', 'STATE.md'), `stage: review\nstatus: in-progress\ncomplexity: L3\nbase-commit: ${head}\nindependent-review: satisfied\nindependent-review-report: review/independent.md\ncap-gate: PASS reviewed-head=${head}\n`)
+  await writeFile(join(repo, '.cap', 'review', 'independent.md'), `# Independent Review\n- reviewer: /root/independent_review\n- source/base commit: ${head}\n- context fingerprint 1: unavailable\n- context fingerprint 2: unavailable\n- context fingerprint 3: unavailable\n- independence: true\n- verdict: findings addressed\n`)
+  const result = await inspectCapStatus({ repoRoot: repo, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
+  assert.equal(result.workflow.stage, 'review')
+  assert.equal(result.workflow.gated, true)
+})
+
 test('team mode cannot advance from editable STATE gate text while platform is unverified', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-self-gate-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
