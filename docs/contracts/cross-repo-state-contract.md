@@ -12,5 +12,6 @@ This contract separates three facts that must not be collapsed into one status:
 
 Every delivery identity is the tuple `repo_url + branch + task_id + commit_sha`; idempotency keys must include the same identity. Ordinary Commit Delivery records evidence only. `delivery_candidate=true` is reserved for the final remotely visible Commit and must create or reuse one Test Action bound to that Commit. A successful Test Action is required before Review; stale Actions are superseded when a newer candidate Commit is accepted.
 
-Local explicit mode and one-task fallback may continue without Server writes. They must label evidence as local and may not claim Server Gate PASS. Failed Server writes remain in the task-scoped Outbox until acknowledged; Outbox presence is not proof of delivery.
+The Server rejects a Delivery when its declared branch differs from the Task branch or when any changed path is absolute or escapes the repository (`..`). This is a metadata boundary check; remote Git ancestry and visibility remain Provider preflight responsibilities.
 
+Local explicit mode and one-task fallback may continue without Server writes. They must label evidence as local and may not claim Server Gate PASS. Failed Server writes remain in the task-scoped Outbox until acknowledged; Outbox presence is not proof of delivery.
