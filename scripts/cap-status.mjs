@@ -438,6 +438,26 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       parentTaskId: remoteTask?.parentTaskId || parentTaskId,
       retirementStatus: remoteTask?.status === 'done' && !historyArtifactRoot ? 'pending' : historyArtifactRoot ? 'snapshotted' : retirementStatus,
       historyArtifactRoot,
+      // Keep the local execution cursor distinct from the Server delivery projection.
+      // `workflow` remains the compatibility summary; consumers that need authority
+      // must use these explicitly sourced projections.
+      localExecution: {
+        source: 'local_state',
+        stage: localStage || 'understand',
+        status: field(stateText, 'status') || '',
+        nextAction: localNext.action || '',
+        gated: localNext.gated === true,
+      },
+      serverDelivery: remoteTask ? {
+        source: 'server_task',
+        taskId: remoteTask.id || '',
+        stage: remoteWorkflowStage || '',
+        status: remoteTask.status || '',
+        currentCommit: remoteTask.currentCommit || remoteTask.gates?.currentCommit || '',
+        currentGate: remoteTask.currentGate || remoteTask.gates?.current || '',
+        action: remoteTask.currentAction || remoteTask.nextAction || null,
+        gatesReady: remoteTask.gates?.ready === true,
+      } : { source: platform === false ? 'server_unavailable' : 'server_unobserved', taskId: '', stage: '', status: '', currentCommit: '', currentGate: '', action: null, gatesReady: false },
     },
     reconciliation,
     boundary,
