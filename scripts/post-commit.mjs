@@ -12,5 +12,13 @@ const item = await buildCommitDelivery(repoRoot)
 if (!item) process.exit(0)
 if (await isLocalFallbackActive(repoRoot, { branch: item.payload?.branch, taskId: item.taskId })) process.exit(0)
 const ok = await sendCommitDelivery({ serverUrl: config.CAPITAL_AGENT_SERVER_URL, userKey: config.CAPITAL_AGENT_USER_KEY, ...item })
-if (!ok) await queueCommitDelivery(repoRoot, item)
+if (!ok) {
+  try {
+    await queueCommitDelivery(repoRoot, item)
+  } catch (error) {
+    // post-commit must never turn a successful Git commit into a failed hook.
+    // The next cap-status run will surface the reconciliation gap from HEAD.
+    process.stderr.write(`cap: Delivery Outbox 写入失败，保留 Git 提交并等待下次对账（${error?.code || error?.message || 'unknown_error'}）\n`)
+  }
+}
 process.exit(0)
