@@ -2,7 +2,7 @@ import { open, lstat } from 'node:fs/promises'
 import { constants } from 'node:fs'
 
 // JSON.parse silently overwrites duplicate keys; reject them before parsing trusted boundary inputs.
-export function parseJson(text) {
+function parseJsonChecked(text) {
   if(typeof text!=='string'||Buffer.byteLength(text)>4*1024*1024) throw new Error('json_size_limit')
   let pos=0,nodes=0
   const space=()=>{while(/\s/.test(text[pos]??'')&&pos<text.length)pos++}
@@ -33,6 +33,12 @@ export function parseJson(text) {
   }
   visit();space();if(pos!==text.length)throw new Error('json_trailing_content')
   return JSON.parse(text)
+}
+export function parseJson(text) {
+  try { return parseJsonChecked(text) } catch(error) {
+    if(error instanceof SyntaxError)throw new Error('json_invalid_syntax')
+    throw error
+  }
 }
 export async function readJson(path) {
   if((await lstat(path)).isSymbolicLink())throw new Error('json_symlink_rejected')

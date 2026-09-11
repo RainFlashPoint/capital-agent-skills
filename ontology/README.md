@@ -26,13 +26,13 @@
 
 同 key 同 kind 同 value 合并来源；不同 value 或 kind 保留冲突。没有优先级数字、更新时间优先或“更具体就胜出”。替代必须满足同一 scope/key/kind、新 revision 更高、显式 supersedes、当前 authority 有匹配且有效的委托。不存在目标、循环替代、越界替代都阻断该键。constraint 和公共定义不能走这条覆盖路径。
 
-核心边界由 `runtime/ontology/engine.mjs` 强制实施，目录中的 policies 是这些实现的索引，不是允许模型任意修改的授权策略。知识冲突或适用条件未知时生成可解释 blocker 并清空 allowedActions。
+核心边界由 `runtime/ontology/engine.mjs` 强制实施，目录中的 policies 是这些实现的索引，不是允许模型任意修改的授权策略。知识冲突或适用条件未知时生成可解释 blocker 并清空 allowedActions。单条 constraint 也不能仅因没有冲突而放行：每个已准入的约束来源必须有当前完整身份下的独立 constraint receipt，sourceHash 精确匹配该约束的内容 hash；没有符合性证据时返回 unmetConstraints。内核不执行自然语言约束，独立适配器负责检查业务条件并出具证据。
 
 ## 阶段与证据
 
 `states.json` 映射现有阶段及 L1–L4 的允许路径，没有新增 Skill 或阶段。nextStage 是候选下一步，只有 canAdvance=true 时 allowedActions 才有动作。done 游标不等于 completed。
 
-receipt 必须匹配 tenant/project/provider/product/contractVersion/environment/task/repo/branch/commit，时间有效、PASS、authority 与 local/server 模式一致。verification/review 的 issuer 必须与执行 Agent 不同。多个有效 receipt 只要仍存在相关失败就保留阻断，应由可信上游解决冲突，而非让模型任选 PASS。本地 receipt 永不升级为 Server Gate。
+receipt 必须匹配 tenant/project/provider/product/contractVersion/environment/task/repo/branch/commit，时间有效、PASS、authority 与 local/server 模式一致。verification/review/constraint 的 issuer 必须与执行 Agent 不同。多个有效 receipt 只要仍存在相关失败就保留阻断，应由可信上游解决冲突，而非让模型任选 PASS。本地 receipt 永不升级为 Server Gate。
 
 grant 限定 subject/action/scope/时间，deny 优先。发布使用 deploy 权限且需要 environment/delivery 证据，开发推进权限不能用于发布。unknown、历史失败声明和缺证据均失败关闭。这里是保守裁决：若 Markdown 含多个历史结果，需人工核实并由可信适配器建立当前实例，不能把报告内的某次 PASS 抽出来放行。
 

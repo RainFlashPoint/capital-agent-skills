@@ -361,7 +361,8 @@
               "review",
               "environment",
               "delivery",
-              "experience"
+              "experience",
+              "constraint"
             ]
           },
           "status": {

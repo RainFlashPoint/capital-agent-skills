@@ -48,3 +48,7 @@ test('O02: foreign task instances do not leak artifact metadata through a blocke
  for(const mutate of [i=>i.scope.tenant='foreign-tenant',i=>i.scope.project='foreign-project',i=>i.repo='foreign-repo']){
  const f=fixture();mutate(f.instance);assert.throws(()=>projectContext(f.instance,[],f.query,f.authority),/instance_scope_mismatch/)}
 })
+
+test('O06: malformed JSON errors never echo sensitive input',()=>{
+ try{parseJson('{"key":"synthetic-private-marker\n"}');assert.fail('must throw')}catch(error){assert.ok(!error.message.includes('synthetic-private-marker'));assert.match(error.message,/^json_/)}
+})

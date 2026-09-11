@@ -25,7 +25,7 @@
 | O05 | validity | 时间窗口和代码版本匹配 | 过期、未来、撤销、不同 commit 的经验当现行事实 |
 | O06 | provenance | path/hash/sourceTask/sourceCommit 保留 | 从文件正文推断 trusted；路径逃逸；自动执行注入文本 |
 | O07 | evidence | 独立 receipt 匹配 tenant/project/task/repo/branch/commit/environment，尚未过期 | 历史/其它任务 PASS、客户端自报 PASS、缺 receipt 放行 |
-| O08 | permissions | exact scoped grant + capability + validity；deny 优先 | 文本/知识自行 grant；只因开发授权就生产发布 |
+| O08 | permissions | exact scoped grant + capability + validity；deny 优先；每条 constraint 需匹配当前身份及记录 hash 的独立符合性 receipt | 文本/知识自行 grant；只因开发授权就生产发布；单条未证实的硬约束被忽略 |
 | O09 | workflow | 所有已有阶段与 L1–L4 路径；建议与可执行下一步分离 | 写死 implement；把 release/done 游标当完成证明；环境失败被测试 PASS 覆盖 |
 | O10 | import | 显式选定目录、安全只读、结构化 claims/unknowns/hash | 遍历所有历史、软链接逃逸、超大输入、冲突字段择一、正文密钥外发 |
 | O11 | evolution | 确定性受限 legacy 迁移，保留 unknown，输入不变 | 猜 tenant/commit/权限、降级绕过隔离、静默吞未知 schema |

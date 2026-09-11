@@ -124,3 +124,14 @@ test('O09: production deploy needs its own scoped grant and environment evidence
 test('O07: author cannot issue their own verification or review receipt',()=>{
  const a=evidenceAuthority('commit','verification');a.receipts[1].issuer=query().agent;assert.equal(evaluateTask(instance(),query(),a).canAdvance,false)
 })
+
+test('O08/O13: even a single admitted constraint needs exact independent satisfaction evidence',async()=>{
+ const {projectContext}=await import('../runtime/ontology/engine.mjs')
+ const r=record();r.kind='constraint';r.value='Do not advance before account configuration is checked'
+ const a=evidenceAuthority('commit','verification');a.admissions=[{id:r.id,hash:digest(r)}]
+ let result=projectContext(instance(),[r],query(),a)
+ assert.equal(result.workflow.canAdvance,false);assert.ok(result.workflow.blockers.includes('constraint_evidence_missing'))
+ a.receipts.push({...receipt('constraint'),sourceHash:digest(r)})
+ result=projectContext(instance(),[r],query(),a);assert.equal(result.workflow.canAdvance,true)
+ a.receipts.at(-1).sourceHash='f'.repeat(64);assert.equal(projectContext(instance(),[r],query(),a).workflow.canAdvance,false)
+})

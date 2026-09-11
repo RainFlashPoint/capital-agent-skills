@@ -80,6 +80,9 @@ function granted(action,q,a) {
   const candidates=a.grants.filter(g=>g.subject===q.agent&&g.action===action&&matching(g.scope,q)==='matched'&&active(g.validFrom,g.validUntil,q.now))
   return candidates.some(g=>g.effect==='allow')&&!candidates.some(g=>g.effect==='deny')
 }
+function matchingReceipts(q,a) {
+  return a.receipts.filter(r=>[...dimensions,'task','repo','branch','commit'].every(k=>r[k]===q[k])&&active(r.issuedAt,r.expiresAt,q.now)&&(!['verification','review','constraint'].includes(r.kind)||r.issuer!==q.agent)&&r.authority===(q.mode==='server'?'server-gate':'local-runner'))
+}
 export function evaluateTask(task,q,a) {
   validate('instance',task); checkAuthority(q,a)
   if(task.scope.tenant!==q.tenant||task.scope.project!==q.project||task.repo!==q.repo)fail('instance_scope_mismatch')
@@ -96,7 +99,7 @@ export function evaluateTask(task,q,a) {
     if(q.complexity!=='L1') required.push('review')
     if(q.complexity==='L4') required.push('environment','delivery')
   }
-  const evidence=a.receipts.filter(r=>[...dimensions,...requiredIdentity].every(k=>r[k]===q[k])&&active(r.issuedAt,r.expiresAt,q.now)&&(!['verification','review'].includes(r.kind)||r.issuer!==q.agent)&&r.authority===(q.mode==='server'?'server-gate':'local-runner'))
+  const evidence=matchingReceipts(q,a)
   const missingEvidence=required.filter(kind=>!evidence.some(r=>r.kind===kind&&r.status==='PASS'))
   if(evidence.some(r=>required.includes(r.kind)&&r.status!=='PASS')) blockers.push('independent_evidence_failed')
   if(missingEvidence.length) blockers.push('missing_independent_evidence')
@@ -109,6 +112,14 @@ export function evaluateTask(task,q,a) {
 }
 export function projectContext(task,records,q,a) {
   const knowledge=resolveKnowledge(records,q,a),workflow=evaluateTask(task,q,a)
+  const receipts=matchingReceipts(q,a)
+  const constraints=knowledge.facts.filter(f=>f.kind==='constraint').flatMap(f=>f.sources)
+  const unmet=constraints.filter(source=>{
+    const evidence=receipts.filter(r=>r.kind==='constraint'&&r.sourceHash===source.hash)
+    return !evidence.some(r=>r.status==='PASS')||evidence.some(r=>r.status!=='PASS')
+  })
+  workflow.unmetConstraints=unmet.map(s=>s.id).sort()
+  if(unmet.length){workflow.blockers=[...new Set([...workflow.blockers,'constraint_evidence_missing'])].sort();workflow.canAdvance=false;workflow.completed=false;workflow.allowedActions=[]}
   if(knowledge.conflicts.length||knowledge.unknowns.length) {
     workflow.blockers=[...new Set([...workflow.blockers,knowledge.conflicts.length?'knowledge_conflict':'knowledge_applicability_unknown'])].sort();workflow.canAdvance=false;workflow.completed=false;workflow.allowedActions=[]
   }

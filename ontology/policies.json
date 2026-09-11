@@ -10,6 +10,7 @@
     {"id": "knowledge_cannot_grant_permission", "enforcedBy": "evaluateTask", "acceptance": "O08"},
     {"id": "deny_overrides_allow", "enforcedBy": "evaluateTask", "acceptance": "O08"},
     {"id": "missing_evidence_blocks", "enforcedBy": "evaluateTask", "acceptance": "O09"},
+    {"id": "constraint_requires_satisfaction", "enforcedBy": "projectContext", "acceptance": "O08"},
     {"id": "conflict_blocks_actions", "enforcedBy": "projectContext", "acceptance": "O13"}
   ]
 }
