@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capital Agent instance v1",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "product": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contractVersion": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tenant",
+        "project",
+        "provider",
+        "environment",
+        "product",
+        "contractVersion"
+      ],
+      "additionalProperties": false
+    },
+    "task": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "commit": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stage": {
+      "anyOf": [
+        {
+          "enum": [
+            "understand",
+            "define",
+            "plan",
+            "implement",
+            "test",
+            "review",
+            "release",
+            "done"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "anyOf": [
+        {
+          "enum": [
+            "in-progress",
+            "gated",
+            "blocked",
+            "done"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "state",
+              "profile",
+              "context",
+              "spec",
+              "plan",
+              "verification",
+              "review",
+              "environment",
+              "experience"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "kind",
+          "path",
+          "hash"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "verification",
+              "review",
+              "environment"
+            ]
+          },
+          "status": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "ENV_BLOCKED",
+              "INCONCLUSIVE"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "kind",
+          "status",
+          "source",
+          "hash"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+      },
+      "maxItems": 1000
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+      },
+      "maxItems": 1000
+    },
+    "origin": {
+      "enum": [
+        "cap-import",
+        "legacy-migration",
+        "native"
+      ]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "scope",
+    "task",
+    "repo",
+    "branch",
+    "commit",
+    "stage",
+    "status",
+    "artifacts",
+    "claims",
+    "unknowns",
+    "blockers",
+    "origin"
+  ],
+  "additionalProperties": false
+}

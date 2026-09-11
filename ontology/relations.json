@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "relations": [
+    {
+      "id": "requirement_has_feature",
+      "from": "requirement",
+      "to": "feature"
+    },
+    {
+      "id": "feature_targets_surface",
+      "from": "feature",
+      "to": "code_surface"
+    },
+    {
+      "id": "task_implements_feature",
+      "from": "task",
+      "to": "feature"
+    },
+    {
+      "id": "task_produces_artifact",
+      "from": "task",
+      "to": "artifact"
+    },
+    {
+      "id": "task_produces_commit",
+      "from": "task",
+      "to": "commit"
+    },
+    {
+      "id": "commit_verified_by",
+      "from": "commit",
+      "to": "verification"
+    },
+    {
+      "id": "commit_reviewed_by",
+      "from": "commit",
+      "to": "review"
+    },
+    {
+      "id": "task_uses_knowledge",
+      "from": "task",
+      "to": "knowledge"
+    },
+    {
+      "id": "knowledge_derived_from_task",
+      "from": "knowledge",
+      "to": "task"
+    },
+    {
+      "id": "agent_has_capability",
+      "from": "agent",
+      "to": "capability"
+    },
+    {
+      "id": "capability_requires_permission",
+      "from": "capability",
+      "to": "permission"
+    },
+    {
+      "id": "deployment_promotes_commit",
+      "from": "deployment",
+      "to": "commit"
+    },
+    {
+      "id": "deployment_targets_environment",
+      "from": "deployment",
+      "to": "environment"
+    }
+  ]
+}

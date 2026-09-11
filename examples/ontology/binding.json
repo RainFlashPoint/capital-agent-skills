@@ -1,0 +1,11 @@
+{
+  "scope": {
+    "tenant": "example-team",
+    "project": "example-pay",
+    "provider": "provider-a",
+    "product": "repay",
+    "contractVersion": "1",
+    "environment": "test"
+  },
+  "repo": "repo-example"
+}

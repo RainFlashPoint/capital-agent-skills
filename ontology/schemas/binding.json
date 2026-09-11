@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capital Agent binding v1",
+  "type": "object",
+  "properties": {
+    "scope": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "product": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contractVersion": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tenant",
+        "project",
+        "provider",
+        "environment",
+        "product",
+        "contractVersion"
+      ],
+      "additionalProperties": false
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "expectedCommit": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expectedBranch": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "scope",
+    "repo"
+  ],
+  "additionalProperties": false
+}

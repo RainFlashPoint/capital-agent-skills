@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capital Agent record v1",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "namespace": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "kind": {
+      "enum": [
+        "concept",
+        "claim",
+        "constraint"
+      ]
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "value": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ],
+      "maxLength": 4096
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "product": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contractVersion": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tenant",
+        "project",
+        "provider",
+        "environment",
+        "product",
+        "contractVersion"
+      ],
+      "additionalProperties": false
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "state": {
+      "enum": [
+        "draft",
+        "validated",
+        "revoked"
+      ]
+    },
+    "validFrom": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "validUntil": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "hash",
+        "task",
+        "commit"
+      ],
+      "additionalProperties": false
+    },
+    "conditions": {
+      "type": "object",
+      "properties": {
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "commit"
+      ],
+      "additionalProperties": false
+    },
+    "supersedes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+      },
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "id",
+    "namespace",
+    "kind",
+    "key",
+    "value",
+    "scope",
+    "revision",
+    "state",
+    "validFrom",
+    "validUntil",
+    "source",
+    "conditions",
+    "supersedes"
+  ],
+  "additionalProperties": false
+}

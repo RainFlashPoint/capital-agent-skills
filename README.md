@@ -4,7 +4,11 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.9.7，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.10.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.10.0 更新
+
+新增本地 [Ontology 语义底座](ontology/README.md)：从真实 `.cap` 读取状态和证据声明，将知识按机构、项目、渠道、产品和协议版本隔离，并提供可解释的冲突、权限与验证裁决。详情见 [需求与验收矩阵](docs/specs/ontology-foundation.md)。当前交付是本地语义内核，未替代 Server 鉴权或自动实现 CI/CD。
 
 ## v0.9.7 更新
 
@@ -115,6 +119,8 @@
 - **工具之间难以迁移**：流程绑定某个 CLI、模型或专有能力后，团队很难形成统一研发方式。
 
 Capital Agent Skills 在 Coding Agent 之上补齐研发流程、可信门禁、持久状态和知识积累层，让 Agent 从“代码生成工具”走向可协作、可验证、可持续改进的研发执行者。
+
+当前仓库同时维护一层轻量 `ontology/` 语义契约：它从 Skills 提取研发实体、关系、状态、策略和证据，供本地 Agent 消费，并作为未来 Server/Platform 投影的稳定中间层。Ontology 与 Skills 一起版本管理，但不替代 Skills；`.cap/` 保存这些概念在具体项目和任务中的实例。
 
 ## 核心能力
 

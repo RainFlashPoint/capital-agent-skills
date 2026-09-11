@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "policies": [
+    {"id": "scope_isolation", "enforcedBy": "resolveKnowledge", "acceptance": "O02"},
+    {"id": "admitted_content_hash", "enforcedBy": "resolveKnowledge", "acceptance": "O03"},
+    {"id": "explicit_scoped_supersession", "enforcedBy": "resolveKnowledge", "acceptance": "O04"},
+    {"id": "validity_and_provenance", "enforcedBy": "resolveKnowledge", "acceptance": "O05"},
+    {"id": "exact_commit_evidence", "enforcedBy": "evaluateTask", "acceptance": "O07"},
+    {"id": "local_is_not_server_gate", "enforcedBy": "evaluateTask", "acceptance": "O07"},
+    {"id": "knowledge_cannot_grant_permission", "enforcedBy": "evaluateTask", "acceptance": "O08"},
+    {"id": "deny_overrides_allow", "enforcedBy": "evaluateTask", "acceptance": "O08"},
+    {"id": "missing_evidence_blocks", "enforcedBy": "evaluateTask", "acceptance": "O09"},
+    {"id": "conflict_blocks_actions", "enforcedBy": "projectContext", "acceptance": "O13"}
+  ]
+}

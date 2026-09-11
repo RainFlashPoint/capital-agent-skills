@@ -39,6 +39,16 @@ description: >
 
 有子 agent 隔离（Claude）就 fan-out 让大材料留在子上下文；无隔离（如 Codex）时上述纪律**强制**执行（serial-and-evict），否则单会话累积到数百 KB 会让下一轮请求在上游网关 504 超时。展开见文末「上下文预算」与 `references/runtime-adapters/codex.md` 的 Context budget 段。
 
+## 本地 Ontology 语义投影
+
+共享语义契约位于 package 根 `ontology/`，消费协议见 `ontology/README.md`，完整边界见 `docs/specs/ontology-foundation.md`。它不增加阶段、不取代已有 Context Guard 或 Server Gate。
+
+需要读取多个项目/机构经验，或向 Agent/Server 交接结构化上下文时，先显式绑定 tenant（数据所有者）、project、provider（业务渠道）、product、contractVersion 和 environment，再用 package 根 `scripts/ontology-context.mjs` 导入本任务选定的 `.cap` 并生成局部投影。工具参数契约见 Ontology README；不要在流程文本复制 Schema。不得把支付渠道名称当成租户身份，不得从历史工作区字段反向导航目录。
+
+模型从文字中拆解出的知识必须先成为带原文路径/hash 的 draft；使用 `runtime/ontology/knowledge.mjs` 校验其与已导入产物的来源绑定。经独立审阅的内容摘要进入 authority admissions，公共发布另需显式 publications。原文、历史 PASS 和模型自报 validated 均不能自授权限或当前 Gate。
+
+本地 `.cap` 导入只产生声明、引用和 unknowns；缺失 Commit、状态矛盾、环境失败、跨租户知识或未授权替代不得被模型补猜。投影中 suggested next stage 不等于可执行动作；任何权限与独立 receipt 必须由当前宿主的可信边界提供，不能从导入文档提取。没有可信适配器时 allowedActions 保持空，继续沿用现有 Skills 的本地执行与验证纪律，不冒充完成了 Server 集成。
+
 ## 公开语言与内部 ID
 
 研发只需要记住 `$cap`（Claude Code 为 `/cap`）。所有对话、选项、下一步和错误提示都优先使用下列直白名称，**不得要求用户调用内部技能名**：

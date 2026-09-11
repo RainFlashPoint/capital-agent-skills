@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "capArtifacts": {
+    "state": ".cap/STATE.md", "profile": ".cap/PROFILE.md", "context": ".cap/task-context.md",
+    "spec": ".cap/spec.md", "plan": ".cap/plan.md", "verification": ".cap/verify/*.md",
+    "review": ".cap/review/*.md", "environment": ".cap/release/*.md", "experience": ".cap/experience.md"
+  },
+  "sourceFiles": [
+    "skills/cap-flow/SKILL.md", "skills/cap-flow/references/complexity-routing.md",
+    "skills/cap-flow/references/harness-action-protocol.md", "skills/cap-flow/references/role-routing.md",
+    "skills/cap-understand/SKILL.md", "skills/cap-define/SKILL.md", "skills/cap-plan/SKILL.md",
+    "skills/cap-implement/SKILL.md", "skills/cap-test/SKILL.md", "skills/cap-review/SKILL.md",
+    "skills/cap-release/SKILL.md", "skills/harvest-experience/references/experience-contract.md"
+  ],
+  "runtimeSchemas": ["record", "instance", "query", "authority", "binding", "graph"],
+  "legacyAliases": {"map": "understand", "shape": "define", "build": "implement", "verify": "test"}
+}

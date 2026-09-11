@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "path": "skills/cap-flow/SKILL.md",
+      "hash": "7454f5a9be2c09808d0ba4c978ad9e72dd3a87ef9fc68dcb4ba9d78db576eae6"
+    },
+    {
+      "path": "skills/cap-flow/references/complexity-routing.md",
+      "hash": "6e40f575ce8f05ca50d45a2a6e6847ff454a1d097a616cd94631c80c4b632177"
+    },
+    {
+      "path": "skills/cap-flow/references/harness-action-protocol.md",
+      "hash": "056ec06ca8e86cae3d581cc96a3406b63da6181b9bac73ef9a6fa35305968653"
+    },
+    {
+      "path": "skills/cap-flow/references/role-routing.md",
+      "hash": "9af6d387362a203bc7c2487f26af35cae6f05833aa1fe4fbfcf8400c9dfb08cb"
+    },
+    {
+      "path": "skills/cap-understand/SKILL.md",
+      "hash": "8779be829b6d31d6da2b8fa07ae3786e093a9975b556453ef18a232bf4f3725c"
+    },
+    {
+      "path": "skills/cap-define/SKILL.md",
+      "hash": "27d1c082d63c5dc6bd164bc32497858960abef8e9c49e3a9f1a84c76b132a51b"
+    },
+    {
+      "path": "skills/cap-plan/SKILL.md",
+      "hash": "f60267b451f52a1474e20863a3eb9cded19573bdbee453a5a64720e67507ff77"
+    },
+    {
+      "path": "skills/cap-implement/SKILL.md",
+      "hash": "b521dc6340cf0fcb00e95fb45d30d6b80593d5fb087aa23bbf7a90a707713d1d"
+    },
+    {
+      "path": "skills/cap-test/SKILL.md",
+      "hash": "d6b36988fa818f734e377f95f1f9654f037fa4325ea47b92d081f726725cd5b3"
+    },
+    {
+      "path": "skills/cap-review/SKILL.md",
+      "hash": "44124492e75562737f62533dc4b1522d909fd536fe9d2519a62b474735dffc66"
+    },
+    {
+      "path": "skills/cap-release/SKILL.md",
+      "hash": "10191cdda3442dbcdf3486756e91f5f2b72711949d822b50d9027d920f64569e"
+    },
+    {
+      "path": "skills/harvest-experience/references/experience-contract.md",
+      "hash": "a6e528ee34f5ff0ae86c67513244747a19841607394b6627d43bd3041a88ea54"
+    }
+  ]
+}

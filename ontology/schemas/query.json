@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capital Agent query v1",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "tenant": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "product": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "contractVersion": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "environment": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "task": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "commit": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "agent": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "now": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mode": {
+      "enum": [
+        "local",
+        "server"
+      ]
+    },
+    "complexity": {
+      "enum": [
+        "L1",
+        "L2",
+        "L3",
+        "L4"
+      ]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "tenant",
+    "project",
+    "provider",
+    "product",
+    "contractVersion",
+    "environment",
+    "task",
+    "repo",
+    "branch",
+    "commit",
+    "agent",
+    "now",
+    "mode",
+    "complexity"
+  ],
+  "additionalProperties": false
+}

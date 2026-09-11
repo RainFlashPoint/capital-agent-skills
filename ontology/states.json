@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "stages": ["understand", "define", "plan", "implement", "test", "review", "release", "done"],
+  "routes": {
+    "L1": ["implement", "test", "done"],
+    "L2": ["define", "implement", "test", "review", "done"],
+    "L3": ["understand", "define", "plan", "implement", "test", "review", "done"],
+    "L4": ["understand", "define", "plan", "implement", "test", "review", "release", "done"]
+  },
+  "requires": {
+    "understand": ["context"],
+    "define": ["context", "spec"],
+    "plan": ["context", "spec", "plan"],
+    "implement": ["commit"],
+    "test": ["commit", "verification"],
+    "review": ["commit", "verification", "review"],
+    "release": ["commit", "verification", "review", "environment", "delivery"],
+    "done": ["commit", "verification"]
+  },
+  "checks": ["logic", "journey", "model"],
+  "stageSkills": {
+    "understand": "skills/cap-understand/SKILL.md", "define": "skills/cap-define/SKILL.md",
+    "plan": "skills/cap-plan/SKILL.md", "implement": "skills/cap-implement/SKILL.md",
+    "test": "skills/cap-test/SKILL.md", "review": "skills/cap-review/SKILL.md",
+    "release": "skills/cap-release/SKILL.md", "done": "skills/cap-flow/SKILL.md"
+  }
+}

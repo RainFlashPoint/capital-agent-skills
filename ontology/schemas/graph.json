@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capital Agent graph v1",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "entity": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "tenant": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "environment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "product": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contractVersion": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "tenant",
+              "project",
+              "provider",
+              "environment",
+              "product",
+              "contractVersion"
+            ],
+            "additionalProperties": false
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "hash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "task": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "commit": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "hash",
+              "task",
+              "commit"
+            ],
+            "additionalProperties": false
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "id",
+          "entity",
+          "scope",
+          "source",
+          "ref"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "relation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "tenant": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "environment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "product": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contractVersion": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "tenant",
+              "project",
+              "provider",
+              "environment",
+              "product",
+              "contractVersion"
+            ],
+            "additionalProperties": false
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "hash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "task": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "commit": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "hash",
+              "task",
+              "commit"
+            ],
+            "additionalProperties": false
+          },
+          "fromId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "toId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          }
+        },
+        "required": [
+          "id",
+          "relation",
+          "scope",
+          "source",
+          "fromId",
+          "toId"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "nodes",
+    "edges"
+  ],
+  "additionalProperties": false
+}

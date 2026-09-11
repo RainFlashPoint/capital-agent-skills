@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "entities": [
+    {
+      "id": "requirement",
+      "description": "用户可验收的目标或问题"
+    },
+    {
+      "id": "feature",
+      "description": "可独立推进的需求单元"
+    },
+    {
+      "id": "code_surface",
+      "description": "受影响的模块、接口、配置或资源面"
+    },
+    {
+      "id": "task",
+      "description": "一次可恢复、可交付的研发工作"
+    },
+    {
+      "id": "artifact",
+      "description": "需求、计划、状态、验证或评审产物"
+    },
+    {
+      "id": "commit",
+      "description": "代码事实和验证绑定锚点"
+    },
+    {
+      "id": "verification",
+      "description": "针对精确 Commit 的测试或环境证据"
+    },
+    {
+      "id": "review",
+      "description": "独立评审结论和发现"
+    },
+    {
+      "id": "knowledge",
+      "description": "由已验证研发结果沉淀的可复用经验"
+    },
+    {
+      "id": "agent",
+      "description": "执行研发动作的主体"
+    },
+    {
+      "id": "capability",
+      "description": "Agent 可执行的一类动作"
+    },
+    {
+      "id": "permission",
+      "description": "对资源、环境或动作的授权"
+    },
+    {
+      "id": "environment",
+      "description": "开发、测试、预发或生产运行边界"
+    },
+    {
+      "id": "deployment",
+      "description": "将 Commit 晋级到 Environment 的动作"
+    },
+    {
+      "id": "tenant",
+      "description": "知识所有者及数据访问边界"
+    },
+    {
+      "id": "provider",
+      "description": "外部业务机构/渠道，独立于租户"
+    },
+    {
+      "id": "product",
+      "description": "同一渠道下的产品线"
+    },
+    {
+      "id": "contract_version",
+      "description": "接口协议适用版本"
+    },
+    {
+      "id": "conflict",
+      "description": "同一语义键上未解决的矛盾"
+    },
+    {
+      "id": "authority",
+      "description": "调用方提供的独立可信授权和证据输入"
+    },
+    {
+      "id": "provenance",
+      "description": "来源路径、内容摘要和历史身份"
+    },
+    {
+      "id": "constraint",
+      "description": "不可由知识覆盖的约束"
+    }
+  ]
+}

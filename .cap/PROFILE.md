@@ -25,6 +25,7 @@ test-commands: { unit: "node --test scripts/test-*.mjs && python3 -m unittest sc
 | 结构校验 | Bash/PowerShell/Node/Python | 防悬空引用、字典漂移和跨文件契约不一致；Windows 日常阶段门禁走 Node，Git Hook 复用 Git for Windows 的 sh |
 
 ## Surface map
+- ontology: globs[ ontology/**, runtime/ontology/**, scripts/*ontology*.mjs ] roles[skill-maintainer, server-dev, qa] checks[logic, model]
 - workflow-skills: globs[ skills/** ] roles[skill-maintainer, qa] checks[logic]
 - client-protocol: globs[ scripts/cap-*.mjs, scripts/client-delivery.mjs, scripts/mcp-remote.mjs ] roles[server-dev, skill-maintainer] checks[logic]
 - installation: globs[ scripts/setup*.mjs, scripts/setup.sh, runtime/** ] roles[server-dev, skill-maintainer] checks[logic]

@@ -1,0 +1,32 @@
+[
+  {
+    "schemaVersion": 1,
+    "id": "tenant:example-team/missing-config",
+    "namespace": "tenant:example-team",
+    "kind": "claim",
+    "key": "payment.missing_config",
+    "value": "Reject requests when required account configuration is absent",
+    "scope": {
+      "tenant": "example-team",
+      "project": "example-pay",
+      "provider": "provider-a",
+      "product": "repay",
+      "contractVersion": "1",
+      "environment": "test"
+    },
+    "revision": 1,
+    "state": "draft",
+    "validFrom": "2026-01-01T00:00:00.000Z",
+    "validUntil": null,
+    "source": {
+      "path": ".cap/experience.md",
+      "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "task": "task-example",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "conditions": {
+      "commit": null
+    },
+    "supersedes": []
+  }
+]

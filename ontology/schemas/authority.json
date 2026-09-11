@@ -1,0 +1,429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capital Agent authority v1",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "tenant": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "admissions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "hash"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "publications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "hash"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "overrides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "older": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "newer": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "tenant": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "environment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "product": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contractVersion": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "tenant",
+              "project",
+              "provider",
+              "environment",
+              "product",
+              "contractVersion"
+            ],
+            "additionalProperties": false
+          },
+          "validFrom": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validUntil": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "older",
+          "newer",
+          "key",
+          "scope",
+          "validFrom",
+          "validUntil"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "grants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "subject": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "action": {
+            "enum": [
+              "advance",
+              "deploy"
+            ]
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "tenant": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "environment": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "product": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contractVersion": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "tenant",
+              "project",
+              "provider",
+              "environment",
+              "product",
+              "contractVersion"
+            ],
+            "additionalProperties": false
+          },
+          "effect": {
+            "enum": [
+              "allow",
+              "deny"
+            ]
+          },
+          "validFrom": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validUntil": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "subject",
+          "action",
+          "scope",
+          "effect",
+          "validFrom",
+          "validUntil"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "issuer": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "tenant": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "product": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contractVersion": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "repo": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+          },
+          "branch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "kind": {
+            "enum": [
+              "context",
+              "spec",
+              "plan",
+              "commit",
+              "verification",
+              "review",
+              "environment",
+              "delivery",
+              "experience"
+            ]
+          },
+          "status": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "ENV_BLOCKED",
+              "INCONCLUSIVE"
+            ]
+          },
+          "authority": {
+            "enum": [
+              "local-runner",
+              "server-gate"
+            ]
+          },
+          "issuedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "issuer",
+          "tenant",
+          "project",
+          "provider",
+          "product",
+          "contractVersion",
+          "environment",
+          "task",
+          "repo",
+          "branch",
+          "commit",
+          "kind",
+          "status",
+          "authority",
+          "issuedAt",
+          "expiresAt",
+          "sourceHash"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "tenant",
+    "admissions",
+    "publications",
+    "overrides",
+    "grants",
+    "receipts"
+  ],
+  "additionalProperties": false
+}

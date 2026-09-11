@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "scope": {
+    "tenant": "example-team",
+    "project": "example-pay",
+    "provider": "provider-a",
+    "product": "repay",
+    "contractVersion": "1",
+    "environment": "test"
+  },
+  "task": "task-example",
+  "repo": "repo-example",
+  "branch": "feature/example",
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "stage": "test",
+  "status": "in-progress",
+  "artifacts": [
+    {
+      "kind": "experience",
+      "path": ".cap/experience.md",
+      "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "claims": [],
+  "unknowns": [],
+  "blockers": [],
+  "origin": "native"
+}

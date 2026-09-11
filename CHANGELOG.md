@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0
+
+- 新增本地 Ontology 底座：严格 Schema、租户/项目/渠道/产品/协议版本隔离、来源 hash、有效期、内容准入及显式授权的冲突替代。
+- 新增真实 `.cap` 只读导入、受限旧状态迁移、知识草稿来源绑定与 Agent 上下文 CLI；移除硬编码任务/阶段原型。
+- 独立 receipt 按完整任务/代码/环境身份校验；知识不能赋予执行权限，本地 PASS 不能提升为 Server Gate。
+- 集成 Skills 来源漂移锁、语义反例测试与两套真实支付任务的脱敏验证；未接通 Server 身份/Runner 适配器时默认无授权执行。
+
 ## 0.9.7
 
 - README 新增自动升级命令：从 `~/.capital-agent/install-manifest.json` 读取 `sourceRoot`，无需手工填写源码目录。

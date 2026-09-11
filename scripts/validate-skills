@@ -240,6 +240,9 @@ else
   err "缺失:$GUARD(强门禁脚本应随 cap-flow 技能自包含)"
 fi
 
+echo "== 7.1 Ontology 语义契约 =="
+node scripts/validate-ontology.mjs || err "Ontology 语义契约未通过"
+
 echo "== 8. 开源发布安全审计 =="
 node scripts/audit-open-source.mjs || err "开源发布安全审计未通过"
 
