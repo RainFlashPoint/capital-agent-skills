@@ -8,7 +8,7 @@
 
 `ontology/execution.json` 是记录器阶段契约的唯一来源。implement 对应 build，test 对应 test，release 对应 package；understand/define/plan/review 使用文档、确认与独立复核证据，不能用退出码替代。命令成功只证明该命令在该源码快照上通过，不证明验收覆盖充分。主流程仍按变更选择必要检查并汇总报告；多项检查使用一个会传播所有失败的项目测试入口，不能用最后一个小测试替代全套验收。
 
-主流程优先使用项目已有验证入口。记录器优先级为显式 argv、`.cap/PROFILE.md` 的 `test-commands`、`.cap/execution-config.json` 中的阶段/动作配置、package.json 已声明的脚本和语言项目文件。没有可用入口就返回 `configure_execution_command` 修复动作（补项目测试脚本或 `.cap/execution-config.json`）；不要求用户猜命令，也不猜测成功。Release 优先使用 `package`、`pack`、`prepare`，再回退 `build`，不放部署操作。
+主流程优先使用项目已有验证入口。记录器优先级为显式 argv、`.cap/PROFILE.md` 的 `test-commands`、`.cap/execution-config.json` 中的阶段/动作配置、package.json 已声明的脚本和语言项目文件。PROFILE 某槽位明确写成 `none — 原因` 时，视为该阶段没有套件，不再回退到自动猜测；需要执行时返回 `configure_execution_command` 修复动作。没有可用入口也返回该动作（补项目测试脚本或 `.cap/execution-config.json`）；不要求用户猜命令，也不猜测成功。Release 优先使用 `package`、`pack`、`prepare`，再回退 `build`，不放部署操作。
 
 第一次运行后，同 Task/Session 的该阶段自动要求有效证据。需要三个命令阶段都检查时，可在 STATE 写 `execution-required: true`；这不改变文档阶段或现有团队流程。运行 `scripts/cap-execute.mjs` 后，由 `scripts/cap-status.mjs` 重验最近一次执行；实际阶段交接仍由 cap-flow 单写者负责。
 

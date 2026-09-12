@@ -28,6 +28,9 @@ test('failed execution keeps bounded redacted diagnostics for model recovery',as
  const root=await fixture(t);const run=await runLocalAction(root,{environment:{TOKEN:'hidden'},command:[process.execPath,'-e','console.error("token=sk-123456789012345");process.exit(2)']})
  const diagnostic=JSON.parse(await readFile(join(run.artifactDir,'diagnostic.json'),'utf8'))
  assert.equal(run.gate.gate,'BLOCKED');assert.match(diagnostic.stderr,/REDACTED/);assert.doesNotMatch(diagnostic.stderr,/sk-123456789012345/);assert.ok(run.gate.nextActions.some(item=>item.kind==='diagnose_command_failure'))
+ const multiline=await runLocalAction(root,{environment:{},command:[process.execPath,'-e','console.error("password=super secret phrase\\ntoken=\\\"quoted secret\\\"");process.exit(2)']})
+ const multilineDiagnostic=JSON.parse(await readFile(join(multiline.artifactDir,'diagnostic.json'),'utf8'))
+ assert.doesNotMatch(multilineDiagnostic.stderr,/super secret phrase|quoted secret/)
 })
 test('current dirty snapshot is supported, later source edit invalidates old evidence',async t=>{
  const root=await fixture(t);await writeFile(join(root,'source.txt'),'dirty-before\n')
@@ -66,6 +69,12 @@ test('PROFILE test-commands are preferred for test and build discovery',async t=
  let report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['python3','-m','pytest','tests/unit']);assert.equal(report.command.source,'.cap/PROFILE.md#test-commands')
  await writeFile(join(root,'.cap/STATE.md'),(await readFile(join(root,'.cap/STATE.md'),'utf8')).replace('stage: test','stage: implement'))
  report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['python3','-m','compileall','src'])
+})
+test('PROFILE explicit none prevents unintended test auto-discovery',async t=>{
+ const root=await fixture(t)
+ await writeFile(join(root,'.cap/PROFILE.md'),'test-commands: { unit: "none — 项目无测试套件" }\n')
+ await writeFile(join(root,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(0)"'}}))
+ await assert.rejects(runLocalAction(root,{environment:{}}),/execution_command_disabled/)
 })
 test('release discovery prefers package, pack, then prepare over build',async t=>{
  const root=await fixture(t)

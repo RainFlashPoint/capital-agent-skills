@@ -12,7 +12,7 @@ const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/
 const same=(a,b)=>canonical(a)===canonical(b)
 const validDate=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value
 function diagnosticText(value='') {
- return String(value).replace(/(authorization|password|passwd|token|secret|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s,;]+/gi,'$1=[REDACTED]').replace(/\b(?:sk|ak)-[A-Za-z0-9_-]{12,}\b/g,'[REDACTED]').slice(0,16*1024)
+ return String(value).replace(/(authorization|password|passwd|token|secret|api[_-]?key|private[_-]?key)\s*[:=]\s*(?:"[^"\n]*"|'[^'\n]*'|[^\n]*)/gi,'$1=[REDACTED]').replace(/\b(?:sk|ak)-[A-Za-z0-9_-]{12,}\b/g,'[REDACTED]').slice(0,16*1024)
 }
 function actionStage(action){return {build:'implement',test:'test',package:'release'}[action]}
 // Stable, model-facing recovery contract.  These are recommendations for the
@@ -23,7 +23,7 @@ export function executionNextActions(reason='', { stage='', action='' } = {}) {
  if(code==='verified_local_evidence') return []
  const context={stage,action}
  const make=(kind,label,extra={})=>({kind,label,reason:String(reason||''),requiresUser:false,...context,...extra})
- if(code==='execution_missing'||code==='execution_command_missing') return [make('configure_execution_command','发现或补齐本地执行命令')]
+ if(code==='execution_missing'||code==='execution_command_missing'||code==='execution_command_disabled') return [make('configure_execution_command',code==='execution_command_disabled'?'PROFILE 明确声明当前阶段没有执行套件':'发现或补齐本地执行命令')]
  if(code==='command_failed'||code==='timed_out'||code==='output_limit'||code==='spawn_failed') return [make('diagnose_command_failure','检查失败输出并修复实现或测试命令'),make('rerun_with_new_action_id','修复后重新执行', {requiresSourceChange:false})]
  if(code==='source_changed_during_execution'||code==='execution_source_changed') return [make('inspect_source_changes','检查执行期间发生的源码变化'),make('rerun_with_new_action_id','确认代码稳定后重新执行')]
  if(code==='execution_pending_or_interrupted'||code==='execution_in_progress_or_interrupted') return [make('recover_interrupted_execution','恢复或清理中断的本地执行'),make('rerun_with_new_action_id','恢复后重新执行')]
@@ -54,7 +54,7 @@ export async function buildLocalEnvelope(repoPath='.',options={}) {
  if(options.action&&options.action!==contract.action)fail('execution_action_stage_mismatch')
  if(options.constraints&&!same(options.constraints,contract.constraints))fail('execution_constraints_not_supported')
  const command=await commandFor(f.identity.repo,stage,options.command,contract.action)
- if(!command.argv.length)fail('execution_command_missing: configure .cap/execution-config.json or pass argv after --')
+ if(!command.argv.length)fail(command.disabled?'execution_command_disabled: PROFILE declares no runner for this stage':'execution_command_missing: configure .cap/execution-config.json or pass argv after --')
  return makeEnvelope(f,options,stage,contract,command.argv)
 }
 function gateFor(envelope,receipt) {
@@ -84,7 +84,7 @@ export async function runLocalAction(repoPath='.',options={}) {
  if(options.action&&options.action!==contract.action)fail('execution_action_stage_mismatch')
  if(options.constraints&&!same(options.constraints,contract.constraints))fail('execution_constraints_not_supported')
  const selected=await commandFor(repo,stage,options.command,contract.action)
- if(!selected.argv.length)fail('execution_command_missing: configure .cap/execution-config.json or pass argv after --')
+ if(!selected.argv.length)fail(selected.disabled?'execution_command_disabled: PROFILE declares no runner for this stage':'execution_command_missing: configure .cap/execution-config.json or pass argv after --')
  argvCheck(selected.argv);const timeoutMs=timeoutCheck(options.timeoutMs??120000)
  const envelope=makeEnvelope(initial,options,stage,contract,selected.argv)
  await safePath(repo,'.cap/execution',{create:true})

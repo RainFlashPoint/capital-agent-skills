@@ -62,7 +62,7 @@ function profileCommandMap(text) {
 }
 function commandArgv(value) {
  if(typeof value!=='string'||!value.trim())return null
- if(/^none(?:\s|$)/i.test(value.trim()))return null
+ if(/^none(?:\s|$)/i.test(value.trim()))return {disabled:true}
  // PROFILE stores argv as text for portability, but the recorder never sends
  // it through a shell. Reject shell control/glob syntax instead of guessing.
  const out=[];let token='',quote='',escaped=false
@@ -120,12 +120,12 @@ export function argvCheck(argv) { if(!Array.isArray(argv)||!argv.length||argv.le
 export function timeoutCheck(ms) { if(!Number.isSafeInteger(ms)||ms<1||ms>3600000)fail('execution_timeout_invalid');return ms }
 export async function commandFor(repo,stage,explicit,action) {
  if(explicit!==undefined&&explicit!==null)return {argv:argvCheck(explicit),source:'explicit'}
+ const profile=await profileCommands(repo)
+ const profileKeys=stage==='test'?['unit','test']:stage==='implement'?['build']:stage==='release'?['package','pack','prepare','build']:[]
+ for(const key of profileKeys){const argv=commandArgv(profile[key]);if(argv?.disabled)return {argv:[],source:'.cap/PROFILE.md#test-commands',disabled:true};if(argv)return {argv,source:'.cap/PROFILE.md#test-commands'} }
  const path='.cap/execution-config.json'
  const config=await jsonFile(repo,path).catch(e=>{if(e.code==='ENOENT')return null;throw e})
  if(config){if(config.schemaVersion!==1||!config.commands||typeof config.commands!=='object')fail('execution_config_invalid');const value=config.commands[stage]||config.commands[action];if(value)return {argv:argvCheck(value),source:path}}
- const profile=await profileCommands(repo)
- const profileKeys=stage==='test'?['unit','test']:stage==='implement'?['build']:stage==='release'?['package','pack','prepare','build']:[]
- for(const key of profileKeys){const argv=commandArgv(profile[key]);if(argv)return {argv,source:'.cap/PROFILE.md#test-commands'} }
  const pkg=await jsonFile(repo,'package.json').catch(e=>{if(e.code==='ENOENT')return null;throw e})
  const scripts=pkg?.scripts&&typeof pkg.scripts==='object'?pkg.scripts:null
  const scriptKeys=stage==='test'?['test']:stage==='implement'?['build']:stage==='release'?['package','pack','prepare','build']:[]
