@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "stages": {
+    "understand": { "action": "scan", "constraints": ["workspace-bound", "source-hash"], "evidence": "recon" },
+    "define": { "action": "build", "constraints": ["spec-approved", "source-hash"], "evidence": "spec" },
+    "plan": { "action": "build", "constraints": ["plan-approved", "predicted-files"], "evidence": "plan" },
+    "implement": { "action": "build", "constraints": ["same-commit", "workspace-bound"], "evidence": "build" },
+    "test": { "action": "test", "constraints": ["same-commit", "tests-pass"], "evidence": "test" },
+    "review": { "action": "scan", "constraints": ["same-commit", "independent-review"], "evidence": "review" },
+    "release": { "action": "deploy", "constraints": ["same-commit", "release-approved", "rollback-ready"], "evidence": "delivery" }
+  }
+}

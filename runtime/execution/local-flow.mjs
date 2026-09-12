@@ -3,6 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { createEnvelope, executeEnvelope } from './executor.mjs'
 import { evaluateGate } from './gate.mjs'
+import { readFileSync } from 'node:fs'
+const executionModel = JSON.parse(readFileSync(new URL('../../ontology/execution.json', import.meta.url), 'utf8'))
 
 const field = (text, name) => String(text).match(new RegExp(`^${name}:\\s*(.+)$`, 'mi'))?.[1]?.trim() || ''
 const git = (repo, args) => { try { return execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] }).trim() } catch { return '' } }
@@ -20,9 +22,16 @@ export async function buildLocalEnvelope(repoPath = '.', { action = 'test', comm
   return createEnvelope({ task, repo: remote, branch, commit, tenant, project, agent, runner, action, command, allowedEnv: [], constraints, issuedAt: issued.toISOString(), expiresAt: expires }, secret)
 }
 
+export function executionContract(stage = '') {
+  const contract = executionModel.stages[stage]
+  if (!contract) throw new Error('execution_stage_contract_missing')
+  return contract
+}
+
 export async function runLocalAction(repoPath = '.', options = {}) {
   const repo = resolve(repoPath)
-  const envelope = await buildLocalEnvelope(repo, options)
+  const contract = options.stage ? executionContract(options.stage) : null
+  const envelope = await buildLocalEnvelope(repo, { ...options, action: options.action || contract?.action || 'test', constraints: options.constraints || contract?.constraints || [] })
   const result = await executeEnvelope(envelope, { ...options, cwd: repo, workspaceRoot: repo })
   const gate = evaluateGate(envelope, result.receipt, { envelopeSecret: options.secret, receiptSecret: options.receiptSecret || options.secret, now: new Date().toISOString() })
   const dir = join(repo, '.cap', 'execution', envelope.id)

@@ -8,6 +8,7 @@ function args(argv) {
     if (key === '--command') out.command = JSON.parse(argv[++i])
     else if (key === '--constraints') out.constraints = JSON.parse(argv[++i])
     else if (key === '--action') out.action = argv[++i]
+    else if (key === '--stage') out.stage = argv[++i]
     else if (key === '--repo') out.repo = argv[++i]
   }
   return out

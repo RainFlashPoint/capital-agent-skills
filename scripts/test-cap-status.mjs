@@ -22,6 +22,14 @@ test('missing state starts with repository understanding', () => {
   assert.equal(resolveNextAction({ artifacts: { profile: true } }).stage, 'define')
 })
 
+test('execution-required keeps a stage gated until the matching local Gate passes', () => {
+  const stateText = 'stage: test\nstatus: in-progress\nexecution-required: true\n'
+  const blocked = resolveNextAction({ stateText, executionGate: { required:true, stage:'test', action:'test', passed:false } })
+  assert.equal(blocked.gated, true); assert.equal(blocked.executionRequired, true); assert.match(blocked.reason, /Gate PASS/)
+  const passed = resolveNextAction({ stateText, executionGate: { required:true, stage:'test', action:'test', passed:true } })
+  assert.equal(passed.action, '测试验证')
+})
+
 test('approved plan drives implementation instead of stopping at artifact upload', () => {
   const stateText = 'stage: plan\nstatus: in-progress\n- [x] plan：plan.md 已拆分\n'
   assert.deepEqual(resolveNextAction({ stateText, artifacts: { plan: true } }), { stage: 'implement', action: '编码实现', reason: '计划已就绪' })

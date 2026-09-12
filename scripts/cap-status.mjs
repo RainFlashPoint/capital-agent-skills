@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { lstat, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { readdirSync, readFileSync } from 'node:fs'
 import { realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -32,6 +33,26 @@ function field(markdown = '', name = '') {
 }
 function checked(markdown = '', keyword = '') {
   return String(markdown).split(/\r?\n/).some(line => /^\s*-\s*\[x\]/i.test(line) && line.toLowerCase().includes(keyword.toLowerCase()))
+}
+const LOCAL_EXECUTION_ACTIONS = { understand: 'scan', define: 'build', plan: 'build', implement: 'build', test: 'test', review: 'scan', release: 'deploy' }
+function inspectLocalExecution(repo, stateText = '', currentHead = '') {
+  const required = field(stateText, 'execution-required').toLowerCase() === 'true'
+  const stage = canonicalStage(field(stateText, 'stage'))
+  const action = LOCAL_EXECUTION_ACTIONS[stage] || ''
+  const task = field(stateText, 'task-id')
+  const candidates = []
+  try {
+    for (const id of readdirSync(join(repo, '.cap', 'execution'))) {
+      const root = join(repo, '.cap', 'execution', id)
+      try {
+        const gate = JSON.parse(readFileSync(join(root, 'gate.json'), 'utf8'))
+        const receipt = JSON.parse(readFileSync(join(root, 'receipt.json'), 'utf8'))
+        if (receipt.commit === currentHead && receipt.task === task && receipt.status === 'passed' && gate.gate === 'PASS' && gate.action === action) candidates.push({ id, gate, receipt })
+      } catch {}
+    }
+  } catch {}
+  const latest = candidates.sort((a,b) => a.receipt.finishedAt.localeCompare(b.receipt.finishedAt)).at(-1)
+  return { required, stage, action, passed: Boolean(latest), artifactDir: latest ? `.cap/execution/${latest.id}` : '', gate: latest?.gate || null }
 }
 const INDEPENDENT_REVIEW_RISK = /(^|\/)(skills\/|.*SKILL\.md$|AGENTS\.md$|CLAUDE\.md$|.*(?:payment|billing|auth|credential|secret|security|permission|access|user[-_ ]?data|mcp|provider|harness|outbox|task|state|migration|database|sql|external[-_ ]?(?:api|interface)|concurr|lock|worktree|branch|release).*)/i
 function localReviewGate(markdown = '', { changedFiles = [], independentEvidence = null, currentHead = '' } = {}) {
@@ -238,7 +259,7 @@ export function inspectTaskBoundary({ stateText = '', branch = '', worktree = ''
   }
 }
 
-export function resolveNextAction({ stateText = '', artifacts = {}, dirty = false, allowStateGate = true, changedFiles = [], independentEvidence = null, currentHead = '' } = {}) {
+export function resolveNextAction({ stateText = '', artifacts = {}, dirty = false, allowStateGate = true, changedFiles = [], independentEvidence = null, currentHead = '', executionGate = null } = {}) {
   if (!stateText) {
     return artifacts.profile
       ? { stage: 'define', action: '需求确认', reason: '尚无任务 STATE，已有项目画像' }
@@ -246,6 +267,7 @@ export function resolveNextAction({ stateText = '', artifacts = {}, dirty = fals
   }
 
   const stage = canonicalStage(field(stateText, 'stage')) || 'understand'
+  if (executionGate?.required && executionGate.stage === stage && !executionGate.passed) return { stage, action: `执行本地 ${executionGate.action} 动作`, reason: 'execution-required 已启用，但当前 Commit 尚无对应 Gate PASS', gated: true, executionRequired: true }
   const status = field(stateText, 'status').toLowerCase() || 'in-progress'
   const deferredOnly = field(stateText, 'deferred-only').toLowerCase() === 'true'
   const declared = nextFromState(stateText)
@@ -363,7 +385,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const changedFiles = changedFilesForReview(repo, stateText, head)
   const independentEvidence = await inspectIndependentEvidence(repo, stateText, head)
   const reviewGate = localReviewGate(stateText, { changedFiles, independentEvidence, currentHead: head })
-  const localNext = resolveNextAction({ stateText, artifacts, dirty, changedFiles, independentEvidence, currentHead: head, allowStateGate: localRun || harnessMode === 'local-only' })
+  const executionGate = inspectLocalExecution(repo, stateText, head)
+  const localNext = resolveNextAction({ stateText, artifacts, dirty, changedFiles, independentEvidence, currentHead: head, executionGate, allowStateGate: localRun || harnessMode === 'local-only' })
   const guardedLocalNext = !remoteTask && teamConfigured && !localRun && localNext.stage === 'test'
     ? { stage: 'implement', action: '通过 MCP 确认最终候选与 Test Action', reason: '尚未取得 Server canonical projection，不能称为正在测试验证', gated: true }
     : localNext
@@ -447,6 +470,10 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         status: field(stateText, 'status') || '',
         nextAction: localNext.action || '',
         gated: localNext.gated === true,
+        executionRequired: executionGate.required,
+        executionAction: executionGate.action,
+        executionGate: executionGate.passed ? 'PASS' : executionGate.required ? 'BLOCKED' : 'not-required',
+        executionArtifact: executionGate.artifactDir,
       },
       serverDelivery: remoteTask ? {
         source: 'server_task',
