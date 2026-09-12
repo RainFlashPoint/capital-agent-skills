@@ -2,13 +2,13 @@
 
 ## 适用范围
 
-显式 local / local-only 模式，在已有 Task/Session 与源码调查之后使用。普通用户继续调用 `/cap` 或 `$cap`；主流程负责选择命令与记录结果，不要求用户手填本体、生成密钥或配置平台。尚未采用记录器的旧任务兼容原流程；新任务的命令验证应使用记录器。
+显式 local / local-only 模式，在已有 Task/Session 与源码调查之后使用。普通用户只需要描述需求并调用 `/cap` 或 `$cap`；模型在流程内部选择命令、执行记录器和状态检查，不要求用户手填本体、记住 doctor/status/execute 命令、生成密钥或配置平台。尚未采用记录器的旧任务兼容原流程；新任务的命令验证应使用记录器。
 
 ## 阶段连接
 
 `ontology/execution.json` 是记录器阶段契约的唯一来源。implement 对应 build，test 对应 test，release 对应 package；understand/define/plan/review 使用文档、确认与独立复核证据，不能用退出码替代。命令成功只证明该命令在该源码快照上通过，不证明验收覆盖充分。主流程仍按变更选择必要检查并汇总报告；多项检查使用一个会传播所有失败的项目测试入口，不能用最后一个小测试替代全套验收。
 
-主流程优先使用项目已有验证入口。记录器优先级为显式 argv、`.cap/execution-config.json` 中的阶段/动作配置、package.json 已声明的 build/test 脚本。其他语言由 Agent 根据项目选用真实命令并传入 argv；没有可用入口就给出缺失原因，不猜测成功。配置的 release 命令应为构建/打包，不放部署操作。
+主流程优先使用项目已有验证入口。记录器优先级为显式 argv、`.cap/execution-config.json` 中的阶段/动作配置、package.json 已声明的 build/test 脚本。其他语言由 Agent 根据项目选用真实命令并传入 argv；没有可用入口就给出缺失原因，并返回可以直接修复的动作（补项目测试脚本或 `.cap/execution-config.json`）；不要求用户猜命令，也不猜测成功。配置的 release 命令应为构建/打包，不放部署操作。
 
 第一次运行后，同 Task/Session 的该阶段自动要求有效证据。需要三个命令阶段都检查时，可在 STATE 写 `execution-required: true`；这不改变文档阶段或现有团队流程。运行 `scripts/cap-execute.mjs` 后，由 `scripts/cap-status.mjs` 重验最近一次执行；实际阶段交接仍由 cap-flow 单写者负责。
 

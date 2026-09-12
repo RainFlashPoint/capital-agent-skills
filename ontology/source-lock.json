@@ -3,7 +3,7 @@
   "files": [
     {
       "path": "skills/cap-flow/SKILL.md",
-      "hash": "a3e334c9a1eea736d2a50f7e0a81fbb0159782ba7d4547d253d4bdf7ce1cb32e"
+      "hash": "96bb2fb1b01b0c5da83e4f435012ada458bf6f482570cb8ed67abfe963659937"
     },
     {
       "path": "skills/cap-flow/references/complexity-routing.md",
@@ -51,7 +51,7 @@
     },
     {
       "path": "skills/cap-flow/references/local-execution.md",
-      "hash": "86f8f76b2133f9a3d9465222e0f119ab49c263e65c9801c5063c208522aa1199"
+      "hash": "740a2016c8d67ff87825fe4ff0a6493ab39d300469a22f31c6f7b6b52623757c"
     }
   ]
 }

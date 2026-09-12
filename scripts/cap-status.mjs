@@ -6,8 +6,8 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { checkPlatformHandshake, normalizeServerUrl } from './setup-lib.mjs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { checkPlatformHandshake, normalizeServerUrl, inspectInstallManifest } from './setup-lib.mjs'
 import { flushPendingDeliveries, readHarnessMode, sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { inspectOutbox } from './cap-outbox.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
@@ -17,6 +17,7 @@ import { inspectLocalExecution } from '../runtime/execution/local-flow.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
+const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
 function text(value = '') { return String(value || '').trim() }
 function normalizeMcpRuntime(value = '') {
@@ -292,6 +293,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const configPath = join(homeDir, '.config/capital-agent/env')
   const configText = await readFile(configPath, 'utf8').catch(() => '')
   const config = Object.fromEntries(configText.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1], match[2]]))
+  const installProbe = await inspectInstallManifest(homeDir, packageRoot)
+  const installation = installProbe.reason === 'manifest_missing' ? { status: 'unmanaged', upgradeRecommended: false, reason: 'manifest_missing' } : { status: installProbe.ok ? 'current' : 'drifted', upgradeRecommended: !installProbe.ok, reason: installProbe.reason || '', changedFiles: installProbe.changedFiles || [], sourceRoot: installProbe.current?.sourceRoot || installProbe.recorded?.sourceRoot || '' }
   const explicitLocal = text(environment.CAPITAL_AGENT_MODE || config.CAPITAL_AGENT_MODE).toLowerCase() === 'local'
   const mcpRuntimeState = normalizeMcpRuntime(mcpRuntime)
   let serverUrl = ''
@@ -318,6 +321,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     }
     return {
       mode: 'session_root_blocked',
+      installation,
       platform: { configured: teamConfigured, connected: null, serverUrl: explicitLocal ? '' : serverUrl || '', handshake: null, mcpRuntime: mcpRuntimeState, localFallback: false, runtime: null, pendingDeliveries: { total: 0, sent: 0, pending: 0 }, outbox: emptyOutbox },
       repository: { root: sessionRoot.currentRoot, remote: '', branch, head, upstream: '', upstreamHead: '', dirty: false, harnessMode: '', harnessEligible: false, sessionRoot },
       task: { id: '', previousId: '', sessionId: '', previousSessionId: '', requiresNewSession: false, remoteStatus: '', remoteStage: '', gatesReady: false, currentCommit: '', currentGate: '', currentAction: null, blocker: { code: boundary.code, detail: boundary.detail, remediation: boundary.remediation }, nextAction: null, executionMode: '', verificationCommands: [], parentTaskId: '', retirementStatus: '', historyArtifactRoot: '' },
@@ -376,13 +380,16 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const localStage = canonicalStage(field(stateText, 'stage'))
   const remoteWorkflowStage = remoteTask ? canonicalWorkflowStage(remoteTask, localStage) : ''
   const remoteDoneBlocked = remoteTask?.status === 'done' && reviewGate.required && reviewGate.independentBlocked
-  const next = switchingTask
+  const nextBase = switchingTask
     ? nextFromPlatformTask(remoteTask, guardedLocalNext)
     : remoteDoneBlocked
     ? { stage: 'review', action: '完成独立复核', reason: `独立复核状态为 ${reviewGate.independent || 'required'}，Server done 不能绕过本地独立证据`, gated: true }
     : remoteTask?.status === 'done'
     ? { stage: 'done', action: '归档并沉淀经验', reason: '平台 Task 的同 Commit 交付门禁已全部通过' }
     : nextFromPlatformTask(remoteTask, guardedLocalNext)
+  const next = installation.upgradeRecommended
+    ? { ...nextBase, stage: localStage || nextBase.stage || 'understand', action: '升级本地 Skills', reason: `检测到 Skills ${installation.reason || '漂移'}，模型应先执行对应模式的升级并重新检查`, upgradeRecommended: true, upgradeReason: installation.reason || 'drift' }
+    : nextBase
   const followUpBaseCommit = switchingTask ? text(remoteTask?.baseCommit || remoteTask?.taskContract?.baseCommit) : ''
   const deliveredHead = followUpBaseCommit || field(stateText, 'delivery-head')
   const stateHead = field(stateText, 'head') || field(stateText, 'task-context').match(/@\s*([0-9a-f]{7,40})/i)?.[1] || ''
@@ -392,6 +399,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     : head ? [git(repo, ['log', '-1', '--format=%H%x09%s', head])].filter(Boolean) : []
   const reconciliation = reconcileRepositoryState({ head, upstreamHead, deliveredHead, stateHead, commits })
   const reasons = []
+  if (installation.upgradeRecommended) reasons.push(`skill_upgrade_${installation.reason || 'drift'}`)
   if (restartRequired) reasons.push('mcp_runtime_missing_restart_required')
   else if (boundary.blocked) reasons.push(boundary.code)
   else if (!localRun) {
@@ -421,6 +429,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       : platform === true
         ? taskId ? 'platform_attached' : 'platform_ready'
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
+    installation,
     platform: { configured: teamConfigured, connected: localRun ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, mcpRuntime: mcpRuntimeState, localFallback: explicitLocalFallback, runtime: runtime ? { buildCommit: runtime.build?.commit || '', schemaRevision: runtime.schemaRevision || '', taskStoreMode: runtime.taskStoreMode || '', database: runtime.database || '' } : null, pendingDeliveries, outbox },
     repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty, harnessMode, harnessEligible: harnessMode === 'server', sessionRoot },
     task: {

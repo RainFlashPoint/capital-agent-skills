@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { inspectCapStatus, reconcileRepositoryState, resolveNextAction } from './cap-status.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
@@ -90,14 +91,14 @@ test('legacy local cap gate without an independent field remains compatible', ()
 })
 
 test('satisfied independent review requires a bound fresh-context report', async () => {
-  const repo = await fixture(); const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-independent-review-')); const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
   await mkdir(join(repo, '.cap', 'review'), { recursive: true })
   await writeFile(join(repo, '.cap', 'STATE.md'), `stage: review\nstatus: in-progress\ncomplexity: L3\nbase-commit: ${head}\nindependent-review: satisfied\nindependent-review-evidence: review/independent.md\ncap-gate: PASS reviewed-head=${head}\n`)
-  const blocked = await inspectCapStatus({ repoRoot: repo, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
+  const blocked = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
   assert.equal(blocked.workflow.stage, 'review'); assert.equal(blocked.workflow.gated, true)
   const fp = await inspectContextFingerprint(repo)
   await writeFile(join(repo, '.cap', 'review', 'independent.md'), `review-kind: fresh-context-independent\nsource-commit: ${head}\nbase-commit: ${head}\ncontext-fingerprint: ${fp.index}:${fp.worktree}:${fp.untracked}\nverdict: CLEAN\nindependence: fresh-context\nsource-mutated: false\n`)
-  const passed = await inspectCapStatus({ repoRoot: repo, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
+  const passed = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
   assert.equal(passed.workflow.stage, 'release')
 })
 
@@ -498,4 +499,16 @@ test('matching local remote and delivered heads require no reconciliation', () =
   assert.equal(result.needsDeliveryReconciliation, false)
   assert.equal(result.headPushed, true)
   assert.equal(result.pushRequired, false)
+})
+
+test('status exposes an automatic Skill upgrade action when install manifest drifts', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-skill-drift-'))
+  const sourceRoot = fileURLToPath(new URL('..', import.meta.url))
+  await mkdir(join(home, '.capital-agent'), { recursive: true })
+  await writeFile(join(home, '.capital-agent', 'install-manifest.json'), JSON.stringify({ schemaVersion: 1, sourceRoot, sourceCommit: 'old', version: '0.0.0', files: [] }))
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
+  assert.equal(result.installation.upgradeRecommended, true)
+  assert.equal(result.workflow.upgradeRecommended, true)
+  assert.equal(result.workflow.action, '升级本地 Skills')
+  assert.match(result.reasons.join(','), /skill_upgrade_/)
 })
