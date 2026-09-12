@@ -20,6 +20,8 @@ description: >
 
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
+> **本地执行证据**：显式 local / local-only 模式同时遵循 `../cap-flow/references/local-execution.md`。构建、测试、打包复用当前源码快照上的真实命令结果；评审仍需独立证据，单次命令 PASS 不替代阶段全部验收。
+
 同时读取 `../cap-flow/references/harness-action-protocol.md`。Review Run 默认只读源码：只产 Findings 和 Review Evidence；任何修复都必须进入独立 Patch Action，新 Commit 再走新的 Test/Review，禁止“边审边改再给自己 PASS”。
 高风险改动还必须读取并执行 `../cap-flow/references/independent-review.md` 的 fresh-context 独立复核门。
 

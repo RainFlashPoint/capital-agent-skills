@@ -4,7 +4,11 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.10.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.11.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.11.0 更新
+
+本地构建、测试、打包接入无需密钥的执行记录器：自动发现项目命令、绑定当前源码快照、状态检查重验最近结果。补齐 Ontology 安装校验、执行证据归档与历史经验只读审计。普通用户继续使用 `/cap`，详情与兼容范围见 [升级说明](docs/local-efficiency-upgrade.md)。授权体系与生产 Server/Runner 接入延后。
 
 ## v0.10.0 更新
 

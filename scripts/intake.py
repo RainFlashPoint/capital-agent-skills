@@ -45,7 +45,7 @@ LEGACY_STAGE_ALIASES = {"map": "understand", "shape": "define", "build": "implem
 def normalize_stage(stage):
     value = str(stage or "").strip().lower()
     return LEGACY_STAGE_ALIASES.get(value, value)
-RETIRE_ARTIFACTS = ["task-context.md", "spec.md", "plan.md", "experience.md", "verify", "review", "STATE.md"]
+RETIRE_ARTIFACTS = ["task-context.md", "spec.md", "plan.md", "experience.md", "verify", "review", "execution", "release", "STATE.md"]
 RETIRE_PHASES = {"snapshot": 0, "cleanup": 1, "index": 2, "leaf": 3, "backflow": 4, "complete": 5}
 MAX_EXPERIENCE_INDEX_ITEMS = 8
 

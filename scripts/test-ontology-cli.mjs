@@ -17,7 +17,7 @@ test('O14: legacy sample lookup removed; missing/extra CLI args fail',()=>{
 test('O12: Skill source drift fails structural verification',async t=>{
  const temp=await mkdtemp(join(tmpdir(),'ontology source '));t.after(()=>rm(temp,{recursive:true,force:true}))
  const mappings=JSON.parse(await readFile(join(root,'ontology/mappings.json'),'utf8'))
- for(const path of ['ontology','runtime/ontology','scripts/validate-ontology.mjs',...mappings.sourceFiles,...['logic','journey','model'].map(c=>`skills/cap-test/checks/${c}.md`)]){
+ for(const path of ['ontology','runtime/ontology','runtime/execution','scripts/validate-ontology.mjs',...mappings.sourceFiles,...['logic','journey','model'].map(c=>`skills/cap-test/checks/${c}.md`)]){
  await mkdir(join(temp,path.substring(0,path.lastIndexOf('/'))),{recursive:true});await cp(join(root,path),join(temp,path),{recursive:true})}
  const validate=()=>spawnSync(process.execPath,[join(temp,'scripts/validate-ontology.mjs')],{encoding:'utf8'})
  assert.equal(validate().status,0)

@@ -223,6 +223,28 @@ source-commit: def
             self.assertFalse(os.path.exists(os.path.join(cap, "experience.md")))
             self.assertFalse(os.path.exists(os.path.join(cap, "STATE.md")))
 
+    def test_retire_manifest_includes_execution_and_release_artifacts(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap, names=("STATE.md",))
+            for name in ("execution", "release"):
+                os.makedirs(os.path.join(cap, name))
+                with open(os.path.join(cap, name, "evidence.md"), "w", encoding="utf-8") as f:
+                    f.write(name)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_exec\n")
+            r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
+                           "--task-id", "task_exec", "--delivery-commit", "def",
+                           "--gate-status", "passed", "--strict")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            archive = os.path.join(cap, "history", "task_exec")
+            with open(os.path.join(archive, "manifest.json"), encoding="utf-8") as f:
+                manifest = json.load(f)
+            paths = {item["path"] for item in manifest["artifacts"]}
+            self.assertIn("execution/evidence.md", paths)
+            self.assertIn("release/evidence.md", paths)
+            self.assertFalse(os.path.exists(os.path.join(cap, "execution")))
+            self.assertFalse(os.path.exists(os.path.join(cap, "release")))
+
     def test_strict_retire_refuses_without_done_and_preserves_active_files(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap)

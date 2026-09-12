@@ -18,6 +18,8 @@ description: >
 
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
+> **本地执行证据**：显式 local / local-only 模式同时遵循 `../cap-flow/references/local-execution.md`。构建、测试、打包复用当前源码快照上的真实命令结果；评审仍需独立证据，单次命令 PASS 不替代阶段全部验收。
+
 同时读取 `../cap-flow/references/harness-action-protocol.md`。本阶段本地报告是诊断与 Provider 输入；当平台 Action API 可用且已有精确 Commit 时，必须创建独立 Test Action 并等待 Server 判定。Skills/STATE 不得自行证明质量 Gate PASS。
 > 涉及测试账号、外部参数或外部状态写入时，遵守任务侦察协议的“先取证，再询问”：先复用仓库与知识库已有测试资产；授权与影响边界已经明确时直接推进，只有真实缺口或风险才设置人工门禁。
 

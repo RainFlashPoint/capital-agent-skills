@@ -1,14 +1,18 @@
-# Trusted Execution Protocol v1
+# Execution Protocol: local v2 and future trusted execution
 
-## Purpose
+## 当前已实现：local-observed v2
 
-Ontology answers whether a claim applies. It does not grant a process permission to run. This protocol connects an approved Agent action to an isolated execution, binds the resulting evidence to the exact action, and gives Server Gate a deterministic pass/block decision.
+本地日常入口为 `scripts/cap-execute.mjs` → `runtime/execution/local-flow.mjs`，无需签名密钥或新增授权配置。`ontology/execution.json` v2 驱动命令阶段契约；文档阶段不生成伪执行证明。
 
-```text
-Agent plan → ActionEnvelope → Trusted Executor → EvidenceBundle → Server Gate
-```
+实际链路为：本地 Task/阶段 → request.json → 普通宿主进程 → bundle.json → 本地重新校验。请求绑定 Task、Session、仓库、分支、HEAD、脏源码快照、命令哈希和协议版本；结果绑定退出码、输出哈希和执行后快照。status 重算哈希与身份，不把 gate.json PASS 直接当证据。最近失败或中断优先于历史成功；执行锁防止同一仓库同时记录两个动作，动作 ID 不复用。
 
-The local implementation is a reference contract and test executor. It is not production authentication, a remote Server, or a deployment system.
+这是本机一致性检查，不能认证恶意本机写者，不能证明命令覆盖了全部业务验收，也没有连接 Server Gate。使用与兼容范围见 [本地升级说明](../local-efficiency-upgrade.md)。
+
+## 后续设计与保留的 v1 参考实现
+
+以下描述是 `protocol.mjs`、`executor.mjs`、`gate.mjs` 的签名参考协议与未来 Server 接入方向，不是当前本地日常使用要求。v1 HMAC 示例不作为生产信任根，旧记录只保留为历史，不授予 v2 PASS。本轮按产品决策延后授权服务、权限分级、系统隔离和生产 CI/CD 接入。
+
+未来目标：Agent plan → ActionEnvelope → Trusted Executor → EvidenceBundle → Server Gate。只有完成独立身份、执行器与 Server 验证接入后，才能把本地结果升级为平台可信交付。
 
 ## 1. ActionEnvelope
 
@@ -50,7 +54,7 @@ Gate verification is fail-closed:
 4. require `status=passed` and `exitCode=0`;
 5. return `PASS` only when all checks succeed, otherwise `BLOCKED` with stable blocker codes.
 
-The Gate result is the only input allowed to advance Server workflow state. Ontology facts can add constraints and explain blockers, but cannot bypass the Gate.
+In the future Server integration, the verified Gate result is required to advance Server workflow state. Ontology facts can add constraints and explain blockers, but cannot bypass the Gate.
 
 ## 5. Production integration sequence
 

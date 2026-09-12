@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
@@ -52,8 +52,13 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
 
   await mkdir(capRoot, { recursive: true })
   const fingerprint = createHash('sha256').update(`${oldState}\n${branch}\n${gitRoot}`).digest('hex').slice(0, 12)
-  const snapshotRoot = join(capRoot, 'local-state', 'stale', safeSegment(oldTaskId), fingerprint)
-  if (await exists(snapshotRoot)) throw new Error(`stale snapshot already exists: ${snapshotRoot}`)
+  let snapshotRoot = join(capRoot, 'local-state', 'stale', safeSegment(oldTaskId), fingerprint)
+  if (!oldState) {
+    // With no active STATE there is no prior task identity to disambiguate a
+    // repeated boundary. Keep each snapshot rather than treating the same
+    // empty-state fingerprint as a collision.
+    snapshotRoot = join(capRoot, 'local-state', 'stale', safeSegment(oldTaskId), `${fingerprint}-${randomUUID()}`)
+  } else if (await exists(snapshotRoot)) throw new Error(`stale snapshot already exists: ${snapshotRoot}`)
   await mkdir(snapshotRoot, { recursive: true })
 
   const moved = []

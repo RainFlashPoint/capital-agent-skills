@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve, join, relative, isAbsolute } from 'node:path'
 import { digest, assertSchemaSupported } from '../runtime/ontology/schema.mjs'
 import { parseJson } from '../runtime/ontology/json.mjs'
+import { validateExecutionModel } from '../runtime/execution/local-support.mjs'
 import * as engine from '../runtime/ontology/engine.mjs'
 
 const root=fileURLToPath(new URL('..',import.meta.url))
@@ -16,6 +17,7 @@ async function source(path) {
 const load=async name=>parseJson(await source(`ontology/${name}.json`))
 function unique(items,label){if(!items.length||new Set(items).size!==items.length)throw new Error(`dictionary_duplicate_or_empty:${label}`)}
 try {
+  validateExecutionModel(await load('execution'))
   const [entities,relations,model,mapping,policies]=await Promise.all(['entities','relations','states','mappings','policies'].map(load))
   for(const d of [entities,relations,model,mapping,policies])if(d.schemaVersion!==1)throw new Error('definition_version_unsupported')
   const ids=entities.entities.map(e=>e.id);unique(ids,'entities');unique(relations.relations.map(r=>r.id),'relations')

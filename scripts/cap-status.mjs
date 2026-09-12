@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { lstat, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { readdirSync, readFileSync } from 'node:fs'
 import { realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -14,6 +13,7 @@ import { inspectOutbox } from './cap-outbox.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
+import { inspectLocalExecution } from '../runtime/execution/local-flow.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
@@ -33,26 +33,6 @@ function field(markdown = '', name = '') {
 }
 function checked(markdown = '', keyword = '') {
   return String(markdown).split(/\r?\n/).some(line => /^\s*-\s*\[x\]/i.test(line) && line.toLowerCase().includes(keyword.toLowerCase()))
-}
-const LOCAL_EXECUTION_ACTIONS = { understand: 'scan', define: 'build', plan: 'build', implement: 'build', test: 'test', review: 'scan', release: 'deploy' }
-function inspectLocalExecution(repo, stateText = '', currentHead = '') {
-  const required = field(stateText, 'execution-required').toLowerCase() === 'true'
-  const stage = canonicalStage(field(stateText, 'stage'))
-  const action = LOCAL_EXECUTION_ACTIONS[stage] || ''
-  const task = field(stateText, 'task-id')
-  const candidates = []
-  try {
-    for (const id of readdirSync(join(repo, '.cap', 'execution'))) {
-      const root = join(repo, '.cap', 'execution', id)
-      try {
-        const gate = JSON.parse(readFileSync(join(root, 'gate.json'), 'utf8'))
-        const receipt = JSON.parse(readFileSync(join(root, 'receipt.json'), 'utf8'))
-        if (receipt.commit === currentHead && receipt.task === task && receipt.status === 'passed' && gate.gate === 'PASS' && gate.action === action) candidates.push({ id, gate, receipt })
-      } catch {}
-    }
-  } catch {}
-  const latest = candidates.sort((a,b) => a.receipt.finishedAt.localeCompare(b.receipt.finishedAt)).at(-1)
-  return { required, stage, action, passed: Boolean(latest), artifactDir: latest ? `.cap/execution/${latest.id}` : '', gate: latest?.gate || null }
 }
 const INDEPENDENT_REVIEW_RISK = /(^|\/)(skills\/|.*SKILL\.md$|AGENTS\.md$|CLAUDE\.md$|.*(?:payment|billing|auth|credential|secret|security|permission|access|user[-_ ]?data|mcp|provider|harness|outbox|task|state|migration|database|sql|external[-_ ]?(?:api|interface)|concurr|lock|worktree|branch|release).*)/i
 function localReviewGate(markdown = '', { changedFiles = [], independentEvidence = null, currentHead = '' } = {}) {
@@ -199,6 +179,7 @@ async function persistCanonicalCursor(statePath, stateText, task = {}, effective
 }
 
 function nextFromPlatformTask(task = {}, fallback = {}) {
+  if (!task) return fallback
   const action = task?.nextAction || {}
   const executionMode = text(task?.executionMode || task?.taskContract?.executionMode)
   const projectedStage = executionMode === 'verify_only' ? 'test' : canonicalStage(task?.currentStage) || fallback.stage || 'test'
@@ -267,15 +248,15 @@ export function resolveNextAction({ stateText = '', artifacts = {}, dirty = fals
   }
 
   const stage = canonicalStage(field(stateText, 'stage')) || 'understand'
-  if (executionGate?.required && executionGate.stage === stage && !executionGate.passed) return { stage, action: `执行本地 ${executionGate.action} 动作`, reason: 'execution-required 已启用，但当前 Commit 尚无对应 Gate PASS', gated: true, executionRequired: true }
+  if (allowStateGate && executionGate?.required && executionGate.stage === stage && !executionGate.passed) return { stage, action: `执行本地 ${executionGate.action} 动作`, reason: `本地执行证据尚未通过：${executionGate.reason || 'missing Gate PASS'}`, gated: true, executionRequired: true }
   const status = field(stateText, 'status').toLowerCase() || 'in-progress'
   const deferredOnly = field(stateText, 'deferred-only').toLowerCase() === 'true'
   const declared = nextFromState(stateText)
   if ((status === 'blocked' || status === 'gated') && !deferredOnly) {
     return { stage, action: '解除当前门禁', reason: `${stage} 状态为 ${status}`, gated: true, declaredNext: declared }
   }
-  if (deferredOnly && declared && declared !== stage) return { stage: declared, action: stageLabel(declared), reason: '核心验收已通过，延期项将拆成 follow-up Task', deferredOnly: true }
-  if (declared && declared !== stage) return { stage: declared, action: stageLabel(declared), reason: '采用 STATE 中已声明的下一动作' }
+  if (deferredOnly && declared && declared !== stage && stage !== 'review' && !(executionGate?.required && ['test', 'implement', 'release'].includes(stage))) return { stage: declared, action: stageLabel(declared), reason: '核心验收已通过，延期项将拆成 follow-up Task', deferredOnly: true }
+  if (declared && declared !== stage && stage !== 'review' && !(executionGate?.required && ['test', 'implement', 'release'].includes(stage))) return { stage: declared, action: stageLabel(declared), reason: '采用 STATE 中已声明的下一动作' }
 
   switch (stage) {
     case 'understand':
@@ -285,10 +266,10 @@ export function resolveNextAction({ stateText = '', artifacts = {}, dirty = fals
     case 'plan':
       return artifacts.plan && checked(stateText, 'plan') ? { stage: 'implement', action: '编码实现', reason: '计划已就绪' } : { stage, action: '开发计划', reason: '计划尚未达到出口' }
     case 'implement':
-      return checked(stateText, 'implementation (green)') || dirty ? { stage: 'test', action: '测试验证', reason: dirty ? '检测到代码改动' : '实现门已通过' } : { stage, action: '编码实现', reason: '尚无完成实现的证据' }
+      return executionGate?.passed || checked(stateText, 'implementation (green)') || dirty ? { stage: 'test', action: '测试验证', reason: dirty ? '检测到代码改动' : '实现门已通过' } : { stage, action: '编码实现', reason: '尚无完成实现的证据' }
     case 'test':
       if (!allowStateGate) return { stage: 'test', action: '等待 Server Test Action', reason: '团队模式只接受绑定精确 Commit 的 Server Action 证据', gated: true }
-      return checked(stateText, 'test：logic') || checked(stateText, 'test: logic') ? { stage: 'review', action: '代码评审', reason: '基础验证已通过' } : { stage, action: '测试验证', reason: '仍需形成通过的验证证据' }
+      return executionGate?.passed || checked(stateText, 'test：logic') || checked(stateText, 'test: logic') ? { stage: 'review', action: '代码评审', reason: '基础验证已通过' } : { stage, action: '测试验证', reason: '仍需形成通过的验证证据' }
     case 'review':
       if (!allowStateGate) return { stage: 'review', action: '等待 Server Review Action', reason: '团队模式只接受绑定精确 Commit 的 Server Action 证据', gated: true }
       {
@@ -385,7 +366,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const changedFiles = changedFilesForReview(repo, stateText, head)
   const independentEvidence = await inspectIndependentEvidence(repo, stateText, head)
   const reviewGate = localReviewGate(stateText, { changedFiles, independentEvidence, currentHead: head })
-  const executionGate = inspectLocalExecution(repo, stateText, head)
+  const executionGate = stateText && !boundary.blocked && (localRun || harnessMode === 'local-only')
+    ? await inspectLocalExecution(repo)
+    : { required: false, passed: false, action: null, artifactDir: '', reason: 'not-local-execution' }
   const localNext = resolveNextAction({ stateText, artifacts, dirty, changedFiles, independentEvidence, currentHead: head, executionGate, allowStateGate: localRun || harnessMode === 'local-only' })
   const guardedLocalNext = !remoteTask && teamConfigured && !localRun && localNext.stage === 'test'
     ? { stage: 'implement', action: '通过 MCP 确认最终候选与 Test Action', reason: '尚未取得 Server canonical projection，不能称为正在测试验证', gated: true }
@@ -474,6 +457,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         executionAction: executionGate.action,
         executionGate: executionGate.passed ? 'PASS' : executionGate.required ? 'BLOCKED' : 'not-required',
         executionArtifact: executionGate.artifactDir,
+        executionReason: executionGate.reason,
       },
       serverDelivery: remoteTask ? {
         source: 'server_task',

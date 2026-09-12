@@ -27,7 +27,7 @@ test('execution-required keeps a stage gated until the matching local Gate passe
   const blocked = resolveNextAction({ stateText, executionGate: { required:true, stage:'test', action:'test', passed:false } })
   assert.equal(blocked.gated, true); assert.equal(blocked.executionRequired, true); assert.match(blocked.reason, /Gate PASS/)
   const passed = resolveNextAction({ stateText, executionGate: { required:true, stage:'test', action:'test', passed:true } })
-  assert.equal(passed.action, '测试验证')
+  assert.equal(passed.stage, 'review')
 })
 
 test('approved plan drives implementation instead of stopping at artifact upload', () => {

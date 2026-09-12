@@ -3,7 +3,7 @@
   "files": [
     {
       "path": "skills/cap-flow/SKILL.md",
-      "hash": "59d6770074a27651c43823e65d9a743c796e9f9014cace9eaf21febbe1c87208"
+      "hash": "a3e334c9a1eea736d2a50f7e0a81fbb0159782ba7d4547d253d4bdf7ce1cb32e"
     },
     {
       "path": "skills/cap-flow/references/complexity-routing.md",
@@ -31,23 +31,27 @@
     },
     {
       "path": "skills/cap-implement/SKILL.md",
-      "hash": "b521dc6340cf0fcb00e95fb45d30d6b80593d5fb087aa23bbf7a90a707713d1d"
+      "hash": "3b693b6cca4202804c1d79185ca7ebcdda720bebeff3befd76bcbf06cce2cdf6"
     },
     {
       "path": "skills/cap-test/SKILL.md",
-      "hash": "d6b36988fa818f734e377f95f1f9654f037fa4325ea47b92d081f726725cd5b3"
+      "hash": "11a9585f707cb985c59ba6249bdf96d427adb3ee07608975115487834d246d52"
     },
     {
       "path": "skills/cap-review/SKILL.md",
-      "hash": "44124492e75562737f62533dc4b1522d909fd536fe9d2519a62b474735dffc66"
+      "hash": "ec71e8032713cf5f466ff407d82b2049e96bc4d8d8f64feeb2834b6771c87c42"
     },
     {
       "path": "skills/cap-release/SKILL.md",
-      "hash": "10191cdda3442dbcdf3486756e91f5f2b72711949d822b50d9027d920f64569e"
+      "hash": "3bdcf641c034fb944db35f376e9eb027fc1437fca502666e86615ba8e58eb083"
     },
     {
       "path": "skills/harvest-experience/references/experience-contract.md",
       "hash": "a6e528ee34f5ff0ae86c67513244747a19841607394b6627d43bd3041a88ea54"
+    },
+    {
+      "path": "skills/cap-flow/references/local-execution.md",
+      "hash": "86f8f76b2133f9a3d9465222e0f119ab49c263e65c9801c5063c208522aa1199"
     }
   ]
 }

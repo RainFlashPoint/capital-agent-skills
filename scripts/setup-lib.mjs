@@ -66,7 +66,7 @@ export const cursorMcpConfigPath = home => join(home, '.cursor', 'mcp.json')
 export const installManifestPath = home => join(home, '.capital-agent', 'install-manifest.json')
 export const legacyCodexSkillRoot = home => join(home, '.codex', 'skills')
 
-const MANAGED_DIRECTORIES = ['skills', 'scripts', 'runtime', '.claude-plugin']
+const MANAGED_DIRECTORIES = ['skills', 'scripts', 'runtime', 'ontology', '.claude-plugin']
 const MANAGED_ROOT_FILES = ['README.md', 'CHANGELOG.md', 'AGENTS.md', 'CLAUDE.md']
 
 async function collectManagedFiles(sourceRoot) {

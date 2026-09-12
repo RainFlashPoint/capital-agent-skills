@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildSanitizedTaskRetry, isSensitiveRiskRejection, sanitizeTaskText } from './cap-task-request.mjs'
@@ -65,6 +65,17 @@ test('matching active boundary refuses implicit replacement', async () => {
   await assert.rejects(() => switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }), /refusing implicit Task replacement/)
   const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new', expectedOldTaskId: 'task_old' })
   assert.equal(result.oldTaskId, 'task_old')
+})
+
+test('repeated new Tasks without an active STATE keep independent stale snapshots', async () => {
+  const repo = await fixture()
+  const first = await switchTaskState({ repoRoot: repo, taskId: 'task_new_a', sessionId: 'session_a' })
+  await rm(join(repo, '.cap/STATE.md'))
+  await rm(join(repo, '.cap/task-context.md'))
+  const second = await switchTaskState({ repoRoot: repo, taskId: 'task_new_b', sessionId: 'session_b' })
+  assert.notEqual(first.snapshotRoot, second.snapshotRoot)
+  assert.match(first.snapshotRoot, /unknown-task/)
+  assert.match(second.snapshotRoot, /unknown-task/)
 })
 
 test('tracked active cap state blocks before any file is moved into ignored local-state', async () => {

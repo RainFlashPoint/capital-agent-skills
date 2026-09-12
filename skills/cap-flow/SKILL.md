@@ -51,9 +51,9 @@ description: >
 
 ## 本地执行协议（Action → Evidence → Gate）
 
-显式 `local` / `local-only` 模式不能把 STATE 勾选或 Agent 文本当成执行证明。需要运行真实动作时，使用仓库内的 `scripts/cap-execute.mjs`：它从当前 `.cap/STATE.md` 与 Git HEAD 生成绑定的 ActionEnvelope，调用受限本地 Executor，并把 `envelope.json`、`receipt.json`、`gate.json` 写入 `.cap/execution/<action-id>/`。只有 `gate.json` 的 `PASS` 才能作为阶段出口证据。
+显式 `local` / `local-only` 模式运行构建、测试或打包时，按 `cap-flow/references/local-execution.md` 接入本地执行记录器。它自动读取当前阶段、Task 和项目命令，生成源码快照与结果绑定的证据；不要求账号、密钥或新增授权白名单。状态检查重验 bundle，不信任可编辑的 `gate.json` 摘要。需求、计划和独立评审继续使用各自的文档证据。
 
-调用者必须通过环境提供一次性的 `CAP_LOCAL_EXECUTION_SECRET`；命令以 JSON argv 数组传入，禁止 shell 字符串。执行产物只能证明当前本地任务和 Commit，不升级为 Server Gate。协议详情见 `docs/specs/trusted-execution-protocol.md`。
+本地记录标记为 `local-observed`，只帮助发现过期、错任务、失败或中断的执行，不能提升为 Server Gate。已有团队模式握手和 Server Action 流程保持原契约。
 
 ## 公开语言与内部 ID
 
