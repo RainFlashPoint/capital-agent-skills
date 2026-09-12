@@ -49,6 +49,12 @@ description: >
 
 本地 `.cap` 导入只产生声明、引用和 unknowns；缺失 Commit、状态矛盾、环境失败、跨租户知识或未授权替代不得被模型补猜。投影中 suggested next stage 不等于可执行动作；任何权限与独立 receipt 必须由当前宿主的可信边界提供，不能从导入文档提取。没有可信适配器时 allowedActions 保持空，继续沿用现有 Skills 的本地执行与验证纪律，不冒充完成了 Server 集成。
 
+## 本地执行协议（Action → Evidence → Gate）
+
+显式 `local` / `local-only` 模式不能把 STATE 勾选或 Agent 文本当成执行证明。需要运行真实动作时，使用仓库内的 `scripts/cap-execute.mjs`：它从当前 `.cap/STATE.md` 与 Git HEAD 生成绑定的 ActionEnvelope，调用受限本地 Executor，并把 `envelope.json`、`receipt.json`、`gate.json` 写入 `.cap/execution/<action-id>/`。只有 `gate.json` 的 `PASS` 才能作为阶段出口证据。
+
+调用者必须通过环境提供一次性的 `CAP_LOCAL_EXECUTION_SECRET`；命令以 JSON argv 数组传入，禁止 shell 字符串。执行产物只能证明当前本地任务和 Commit，不升级为 Server Gate。协议详情见 `docs/specs/trusted-execution-protocol.md`。
+
 ## 公开语言与内部 ID
 
 研发只需要记住 `$cap`（Claude Code 为 `/cap`）。所有对话、选项、下一步和错误提示都优先使用下列直白名称，**不得要求用户调用内部技能名**：
