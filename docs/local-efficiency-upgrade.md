@@ -62,3 +62,7 @@ node scripts/cap-history-audit.mjs --repo /path/to/project --limit 100 --json
 ## 模型自动化入口
 
 正常使用不需要记住 `cap-execute`、`doctor` 或 `status`。模型在进入编码、测试和交付阶段时自动：发现项目入口 → 运行对应动作 → 检查结果 → 失败时返回可执行修复动作 → 重新验证。若检测到已安装 Skills 与源码的版本、Commit 或文件漂移，状态结果会携带 `upgradeRecommended`，模型先按当前 local/team 模式执行升级，再重新检查，不会静默改写团队配置。
+
+状态和执行器共同返回 `nextActions` 与 `remediation`。常见动作包括 `configure_execution_command`、`diagnose_command_failure`、`recover_interrupted_execution`、`inspect_source_changes` 和 `rerun_with_new_action_id`；模型按动作推进，不要求用户翻译内部错误码。新 Task 默认要求 implement/test/release 的本地执行证据，旧 Task 继续兼容原入口。项目画像中的 `PROFILE.test-commands` 优先于自动猜测，随后才读取 execution-config、package scripts 和语言项目文件。
+
+失败执行会在本机动作目录留下限长、脱敏的 `diagnostic.json`，供下一轮模型诊断；原始命令参数和环境不写入证据，也不上传 Server。Release 优先使用 package/pack/prepare，只有不存在时才回退 build。

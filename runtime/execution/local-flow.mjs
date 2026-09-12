@@ -11,7 +11,27 @@ const hashPattern=/^[a-f0-9]{64}$/
 const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/
 const same=(a,b)=>canonical(a)===canonical(b)
 const validDate=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value
+function diagnosticText(value='') {
+ return String(value).replace(/(authorization|password|passwd|token|secret|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s,;]+/gi,'$1=[REDACTED]').replace(/\b(?:sk|ak)-[A-Za-z0-9_-]{12,}\b/g,'[REDACTED]').slice(0,16*1024)
+}
 function actionStage(action){return {build:'implement',test:'test',package:'release'}[action]}
+// Stable, model-facing recovery contract.  These are recommendations for the
+// local workflow, not permissions or an execution policy.  A model can carry
+// them out without asking the user to memorise cap-execute flags.
+export function executionNextActions(reason='', { stage='', action='' } = {}) {
+ const code=String(reason||'').split(':')[0]
+ if(code==='verified_local_evidence') return []
+ const context={stage,action}
+ const make=(kind,label,extra={})=>({kind,label,reason:String(reason||''),requiresUser:false,...context,...extra})
+ if(code==='execution_missing'||code==='execution_command_missing') return [make('configure_execution_command','发现或补齐本地执行命令')]
+ if(code==='command_failed'||code==='timed_out'||code==='output_limit'||code==='spawn_failed') return [make('diagnose_command_failure','检查失败输出并修复实现或测试命令'),make('rerun_with_new_action_id','修复后重新执行', {requiresSourceChange:false})]
+ if(code==='source_changed_during_execution'||code==='execution_source_changed') return [make('inspect_source_changes','检查执行期间发生的源码变化'),make('rerun_with_new_action_id','确认代码稳定后重新执行')]
+ if(code==='execution_pending_or_interrupted'||code==='execution_in_progress_or_interrupted') return [make('recover_interrupted_execution','恢复或清理中断的本地执行'),make('rerun_with_new_action_id','恢复后重新执行')]
+ if(code==='execution_version_changed') return [make('upgrade_local_skills','升级本地 Skills 后重新检查'),make('rerun_with_new_action_id','使用新版本重新执行')]
+ if(code==='execution_identity_changed'||code==='execution_contract_mismatch') return [make('rebind_current_task','按当前 Task、分支和阶段重新生成执行证据'),make('rerun_with_new_action_id','绑定完成后重新执行')]
+ if(code==='execution_index_invalid'||code==='execution_request_invalid'||code==='execution_bundle_invalid'||code==='execution_artifact_invalid') return [make('repair_execution_evidence','修复损坏或不完整的本地执行证据'),make('rerun_with_new_action_id','修复后重新执行')]
+ return reason? [make('inspect_local_execution','检查本地执行状态')]:[]
+}
 async function facts(path,options={}) {
  const repo=await repoRoot(path)
  if(options.checkSession){const session=await inspectSessionRoot({repoRoot:repo,environment:options.environment??process.env,capture:false});if(session.blocked)fail(session.code)}
@@ -41,7 +61,8 @@ function gateFor(envelope,receipt) {
  const blockers=[]
  if(receipt.status!=='passed'||receipt.exitCode!==0||receipt.signal)blockers.push(receipt.status==='failed'?'command_failed':receipt.status)
  if(!same(envelope.snapshot,receipt.afterSnapshot))blockers.push('source_changed_during_execution')
- return {schemaVersion:2,trust:'local-observed',gate:blockers.length?'BLOCKED':'PASS',passed:!blockers.length,stage:envelope.stage,action:envelope.action,envelopeId:envelope.id,blockers}
+ const reason=blockers[0]||'verified_local_evidence'
+ return {schemaVersion:2,trust:'local-observed',gate:blockers.length?'BLOCKED':'PASS',passed:!blockers.length,stage:envelope.stage,action:envelope.action,envelopeId:envelope.id,blockers,nextActions:executionNextActions(reason,{stage:envelope.stage,action:envelope.action}),remediation:blockers.length?'检查 nextActions 后修复并用新的 action ID 重跑':'证据与当前源码快照一致'}
 }
 function verifyBundle(bundle,request,expected) {
  if(bundle.schemaVersion!==2||!same(bundle.envelope,request)||bundle.envelopeHash!==digest(request)||bundle.receiptHash!==digest(bundle.receipt))fail('execution_bundle_invalid')
@@ -83,6 +104,9 @@ export async function runLocalAction(repoPath='.',options={}) {
   const identityChanged=!same(initial.identity,after.identity)
   const receipt={schemaVersion:2,authority:'local-observed',...initial.identity,envelopeId:envelope.id,envelopeHash:digest(envelope),finishedAt:new Date().toISOString(),exitCode:result.exitCode,signal:result.signal,status:result.status,stdoutHash:digest(result.stdout),stderrHash:digest(result.stderr),afterSnapshot:identityChanged?null:after.snapshot,runtime:{node:process.version,platform:process.platform,arch:process.arch}}
   const gate=gateFor(envelope,receipt)
+  const diagnostic={schemaVersion:1,status:result.status,stdout:diagnosticText(result.stdout),stderr:diagnosticText(result.stderr),truncated:result.stdout.length>16*1024||result.stderr.length>16*1024}
+  receipt.diagnosticPath='diagnostic.json';receipt.diagnosticHash=digest(diagnostic)
+  await atomicJson(join(artifactDir,'diagnostic.json'),diagnostic,{exclusive:true})
   await atomicJson(join(artifactDir,'bundle.json'),{schemaVersion:2,envelope,receipt,envelopeHash:digest(envelope),receiptHash:digest(receipt)},{exclusive:true})
   // Human-facing summaries are derivatives; readers recompute from bundle.json, never trust these PASS fields.
   await atomicJson(join(artifactDir,'gate.json'),gate,{exclusive:true})
@@ -100,7 +124,7 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
   required=field(f.state,'execution-required').toLowerCase()==='true'
   if(await lstat(join(repo,'.cap/execution/.lock')).catch(e=>{if(e.code==='ENOENT')return null;throw e}))fail('execution_in_progress_or_interrupted')
   const pointer=await jsonFile(repo,`.cap/execution/latest-${stage}.json`).catch(e=>{if(e.code==='ENOENT')return null;throw e})
-  if(!pointer)return {required,stage,action,passed:false,reason:'execution_missing',artifactDir:''}
+  if(!pointer){const reason='execution_missing';return {required,stage,action,passed:false,reason,artifactDir:'',nextActions:executionNextActions(reason,{stage,action}),remediation:'发现或补齐本地执行命令'} }
   if(pointer.schemaVersion!==2||!idPattern.test(pointer.id)||!hashPattern.test(pointer.requestHash))fail('execution_index_invalid')
   const dir=`.cap/execution/${pointer.id}`,request=await jsonFile(repo,`${dir}/request.json`)
   // Prior tasks never enroll a new task into mandatory execution.
@@ -108,9 +132,13 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
   required=true
   if(request.id!==pointer.id||digest(request)!==pointer.requestHash)fail('execution_request_invalid')
   const bundle=await jsonFile(repo,`${dir}/bundle.json`).catch(e=>{if(e.code==='ENOENT')fail('execution_pending_or_interrupted');throw e})
+  if(bundle.receipt?.diagnosticPath !== 'diagnostic.json' || !hashPattern.test(bundle.receipt?.diagnosticHash || '')) fail('execution_diagnostic_invalid')
+  const diagnostic=await jsonFile(repo,`${dir}/diagnostic.json`).catch(()=>null)
+  if(!diagnostic || digest(diagnostic)!==bundle.receipt.diagnosticHash) fail('execution_diagnostic_invalid')
   const gate=verifyBundle(bundle,request,{...f,stage})
-  return {required,stage,action,passed:gate.passed,reason:gate.blockers[0]||'verified_local_evidence',artifactDir:dir,gate}
- }catch(error){return {required:true,stage,action,passed:false,reason:error.code==='ENOENT'?'execution_missing':String(error.message).startsWith('execution_')?error.message:'execution_artifact_invalid',artifactDir:''}}
+  const reason=gate.blockers[0]||'verified_local_evidence'
+  return {required,stage,action,passed:gate.passed,reason,artifactDir:dir,gate,nextActions:gate.nextActions,remediation:gate.remediation}
+ }catch(error){const reason=error.code==='ENOENT'?'execution_missing':String(error.message).startsWith('execution_')?error.message:'execution_artifact_invalid';return {required:true,stage,action,passed:false,reason,artifactDir:'',nextActions:executionNextActions(reason,{stage,action}),remediation:'检查本地执行证据并按 nextActions 修复'}}
 }
 export async function doctorLocalExecution(repoPath='.') {
  const f=await facts(repoPath),stage=f.stage,contract=stage==='done'?null:executionContract(stage)

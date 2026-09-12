@@ -39,6 +39,64 @@ export async function jsonFile(root,path) {
  const dir=dirname(path);if(dir!=='.')await safePath(root,dir)
  return readJson(join(root,path))
 }
+
+// PROFILE is intentionally a small, dependency-free map rather than a general
+// YAML document.  It lets local execution reuse the project's declared test
+// entry points without teaching the recorder a second configuration language.
+function profileCommandMap(text) {
+ const line=String(text).split(/\r?\n/).find(value=>/^test-commands\s*:/.test(value.trim()))
+ if(!line)return {}
+ let body=line.trim().replace(/^test-commands\s*:\s*/, '').trim()
+ if(body.startsWith('{')&&body.endsWith('}'))body=body.slice(1,-1)
+ const result={};let key='',value='',quote='',escaped=false,readingKey=true
+ const commit=()=>{const k=key.trim().replace(/^['"]|['"]$/g,'').toLowerCase();const v=value.trim().replace(/^['"]|['"]$/g,'');if(k&&v)result[k]=v;key='';value='';readingKey=true}
+ for(let i=0;i<=body.length;i++) {
+  const c=body[i]??','
+  if(quote){if(escaped){if(readingKey)key+=c;else value+=c;escaped=false;continue}if(c==='\\'){escaped=true;continue}if(c===quote){quote='';continue}if(readingKey)key+=c;else value+=c;continue}
+  if(c==='"'||c==="'"){quote=c;continue}
+  if(readingKey&&c===':'){readingKey=false;continue}
+  if(!readingKey&&c===','){commit();continue}
+  if(readingKey)key+=c;else value+=c
+ }
+ return result
+}
+function commandArgv(value) {
+ if(typeof value!=='string'||!value.trim())return null
+ if(/^none(?:\s|$)/i.test(value.trim()))return null
+ // PROFILE stores argv as text for portability, but the recorder never sends
+ // it through a shell. Reject shell control/glob syntax instead of guessing.
+ const out=[];let token='',quote='',escaped=false
+ const flush=()=>{if(token){out.push(token);token=''}}
+ for(const c of value.trim()) {
+  if(quote){if(escaped){token+=c;escaped=false;continue}if(c==='\\'){escaped=true;continue}if(c===quote){quote='';continue}token+=c;continue}
+  if(c==='"'||c==="'"){quote=c;continue}
+  if(c==='\\'){escaped=true;continue}
+  if(/\s/.test(c)){flush();continue}
+  if(/[|;&<>*?`$]/.test(c))return null
+  token+=c
+ }
+ if(quote||escaped)return null
+ flush();return out.length?argvCheck(out):null
+}
+async function profileCommands(repo) {
+ const profile=await textFile(repo,'.cap/PROFILE.md').catch(e=>{if(e.code==='ENOENT')return '';throw e})
+ return profileCommandMap(profile)
+}
+async function exists(repo,name){return Boolean(await lstat(join(repo,name)).catch(()=>null))}
+async function makeFileCommand(repo,stage) {
+ const py=await exists(repo,'pyproject.toml')||await exists(repo,'pytest.ini')||await exists(repo,'tox.ini')||await exists(repo,'setup.cfg')
+ if(py&&stage==='test')return ['python3','-m','pytest']
+ if(await exists(repo,'Cargo.toml'))return stage==='test'?['cargo','test']:stage==='implement'?['cargo','check']:stage==='release'?['cargo','build','--release']:null
+ if(await exists(repo,'go.mod'))return stage==='test'?['go','test','./...']:stage==='implement'||stage==='release'?['go','build','./...']:null
+ if(await exists(repo,'pom.xml'))return stage==='test'?['mvn','test']:stage==='implement'?['mvn','-DskipTests','package']:stage==='release'?['mvn','package','-DskipTests']:null
+ if(await exists(repo,'gradlew'))return stage==='test'?['./gradlew','test']:stage==='implement'?['./gradlew','build']:stage==='release'?['./gradlew','assemble']:null
+ if(await exists(repo,'build.gradle')||await exists(repo,'build.gradle.kts'))return stage==='test'?['gradle','test']:stage==='implement'?['gradle','build']:stage==='release'?['gradle','assemble']:null
+ if(await exists(repo,'Makefile')) {
+  const make=await textFile(repo,'Makefile').catch(()=>''),target=stage==='test'?'test':stage==='implement'?'build':stage==='release'?'package':null
+  if(target&&new RegExp(`^${target}\\s*:`,'m').test(make))return ['make',target]
+ }
+ return null
+}
 export async function atomicJson(path,value,{exclusive=false}={}) {
  const data=`${JSON.stringify(value,null,2)}\n`
  if(exclusive){await writeFile(path,data,{flag:'wx'});return}
@@ -65,13 +123,20 @@ export async function commandFor(repo,stage,explicit,action) {
  const path='.cap/execution-config.json'
  const config=await jsonFile(repo,path).catch(e=>{if(e.code==='ENOENT')return null;throw e})
  if(config){if(config.schemaVersion!==1||!config.commands||typeof config.commands!=='object')fail('execution_config_invalid');const value=config.commands[stage]||config.commands[action];if(value)return {argv:argvCheck(value),source:path}}
+ const profile=await profileCommands(repo)
+ const profileKeys=stage==='test'?['unit','test']:stage==='implement'?['build']:stage==='release'?['package','pack','prepare','build']:[]
+ for(const key of profileKeys){const argv=commandArgv(profile[key]);if(argv)return {argv,source:'.cap/PROFILE.md#test-commands'} }
  const pkg=await jsonFile(repo,'package.json').catch(e=>{if(e.code==='ENOENT')return null;throw e})
- const script={implement:'build',test:'test',release:'build'}[stage]
- if(pkg?.scripts?.[script]) {
+ const scripts=pkg?.scripts&&typeof pkg.scripts==='object'?pkg.scripts:null
+ const scriptKeys=stage==='test'?['test']:stage==='implement'?['build']:stage==='release'?['package','pack','prepare','build']:[]
+ const script=scriptKeys.find(key=>typeof scripts?.[key]==='string'&&scripts[key].trim())
+ if(script) {
   let manager='npm'
   for(const [lock,tool] of [['pnpm-lock.yaml','pnpm'],['yarn.lock','yarn']])if(await lstat(join(repo,lock)).catch(()=>null))manager=tool
   return {argv:[manager,'run',script],source:'package.json'}
  }
+ const discovered=await makeFileCommand(repo,stage)
+ if(discovered)return {argv:argvCheck(discovered),source:'project-files'}
  return {argv:[],source:'missing'}
 }
 export async function nativeArgv(argv,env) {

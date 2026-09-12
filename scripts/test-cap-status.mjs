@@ -512,3 +512,12 @@ test('status exposes an automatic Skill upgrade action when install manifest dri
   assert.equal(result.workflow.action, '升级本地 Skills')
   assert.match(result.reasons.join(','), /skill_upgrade_/)
 })
+
+test('status keeps an unmanaged install usable while exposing bootstrap guidance', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-unmanaged-'))
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
+  assert.equal(result.installation.status, 'unmanaged')
+  assert.equal(result.installation.bootstrapRecommended, true)
+  assert.equal(result.workflow.action, '项目了解')
+  assert.equal(result.nextActions[0].kind, 'bootstrap_local_skills')
+})

@@ -24,6 +24,11 @@ test('ordinary local run needs no key and persisted evidence can be recomputed',
  assert.equal((await inspectLocalExecution(root)).passed,true)
  assert.equal((await readFile(join(run.artifactDir,'bundle.json'),'utf8')).includes('CAP_LOCAL_EXECUTION_SECRET'),false)
 })
+test('failed execution keeps bounded redacted diagnostics for model recovery',async t=>{
+ const root=await fixture(t);const run=await runLocalAction(root,{environment:{TOKEN:'hidden'},command:[process.execPath,'-e','console.error("token=sk-123456789012345");process.exit(2)']})
+ const diagnostic=JSON.parse(await readFile(join(run.artifactDir,'diagnostic.json'),'utf8'))
+ assert.equal(run.gate.gate,'BLOCKED');assert.match(diagnostic.stderr,/REDACTED/);assert.doesNotMatch(diagnostic.stderr,/sk-123456789012345/);assert.ok(run.gate.nextActions.some(item=>item.kind==='diagnose_command_failure'))
+})
 test('current dirty snapshot is supported, later source edit invalidates old evidence',async t=>{
  const root=await fixture(t);await writeFile(join(root,'source.txt'),'dirty-before\n')
  assert.equal((await runLocalAction(root,opts)).gate.gate,'PASS')
@@ -54,6 +59,24 @@ test('wrong Task/session, branch and commit never reuse old execution',async t=>
 test('project package test command is discovered without manually entering argv',async t=>{
  const root=await fixture(t);await writeFile(join(root,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(0)"'}}))
  const report=await doctorLocalExecution(root);assert.equal(report.command.source,'package.json');assert.ok(report.command.argv.includes('test'))
+})
+test('PROFILE test-commands are preferred for test and build discovery',async t=>{
+ const root=await fixture(t)
+ await writeFile(join(root,'.cap/PROFILE.md'),'test-commands: { unit: "python3 -m pytest tests/unit", build: "python3 -m compileall src" }\n')
+ let report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['python3','-m','pytest','tests/unit']);assert.equal(report.command.source,'.cap/PROFILE.md#test-commands')
+ await writeFile(join(root,'.cap/STATE.md'),(await readFile(join(root,'.cap/STATE.md'),'utf8')).replace('stage: test','stage: implement'))
+ report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['python3','-m','compileall','src'])
+})
+test('release discovery prefers package, pack, then prepare over build',async t=>{
+ const root=await fixture(t)
+ await writeFile(join(root,'.cap/STATE.md'),(await readFile(join(root,'.cap/STATE.md'),'utf8')).replace('stage: test','stage: release'))
+ await writeFile(join(root,'package.json'),JSON.stringify({scripts:{build:'echo build',prepare:'echo prepare',pack:'echo pack',package:'echo package'}}))
+ let report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['npm','run','package'])
+ await writeFile(join(root,'package.json'),JSON.stringify({scripts:{build:'echo build',prepare:'echo prepare',pack:'echo pack'}}));report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['npm','run','pack'])
+})
+test('lightweight project file discovery supplies non-Node test runners',async t=>{
+ const root=await fixture(t);await writeFile(join(root,'pyproject.toml'),'[tool.pytest.ini_options]\n')
+ const report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['python3','-m','pytest']);assert.equal(report.command.source,'project-files')
 })
 test('missing command gets a useful diagnostic; document/review stages never invent execution',async t=>{
  const root=await fixture(t);await assert.rejects(runLocalAction(root,{environment:{}}),/execution_command_missing/)
@@ -86,11 +109,16 @@ test('cap-status consumes real evidence and blocks stale or failed results despi
  await writeFile(join(root,'.cap/STATE.md'),state.replace('- [x] test: logic','')+'\n## Next action\n-> cap-release\n')
  const status=()=>inspectCapStatus({repoRoot:root,homeDir:root,environment:{CAPITAL_AGENT_MODE:'local'},fetchImpl:()=>{throw new Error('local must not fetch')}})
  await runLocalAction(root,opts)
- let report=await status();assert.equal(report.task.localExecution.executionGate,'PASS');assert.equal(report.workflow.stage,'review')
+ let report=await status();assert.equal(report.task.localExecution.executionGate,'PASS');assert.equal(report.workflow.stage,'review');assert.deepEqual(report.task.localExecution.nextActions,[])
  await writeFile(join(root,'source.txt'),'changed\n')
- report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test')
+ report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test');assert.equal(report.nextActions[0].kind,'inspect_source_changes');assert.equal(report.nextActions[1].kind,'rerun_with_new_action_id');assert.equal(report.nextActions[0].requiresUser,false)
  await runLocalAction(root,{environment:{},command:[process.execPath,'-e','process.exit(2)']})
- report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test')
+ report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test');assert.equal(report.nextActions[0].kind,'diagnose_command_failure');assert.equal(report.nextActions[1].kind,'rerun_with_new_action_id')
+})
+
+test('missing local execution exposes a stable automatic remediation contract',async t=>{
+ const root=await fixture(t);const report=await inspectLocalExecution(root)
+ assert.equal(report.reason,'execution_missing');assert.equal(report.nextActions[0].kind,'configure_execution_command');assert.equal(report.nextActions[0].requiresUser,false);assert.match(report.remediation,/执行命令/)
 })
 test('active lock rejects concurrent run; pending latest cannot reuse old success',async t=>{
  const root=await fixture(t);await runLocalAction(root,opts)

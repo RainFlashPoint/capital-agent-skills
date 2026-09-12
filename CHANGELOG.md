@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.1
+
+- 模型自动编排补齐机器可读 `nextActions` / `remediation`，失败、源码变化、锁中断和缺少命令都有可执行修复动作。
+- 新 Task 默认要求本地 implement/test/release 执行证据；旧 Task 保持兼容。
+- 执行器接入 `.cap/PROFILE.md` 命令、package/pack/prepare 发布入口及 Python、Go、Cargo、Maven、Gradle、Make 项目发现。
+- 失败动作保留限长脱敏诊断，修复安装清单漂移提示与本地经验沉淀文案矛盾。
+
 ## 0.11.0
 
 - 本地执行升级为无需账号/密钥的 local-observed v2：阶段契约、项目命令发现、doctor、独占执行与中断恢复；正常 `$cap` 由模型自动调用这些内部动作。

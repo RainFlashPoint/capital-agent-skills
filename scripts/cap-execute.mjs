@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url'
-import { runLocalAction, doctorLocalExecution, inspectLocalExecution, recoverLocalExecution } from '../runtime/execution/local-flow.mjs'
+import { runLocalAction, doctorLocalExecution, inspectLocalExecution, recoverLocalExecution, executionNextActions } from '../runtime/execution/local-flow.mjs'
 import { parseJson } from '../runtime/ontology/json.mjs'
 
 export function parseArguments(argv) {
@@ -36,8 +36,10 @@ export async function main(argv=process.argv.slice(2)) {
   process.stdout.write(`${JSON.stringify(result,null,2)}\n`)
   return options.operation==='run'&&!result.gate.passed?1:0
  }catch(error){
-  const code=/^(execution_|json_|session_root_)[A-Za-z0-9_]+/.exec(String(error.message))?.[0]||'execution_failed'
-  process.stderr.write(`cap-execute: ${code}\n`);return 1
+  const message=String(error.message)
+  const code=/^(execution_|json_|session_root_)[A-Za-z0-9_]+/.exec(message)?.[0]||'execution_failed'
+  const payload={code,nextActions:executionNextActions(code),remediation:code==='execution_command_missing'?'补充 .cap/execution-config.json、PROFILE.test-commands 或项目测试脚本后重试':'按 nextActions 处理后使用新的 action ID 重试'}
+  process.stderr.write(`cap-execute: ${JSON.stringify(payload)}\n`);return 1
  }
 }
 if(import.meta.url===pathToFileURL(process.argv[1]||'').href)process.exitCode=await main()

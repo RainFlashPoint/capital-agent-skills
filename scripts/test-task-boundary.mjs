@@ -70,6 +70,7 @@ test('matching active boundary refuses implicit replacement', async () => {
 test('repeated new Tasks without an active STATE keep independent stale snapshots', async () => {
   const repo = await fixture()
   const first = await switchTaskState({ repoRoot: repo, taskId: 'task_new_a', sessionId: 'session_a' })
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /execution-required: true/)
   await rm(join(repo, '.cap/STATE.md'))
   await rm(join(repo, '.cap/task-context.md'))
   const second = await switchTaskState({ repoRoot: repo, taskId: 'task_new_b', sessionId: 'session_b' })

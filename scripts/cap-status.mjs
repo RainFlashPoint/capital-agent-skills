@@ -13,7 +13,7 @@ import { inspectOutbox } from './cap-outbox.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
-import { inspectLocalExecution } from '../runtime/execution/local-flow.mjs'
+import { inspectLocalExecution, executionNextActions } from '../runtime/execution/local-flow.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
@@ -249,7 +249,10 @@ export function resolveNextAction({ stateText = '', artifacts = {}, dirty = fals
   }
 
   const stage = canonicalStage(field(stateText, 'stage')) || 'understand'
-  if (allowStateGate && executionGate?.required && executionGate.stage === stage && !executionGate.passed) return { stage, action: `执行本地 ${executionGate.action} 动作`, reason: `本地执行证据尚未通过：${executionGate.reason || 'missing Gate PASS'}`, gated: true, executionRequired: true }
+  if (allowStateGate && executionGate?.required && executionGate.stage === stage && !executionGate.passed) {
+    const reason=executionGate.reason || 'execution_missing'
+    return { stage, action: `执行本地 ${executionGate.action} 动作`, reason: `本地执行证据尚未通过：${reason}（需要 Gate PASS）`, remediation: executionGate.remediation || '检查 nextActions 后修复并用新的 action ID 重跑', nextActions: executionGate.nextActions || executionNextActions(reason,{stage,action:executionGate.action}), gated: true, executionRequired: true }
+  }
   const status = field(stateText, 'status').toLowerCase() || 'in-progress'
   const deferredOnly = field(stateText, 'deferred-only').toLowerCase() === 'true'
   const declared = nextFromState(stateText)
@@ -294,7 +297,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const configText = await readFile(configPath, 'utf8').catch(() => '')
   const config = Object.fromEntries(configText.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1], match[2]]))
   const installProbe = await inspectInstallManifest(homeDir, packageRoot)
-  const installation = installProbe.reason === 'manifest_missing' ? { status: 'unmanaged', upgradeRecommended: false, reason: 'manifest_missing' } : { status: installProbe.ok ? 'current' : 'drifted', upgradeRecommended: !installProbe.ok, reason: installProbe.reason || '', changedFiles: installProbe.changedFiles || [], sourceRoot: installProbe.current?.sourceRoot || installProbe.recorded?.sourceRoot || '' }
+  const installation = installProbe.reason === 'manifest_missing'
+    ? { status: 'unmanaged', upgradeRecommended: false, bootstrapRecommended: true, reason: 'manifest_missing', changedFiles: [], sourceRoot: packageRoot, nextActions: [{ kind: 'bootstrap_local_skills', label: '初始化本地 Skills 安装清单', reason: 'manifest_missing', requiresUser: false }] }
+    : { status: installProbe.ok ? 'current' : 'drifted', upgradeRecommended: !installProbe.ok, reason: installProbe.reason || '', changedFiles: installProbe.changedFiles || [], sourceRoot: installProbe.current?.sourceRoot || installProbe.recorded?.sourceRoot || '' }
   const explicitLocal = text(environment.CAPITAL_AGENT_MODE || config.CAPITAL_AGENT_MODE).toLowerCase() === 'local'
   const mcpRuntimeState = normalizeMcpRuntime(mcpRuntime)
   let serverUrl = ''
@@ -388,7 +393,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     ? { stage: 'done', action: '归档并沉淀经验', reason: '平台 Task 的同 Commit 交付门禁已全部通过' }
     : nextFromPlatformTask(remoteTask, guardedLocalNext)
   const next = installation.upgradeRecommended
-    ? { ...nextBase, stage: localStage || nextBase.stage || 'understand', action: '升级本地 Skills', reason: `检测到 Skills ${installation.reason || '漂移'}，模型应先执行对应模式的升级并重新检查`, upgradeRecommended: true, upgradeReason: installation.reason || 'drift' }
+    ? { ...nextBase, stage: localStage || nextBase.stage || 'understand', action: installation.reason === 'manifest_missing' ? '初始化本地 Skills' : '升级本地 Skills', reason: `检测到 Skills ${installation.reason || '漂移'}，模型应先执行对应模式的 ${installation.reason === 'manifest_missing' ? '初始化' : '升级'} 并重新检查`, remediation: installation.reason === 'manifest_missing' ? '先按当前模式运行本地安装，再重新运行状态检查' : '先升级本地 Skills，再重新运行状态检查', nextActions: [{ kind: installation.reason === 'manifest_missing' ? 'bootstrap_local_skills' : 'upgrade_local_skills', label: installation.reason === 'manifest_missing' ? '初始化本地 Skills 并重新检查' : '升级本地 Skills 并重新检查', reason: installation.reason || 'drift', requiresUser: false, stage: localStage || nextBase.stage || 'understand', action: installation.reason === 'manifest_missing' ? 'bootstrap_local_skills' : 'upgrade_local_skills' }], upgradeRecommended: true, upgradeReason: installation.reason || 'drift' }
     : nextBase
   const followUpBaseCommit = switchingTask ? text(remoteTask?.baseCommit || remoteTask?.taskContract?.baseCommit) : ''
   const deliveredHead = followUpBaseCommit || field(stateText, 'delivery-head')
@@ -467,6 +472,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         executionGate: executionGate.passed ? 'PASS' : executionGate.required ? 'BLOCKED' : 'not-required',
         executionArtifact: executionGate.artifactDir,
         executionReason: executionGate.reason,
+        nextActions: executionGate.nextActions || [],
+        remediation: executionGate.remediation || '',
       },
       serverDelivery: remoteTask ? {
         source: 'server_task',
@@ -482,6 +489,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     reconciliation,
     boundary,
     correction,
+    nextActions: next.nextActions || installation.nextActions || [],
+    remediation: next.remediation || next.nextActions?.[0]?.reason || installation.nextActions?.[0]?.reason || '',
     workflow: restartRequired
       ? { currentStage: localStage, status: 'gated', stage: localStage || 'understand', action: '选择：重启恢复团队模式，或本次明确改用本地模式继续', reason: '当前会话未加载已配置的 Capital Agent MCP；不会静默丢失团队证据，也不会强制中断本地研发', gated: true, options: [
           { id: 'restart', label: '重启后使用团队模式' },
