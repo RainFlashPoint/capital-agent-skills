@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildCandidateDelivery, buildPushAuthorizationFingerprint } from './client-delivery.mjs'
+import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, repositoryUrlHasEmbeddedCredentials } from './client-delivery.mjs'
 import { parseArguments, runPushCandidateDelivery } from './cap-push-candidate.mjs'
 
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -276,6 +276,8 @@ test('verification evidence must bind the exact candidate Commit and reject unkn
     { ...verificationFor(sourcePlaceholder()), commands: [{ command: 'node --test', exitCode: 1 }] },
     { ...verificationFor(sourcePlaceholder()), commands: [] },
     { ...verificationFor(sourcePlaceholder()), environmentFingerprint: 'os=darwin;GITHUB_TOKEN=must-not-leave-client' },
+    { ...verificationFor(sourcePlaceholder()), commands: [{ command: 'node --test', exitCode: false }] },
+    { ...verificationFor(sourcePlaceholder()), commands: undefined, qualityAssetIds: ['ghp_super_secret_token'] },
   ]) {
     const source = await fixture()
     if (verification.sourceCommit === sourcePlaceholder().head) verification.sourceCommit = source.head
@@ -292,6 +294,32 @@ test('verification evidence must bind the exact candidate Commit and reject unkn
     assert.match(result.reason, /^verification_(commit_mismatch|fields_invalid|command_failed|evidence_missing)$/)
     assert.throws(() => git(source.remote, ['rev-parse', `refs/heads/${source.branch}`]))
   }
+})
+
+test('missing Task identity is rejected before any remote write', async () => {
+  const source = await fixture()
+  await writeFile(join(source.repo, '.cap/STATE.md'), 'session-id: session_candidate\n')
+  const result = await runPushCandidateDelivery(source.repo, {
+    taskId: '', branch: source.branch, commitSha: source.head,
+    authorizedFingerprint: buildPushAuthorizationFingerprint({ repoUrl: source.remote, pushUrl: source.remote, taskId: '', branch: source.branch, commitSha: source.head }),
+    verification: verificationFor(source), serverUrl: 'https://capital.example.test', userKey: 'user-key',
+  })
+  assert.equal(result.reason, 'task_identity_invalid')
+  assert.throws(() => git(source.remote, ['rev-parse', `refs/heads/${source.branch}`]))
+})
+
+test('remote URL credential checks reject query and fragment secrets but allow SSH usernames', () => {
+  assert.equal(repositoryUrlHasEmbeddedCredentials('https://example.test/repo.git?access_token=secret'), true)
+  assert.equal(repositoryUrlHasEmbeddedCredentials('https://example.test/repo.git#token=secret'), true)
+  assert.equal(repositoryUrlHasEmbeddedCredentials('ssh://git@example.test/org/repo.git'), false)
+  assert.equal(repositoryUrlHasEmbeddedCredentials('git@example.test:org/repo.git'), false)
+})
+
+test('verification transmits only hashes for command and environment details', () => {
+  const normalized = normalizeCandidateVerification({ ...verificationFor(sourcePlaceholder()), environmentFingerprint: 'runtime=ghp_super_secret_token', qualityAssetIds: undefined }, sourcePlaceholder().head)
+  assert.equal(normalized.ok, true)
+  assert.match(normalized.verification.environmentFingerprint, /^sha256:[0-9a-f]{64}$/)
+  assert.equal(JSON.stringify(normalized).includes('ghp_super_secret_token'), false)
 })
 
 test('canonical readback must confirm this Task and candidate Commit', async () => {

@@ -13,11 +13,24 @@ export function sanitizeRepositoryUrl(value = '') {
   const raw = text(value)
   try {
     const parsed = new URL(raw)
-    parsed.username = ''
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') parsed.username = ''
     parsed.password = ''
+    parsed.search = ''
+    parsed.hash = ''
     return parsed.toString()
   } catch {
     return raw.replace(/(https?:\/\/)[^@\s/]+@/i, '$1')
+  }
+}
+
+export function repositoryUrlHasEmbeddedCredentials(value = '') {
+  const raw = text(value)
+  try {
+    const parsed = new URL(raw)
+    if (parsed.search || parsed.hash || parsed.password) return true
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && Boolean(parsed.username)
+  } catch {
+    return /https?:\/\/[^@\s/]+@/i.test(raw) || /^[a-z][a-z0-9+.-]*:\/\/[^\s]*[?#]/i.test(raw)
   }
 }
 
@@ -71,7 +84,7 @@ function remoteHead(repoRoot, remoteUrl, branch) {
 const VERIFICATION_FIELDS = new Set(['passed', 'status', 'outcome', 'sourceCommit', 'source_commit', 'commitSha', 'commit_sha', 'executedAt', 'executed_at', 'environmentFingerprint', 'environment_fingerprint', 'commands', 'qualityAssetIds', 'quality_asset_ids'])
 const PASS_OUTCOMES = new Set(['PASS', 'PASSED', 'SUCCESS'])
 const ENVIRONMENT_KEYS = new Set(['os', 'node', 'python', 'jdk', 'runtime', 'lock'])
-const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
+const QUALITY_ASSET_ID = /^(?:qa|quality_asset)_[A-Za-z0-9][A-Za-z0-9._:-]{0,196}$/
 
 function normalizeEnvironmentFingerprint(value = '') {
   const raw = text(value)
@@ -86,7 +99,7 @@ function normalizeEnvironmentFingerprint(value = '') {
     if (index < 1 || !ENVIRONMENT_KEYS.has(key) || seen.has(key) || !/^[A-Za-z0-9._:+-]{1,128}$/.test(item)) return { ok: false }
     seen.add(key)
   }
-  return { ok: true, value: pairs.join(';') }
+  return { ok: true, value: `sha256:${createHash('sha256').update(pairs.join(';')).digest('hex')}` }
 }
 
 export function normalizeCandidateVerification(verification = {}, commitSha = '') {
@@ -103,8 +116,8 @@ export function normalizeCandidateVerification(verification = {}, commitSha = ''
     for (const item of verification.commands) {
       if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !['command', 'exitCode', 'exit_code'].includes(key))) return { ok: false, reason: 'verification_fields_invalid' }
       const command = text(item.command)
-      const exitCode = Number(item.exitCode ?? item.exit_code)
-      if (!command || command.length > 500 || /[\r\n\x00-\x1f]/.test(command) || !Number.isInteger(exitCode)) return { ok: false, reason: 'verification_fields_invalid' }
+      const exitCode = item.exitCode ?? item.exit_code
+      if (!command || command.length > 500 || /[\r\n\x00-\x1f]/.test(command) || !Number.isSafeInteger(exitCode)) return { ok: false, reason: 'verification_fields_invalid' }
       if (exitCode !== 0) return { ok: false, reason: 'verification_command_failed' }
       commands.push({ commandHash: `sha256:${createHash('sha256').update(command).digest('hex')}`, exitCode })
     }
@@ -112,7 +125,7 @@ export function normalizeCandidateVerification(verification = {}, commitSha = ''
   const executedAt = text(verification.executedAt || verification.executed_at)
   const environment = normalizeEnvironmentFingerprint(verification.environmentFingerprint || verification.environment_fingerprint)
   const qualityAssetIds = verification.qualityAssetIds || verification.quality_asset_ids
-  if ((executedAt && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(executedAt) || !Number.isFinite(Date.parse(executedAt)))) || !environment.ok || (qualityAssetIds !== undefined && (!Array.isArray(qualityAssetIds) || qualityAssetIds.length > 100 || qualityAssetIds.some(value => typeof value !== 'string' || !SAFE_IDENTIFIER.test(value))))) return { ok: false, reason: 'verification_fields_invalid' }
+  if ((executedAt && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(executedAt) || !Number.isFinite(Date.parse(executedAt)))) || !environment.ok || (qualityAssetIds !== undefined && (!Array.isArray(qualityAssetIds) || qualityAssetIds.length > 100 || qualityAssetIds.some(value => typeof value !== 'string' || !QUALITY_ASSET_ID.test(value))))) return { ok: false, reason: 'verification_fields_invalid' }
   if (!(commands?.length) && !(qualityAssetIds?.length)) return { ok: false, reason: 'verification_evidence_missing' }
   return { ok: true, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit, ...(executedAt ? { executedAt } : {}), ...(environment.value ? { environmentFingerprint: environment.value } : {}), ...(commands?.length ? { commands } : {}), ...(qualityAssetIds?.length ? { qualityAssetIds } : {}) } }
 }

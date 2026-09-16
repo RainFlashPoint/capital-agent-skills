@@ -30,7 +30,7 @@ Skills 是 Harness Client，不是可信 Gate 内核。STATE 是游标，不是 
 
 1. 先确认精确 Commit 已在 Task 指定远程分支可见。若 `cap-status.reconciliation.pushRequired=true`，先进入 Push 门禁；得到当前 Task 范围授权后执行 Push 和当前 Delivery 补报，再用 `task_id + commit_sha + required_checks` 创建 `action_type=test`。默认由 Server Test Provider 异步执行。
 
-Push 授权必须绑定 fetch URL、唯一 push URL 与 `repo + task + branch + commit` 的 fingerprint；remote URL 内嵌账号/Token、多个 push URL 或任一身份变化都必须在写入前拒绝。候选验证必须绑定同一 Commit，失败命令不能声明 PASS，命令仅上传哈希，环境与质量资产使用严格白名单；远端错误与漂移结果不得回显凭据。候选 Delivery 只能在本次授权下实时发送，发送失败不得写入自动重放 Outbox；历史 Outbox 不继承当前 Task 的 Push/发送授权，也不能抢占当前候选的 Test → Review 主线。
+Push 授权必须绑定非空合法 Task、fetch URL、唯一 push URL 与 `repo + task + branch + commit` 的 fingerprint；remote URL 的 HTTP userinfo、query/fragment、多个 push URL 或任一身份变化都必须在写入前拒绝，标准 SSH 用户名不视作秘密。候选验证必须绑定同一 Commit，失败或畸形退出码不能声明 PASS，命令与环境仅上传哈希，质量资产只接受受信 ID；远端错误与漂移结果不得回显凭据。候选 Delivery 只能在本次授权下实时发送，发送失败不得写入自动重放 Outbox；历史 Outbox 不继承当前 Task 的 Push/发送授权，也不能抢占当前候选的 Test → Review 主线。
 2. 把返回的 `action_id/run_id` 写入 STATE 的 `Harness actions`，状态记为 `ready/running`，不得提前勾选质量 Gate。
 3. Action 进入 `ready` 后按客户端运行平台选择执行边界：
    - macOS/Linux：立即执行 package 根 `scripts/cap-local-test-provider.mjs <target-repo> <action-id>` 唤醒一次已注册的本地独立 Test Provider。必须传本次 Action ID，Provider 只能领取这一条，不能领取同仓库其他工作。Provider 使用最小环境、临时 HOME 和受控 OS 沙箱，在隔离 worktree 验证精确 Commit；没有受支持沙箱时必须 fail-closed 为 `ENV_BLOCKED`，禁止回退到继承宿主完整环境的 `bash -lc`。未安装、未授权当前仓库或认证失败时，明确报告 `local_provider_unavailable`，不得让 Server 猜测研发机 Maven/npm/SDK 环境。

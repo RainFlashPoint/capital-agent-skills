@@ -5,7 +5,7 @@ import { readFile, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, readClientConfig, readHarnessMode, sanitizeRepositoryUrl, sendCandidateDelivery } from './client-delivery.mjs'
+import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, readClientConfig, readHarnessMode, repositoryUrlHasEmbeddedCredentials, sanitizeRepositoryUrl, sendCandidateDelivery } from './client-delivery.mjs'
 
 const text = value => String(value || '').trim()
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -77,6 +77,7 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   const taskId = field(state, 'task-id') || field(state, 'task_id')
   const branch = git(repo, ['branch', '--show-current'])
   const commitSha = git(repo, ['rev-parse', 'HEAD'])
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(taskId) || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(text(options.taskId))) return { ok: false, stage: 'preflight', reason: 'task_identity_invalid' }
   for (const failure of [
     identityFailure(taskId, text(options.taskId), 'task_identity_changed'),
     identityFailure(branch, text(options.branch), 'branch_identity_changed'),
@@ -89,7 +90,7 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   try { pushUrls = git(repo, ['remote', 'get-url', '--push', '--all', remoteName]).split(/\r?\n/).map(text).filter(Boolean) } catch { return { ok: false, stage: 'preflight', reason: 'push_target_missing' } }
   if (pushUrls.length !== 1) return { ok: false, stage: 'preflight', reason: 'push_target_ambiguous', count: pushUrls.length }
   const pushUrl = pushUrls[0]
-  if (sanitizeRepositoryUrl(repoUrl) !== repoUrl || sanitizeRepositoryUrl(pushUrl) !== pushUrl) return { ok: false, stage: 'preflight', reason: 'remote_credentials_embedded' }
+  if (repositoryUrlHasEmbeddedCredentials(repoUrl) || repositoryUrlHasEmbeddedCredentials(pushUrl)) return { ok: false, stage: 'preflight', reason: 'remote_credentials_embedded' }
   const expectedFingerprint = buildPushAuthorizationFingerprint({ repoUrl, pushUrl, taskId, branch, commitSha })
   if (!options.authorizedFingerprint || options.authorizedFingerprint !== expectedFingerprint) {
     return { ok: false, stage: 'preflight', reason: 'push_authorization_required', expectedFingerprint }
