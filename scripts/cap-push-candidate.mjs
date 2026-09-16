@@ -4,7 +4,7 @@ import { readFile, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { buildCandidateDelivery, buildPushAuthorizationFingerprint, readClientConfig, readHarnessMode, sendCandidateDelivery } from './client-delivery.mjs'
+import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, readClientConfig, readHarnessMode, sendCandidateDelivery } from './client-delivery.mjs'
 
 const text = value => String(value || '').trim()
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -72,16 +72,18 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   try { git(repo, ['check-ref-format', '--branch', branch]) } catch { return { ok: false, stage: 'preflight', reason: 'branch_invalid' } }
   let repoUrl
   try { repoUrl = git(repo, ['remote', 'get-url', remoteName]) } catch { return { ok: false, stage: 'preflight', reason: 'remote_missing' } }
-  const expectedFingerprint = buildPushAuthorizationFingerprint({ repoUrl, taskId, branch, commitSha })
+  let pushUrls
+  try { pushUrls = git(repo, ['remote', 'get-url', '--push', '--all', remoteName]).split(/\r?\n/).map(text).filter(Boolean) } catch { return { ok: false, stage: 'preflight', reason: 'push_target_missing' } }
+  if (pushUrls.length !== 1) return { ok: false, stage: 'preflight', reason: 'push_target_ambiguous', count: pushUrls.length }
+  const pushUrl = pushUrls[0]
+  const expectedFingerprint = buildPushAuthorizationFingerprint({ repoUrl, pushUrl, taskId, branch, commitSha })
   if (!options.authorizedFingerprint || options.authorizedFingerprint !== expectedFingerprint) {
     return { ok: false, stage: 'preflight', reason: 'push_authorization_required', expectedFingerprint }
   }
-  const outcome = text(options.verification?.outcome || options.verification?.status).toUpperCase()
-  if (options.verification?.passed !== true || !['PASS', 'PASSED', 'SUCCESS'].includes(outcome)) {
-    return { ok: false, stage: 'preflight', reason: 'local_verification_not_passed', expectedFingerprint }
-  }
+  const normalizedVerification = normalizeCandidateVerification(options.verification, commitSha)
+  if (!normalizedVerification.ok) return { ok: false, stage: 'preflight', reason: normalizedVerification.reason, expectedFingerprint }
   try {
-    git(repo, ['push', '--porcelain', '--', remoteName, `${commitSha}:refs/heads/${branch}`])
+    git(repo, ['push', '--porcelain', '--', pushUrl, `${commitSha}:refs/heads/${branch}`])
   } catch (error) {
     return { ok: false, stage: 'push', reason: 'git_push_failed', detail: text(error?.stderr || error?.message).slice(0, 1000) }
   }
@@ -91,8 +93,9 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
     identityFailure(git(repo, ['branch', '--show-current']), branch, 'branch_identity_changed'),
     identityFailure(git(repo, ['rev-parse', 'HEAD']), commitSha, 'commit_identity_changed'),
     identityFailure(git(repo, ['remote', 'get-url', remoteName]), repoUrl, 'repository_identity_changed'),
+    identityFailure(git(repo, ['remote', 'get-url', '--push', '--all', remoteName]), pushUrl, 'push_target_changed'),
   ]) if (failure) return { ...failure, stage: 'remote_readback' }
-  const candidate = await buildCandidateDelivery(repo, { verification: options.verification, authorizedFingerprint: expectedFingerprint, remoteName })
+  const candidate = await buildCandidateDelivery(repo, { verification: normalizedVerification.verification, authorizedFingerprint: expectedFingerprint, remoteName, pushUrl })
   if (!candidate.ok) return { ok: false, stage: 'remote_readback', ...candidate }
   const candidateResult = await sendCandidateDelivery({ serverUrl: options.serverUrl, userKey: options.userKey, taskId, payload: candidate.item.payload, fetchImpl: options.fetchImpl })
   if (!candidateResult.ok) return { ok: false, stage: 'candidate_delivery', ...candidateResult, expectedFingerprint }
@@ -101,7 +104,12 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   const canonical = await requestJson(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}`, { userKey: options.userKey, fetchImpl: options.fetchImpl })
   if (!refresh.ok) return { ok: false, partial: true, candidateAccepted: true, stage: 'ci_refresh', reason: 'ci_refresh_failed', detail: refresh.detail, canonical: canonical.ok ? canonical.data : null }
   if (!canonical.ok) return { ok: false, partial: true, candidateAccepted: true, ciRefreshAccepted: true, stage: 'canonical_readback', reason: 'canonical_task_read_failed', detail: canonical.detail }
-  return { ok: true, candidateAccepted: true, ciRefreshAccepted: true, expectedFingerprint, remoteCommitSha: candidate.remoteCommitSha, task: canonical.data }
+  const canonicalTask = canonical.data || {}
+  const candidateExplicit = canonicalTask.candidateExplicit === true || canonicalTask.gates?.candidateExplicit === true
+  if (text(canonicalTask.id) !== taskId || text(canonicalTask.currentCommit).toLowerCase() !== commitSha.toLowerCase() || !candidateExplicit) {
+    return { ok: false, partial: true, candidateAccepted: true, ciRefreshAccepted: true, stage: 'canonical_readback', reason: 'canonical_candidate_mismatch', expected: { taskId, commitSha, candidateExplicit: true }, actual: { taskId: text(canonicalTask.id), commitSha: text(canonicalTask.currentCommit), candidateExplicit } }
+  }
+  return { ok: true, candidateAccepted: true, ciRefreshAccepted: true, expectedFingerprint, remoteCommitSha: candidate.remoteCommitSha, task: canonicalTask }
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -111,9 +119,14 @@ export async function main(argv = process.argv.slice(2)) {
       process.stdout.write('Usage: node scripts/cap-push-candidate.mjs --repo <repo> --task <id> --branch <branch> --commit <sha> --authorization-fingerprint <sha256> --verification-json <path> [--remote origin] [--json]\n')
       return 0
     }
+    const repo = resolve(options.repo)
+    if (await readHarnessMode(repo) === 'local-only') {
+      process.stdout.write(`${JSON.stringify({ ok: false, stage: 'preflight', reason: 'repository_harness_local_only' }, null, 2)}\n`)
+      return 1
+    }
     const config = await readClientConfig(homedir())
     const verification = JSON.parse(await readFile(resolve(options.verificationPath || ''), 'utf8'))
-    const result = await runPushCandidateDelivery(resolve(options.repo), { ...options, verification, serverUrl: config.CAPITAL_AGENT_SERVER_URL, userKey: config.CAPITAL_AGENT_USER_KEY })
+    const result = await runPushCandidateDelivery(repo, { ...options, verification, serverUrl: config.CAPITAL_AGENT_SERVER_URL, userKey: config.CAPITAL_AGENT_USER_KEY })
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
     return result.ok ? 0 : 1
   } catch (error) {

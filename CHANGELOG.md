@@ -2,9 +2,10 @@
 
 ## 0.11.2
 
-- 新增受控 Push 候选交付入口：绑定 repo、Task、branch、Commit 与授权指纹，依次执行 Push、远端 ref 精确回读、候选登记、CI refresh 和 canonical Task 回读。
+- 新增受控 Push 候选交付入口：绑定 fetch/push URL、Task、branch、Commit 与授权指纹，依次执行 Push、同目标远端 ref 精确回读、候选登记、CI refresh 和 canonical Task 回读。
 - 候选交付改用远端实时 ref 作为真值，失败路径不进入 Outbox；候选已接受但后续刷新失败时返回可重试的 partial 结果。
-- 本机 Test Provider 如实声明 `public` 网络区；`local-only` 仓库策略优先于平台凭据检查，避免误报缺少 `x-user-key`。
+- 验证证据必须绑定候选 Commit 并经过字段白名单，canonical 回读必须确认同一 Task 与候选；本机 Test Provider 如实声明 `public` 网络区。
+- `local-only` 仓库策略优先于平台凭据检查，避免误报缺少 `x-user-key`，也避免生产 CLI 提前读取平台配置。
 
 ## 0.11.1
 

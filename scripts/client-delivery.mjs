@@ -53,38 +53,69 @@ export async function buildCommitDelivery(repoRoot) {
   }
 }
 
-export function buildPushAuthorizationFingerprint({ repoUrl = '', taskId = '', branch = '', commitSha = '' } = {}) {
+export function buildPushAuthorizationFingerprint({ repoUrl = '', pushUrl = repoUrl, taskId = '', branch = '', commitSha = '' } = {}) {
   const safeRepoUrl = sanitizeRepositoryUrl(repoUrl)
-  const identity = [safeRepoUrl, text(taskId), text(branch), text(commitSha)].join('\n')
+  const safePushUrl = sanitizeRepositoryUrl(pushUrl)
+  const identity = [safeRepoUrl, safePushUrl, text(taskId), text(branch), text(commitSha)].join('\n')
   return createHash('sha256').update(identity).digest('hex')
 }
 
-function remoteHead(repoRoot, remoteName, branch) {
-  if (!remoteName || !branch) return ''
+function remoteHead(repoRoot, remoteUrl, branch) {
+  if (!remoteUrl || !branch) return ''
   const ref = `refs/heads/${branch}`
-  const output = git(repoRoot, ['ls-remote', '--exit-code', '--refs', remoteName, ref])
+  const output = git(repoRoot, ['ls-remote', '--exit-code', '--refs', remoteUrl, ref])
   const match = output.split(/\r?\n/).map(line => line.trim().split(/\s+/)).find(parts => parts[1] === ref)
   return /^[0-9a-f]{40}$/i.test(match?.[0] || '') ? match[0].toLowerCase() : ''
 }
 
-export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '', remoteName = 'origin' } = {}) {
+const VERIFICATION_FIELDS = new Set(['passed', 'status', 'outcome', 'sourceCommit', 'source_commit', 'commitSha', 'commit_sha', 'executedAt', 'executed_at', 'environmentFingerprint', 'environment_fingerprint', 'commands', 'qualityAssetIds', 'quality_asset_ids'])
+const sensitiveCommand = value => /(?:bearer\s+|https?:\/\/[^/\s:@]+:[^@\s]+@|--(?:token|password|secret|api-key)(?:=|\s))/i.test(value)
+
+export function normalizeCandidateVerification(verification = {}, commitSha = '') {
+  if (!verification || typeof verification !== 'object' || Array.isArray(verification)) return { ok: false, reason: 'verification_fields_invalid' }
+  if (Object.keys(verification).some(key => !VERIFICATION_FIELDS.has(key))) return { ok: false, reason: 'verification_fields_invalid' }
+  const sourceCommit = text(verification.sourceCommit || verification.source_commit || verification.commitSha || verification.commit_sha).toLowerCase()
+  if (!sourceCommit || sourceCommit !== text(commitSha).toLowerCase()) return { ok: false, reason: 'verification_commit_mismatch' }
+  const outcome = text(verification.outcome || verification.status).toUpperCase()
+  if (verification.passed !== true || !['PASS', 'PASSED', 'SUCCESS'].includes(outcome)) return { ok: false, reason: 'local_verification_not_passed' }
+  let commands
+  if (verification.commands !== undefined) {
+    if (!Array.isArray(verification.commands) || verification.commands.length > 50) return { ok: false, reason: 'verification_fields_invalid' }
+    commands = []
+    for (const item of verification.commands) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !['command', 'exitCode', 'exit_code'].includes(key))) return { ok: false, reason: 'verification_fields_invalid' }
+      const command = text(item.command)
+      const exitCode = Number(item.exitCode ?? item.exit_code)
+      if (!command || command.length > 500 || sensitiveCommand(command) || !Number.isInteger(exitCode)) return { ok: false, reason: 'verification_fields_invalid' }
+      commands.push({ command, exitCode })
+    }
+  }
+  const executedAt = text(verification.executedAt || verification.executed_at)
+  const environmentFingerprint = text(verification.environmentFingerprint || verification.environment_fingerprint)
+  const qualityAssetIds = verification.qualityAssetIds || verification.quality_asset_ids
+  if (executedAt.length > 100 || environmentFingerprint.length > 500 || sensitiveCommand(environmentFingerprint) || (qualityAssetIds !== undefined && (!Array.isArray(qualityAssetIds) || qualityAssetIds.length > 100 || qualityAssetIds.some(value => typeof value !== 'string' || value.length > 200 || sensitiveCommand(value))))) return { ok: false, reason: 'verification_fields_invalid' }
+  return { ok: true, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit, ...(executedAt ? { executedAt } : {}), ...(environmentFingerprint ? { environmentFingerprint } : {}), ...(commands ? { commands } : {}), ...(qualityAssetIds ? { qualityAssetIds } : {}) } }
+}
+
+export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '', remoteName = 'origin', pushUrl = '' } = {}) {
   const harnessMode = await readHarnessMode(repoRoot)
   if (harnessMode === 'local-only') return { ok: false, reason: 'repository_harness_local_only', harnessMode }
   const item = await buildCommitDelivery(repoRoot)
   if (!item) return { ok: false, reason: 'delivery_identity_missing' }
   const repoUrl = git(repoRoot, ['remote', 'get-url', remoteName])
   if (!repoUrl) return { ok: false, reason: 'remote_missing', remoteName, item }
-  const remoteCommitSha = remoteHead(repoRoot, remoteName, item.payload.branch)
-  const expectedFingerprint = buildPushAuthorizationFingerprint({ repoUrl, taskId: item.taskId, branch: item.payload.branch, commitSha: item.payload.commit_sha })
+  const targetUrl = pushUrl || repoUrl
+  const remoteCommitSha = remoteHead(repoRoot, targetUrl, item.payload.branch)
+  const expectedFingerprint = buildPushAuthorizationFingerprint({ repoUrl, pushUrl: targetUrl, taskId: item.taskId, branch: item.payload.branch, commitSha: item.payload.commit_sha })
   if (!remoteCommitSha || remoteCommitSha !== item.payload.commit_sha) return { ok: false, reason: 'source_commit_not_remote', expectedFingerprint, remoteCommitSha, item }
   if (!authorizedFingerprint || authorizedFingerprint !== expectedFingerprint) return { ok: false, reason: 'push_authorization_required', expectedFingerprint, item }
-  const outcome = text(verification.outcome || verification.status).toUpperCase()
-  if (verification.passed !== true || !['PASS', 'PASSED', 'SUCCESS'].includes(outcome)) return { ok: false, reason: 'local_verification_not_passed', expectedFingerprint, item }
+  const normalized = normalizeCandidateVerification(verification, item.payload.commit_sha)
+  if (!normalized.ok) return { ...normalized, expectedFingerprint, item }
   return {
     ok: true,
     expectedFingerprint,
     remoteCommitSha,
-    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}:${expectedFingerprint}`, delivery_candidate: true, verification: { ...verification, authorizationFingerprint: expectedFingerprint, remoteReadbackSha: remoteCommitSha } } },
+    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}:${expectedFingerprint}`, delivery_candidate: true, verification: { ...normalized.verification, authorizationFingerprint: expectedFingerprint, remoteReadbackSha: remoteCommitSha } } },
   }
 }
 

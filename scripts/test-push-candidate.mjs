@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildCandidateDelivery, buildPushAuthorizationFingerprint } from './client-delivery.mjs'
@@ -28,8 +28,10 @@ async function fixture() {
 }
 
 function authorizationFor({ remote, taskId, branch, head }) {
-  return buildPushAuthorizationFingerprint({ repoUrl: remote, taskId, branch, commitSha: head })
+  return buildPushAuthorizationFingerprint({ repoUrl: remote, pushUrl: remote, taskId, branch, commitSha: head })
 }
+
+const verificationFor = source => ({ passed: true, status: 'PASS', outcome: 'PASS', sourceCommit: source.head, executedAt: '2026-09-14T00:00:00.000Z' })
 
 test('controlled candidate delivery pushes, reads the exact remote ref, records live candidate, refreshes CI and reads canonical Task', async () => {
   const source = await fixture()
@@ -39,14 +41,14 @@ test('controlled candidate delivery pushes, reads the exact remote ref, records 
     branch: source.branch,
     commitSha: source.head,
     authorizedFingerprint: authorizationFor(source),
-    verification: { passed: true, status: 'PASS', outcome: 'PASS', executedAt: '2026-09-14T00:00:00.000Z' },
+    verification: verificationFor(source),
     serverUrl: 'https://capital.example.test',
     userKey: 'user-key',
     fetchImpl: async (url, options = {}) => {
       requests.push({ url: String(url), method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null })
       if (String(url).endsWith('/commit-reconcile')) return response(200, { code: 0, data: { taskId: source.taskId } })
       if (String(url).endsWith('/ci/refresh')) return response(202, { code: 0, data: { status: 'queued' } })
-      return response(200, { code: 0, data: { id: source.taskId, currentCommit: source.head } })
+      return response(200, { code: 0, data: { id: source.taskId, currentCommit: source.head, candidateExplicit: true } })
     },
   })
 
@@ -75,11 +77,11 @@ test('candidate remote proof reads the live ref instead of trusting a forged loc
   git(source.repo, ['commit', '-m', 'not pushed'])
   const localHead = git(source.repo, ['rev-parse', 'HEAD'])
   git(source.repo, ['update-ref', `refs/remotes/origin/${source.branch}`, localHead])
-  const authorizedFingerprint = buildPushAuthorizationFingerprint({ repoUrl: source.remote, taskId: source.taskId, branch: source.branch, commitSha: localHead })
+  const authorizedFingerprint = buildPushAuthorizationFingerprint({ repoUrl: source.remote, pushUrl: source.remote, taskId: source.taskId, branch: source.branch, commitSha: localHead })
 
   const candidate = await buildCandidateDelivery(source.repo, {
     authorizedFingerprint,
-    verification: { passed: true, status: 'PASS' },
+    verification: { ...verificationFor(source), sourceCommit: localHead },
   })
 
   assert.equal(candidate.ok, false)
@@ -95,7 +97,7 @@ test('candidate HTTP rejection is fail-closed and never enters Outbox', async ()
     branch: source.branch,
     commitSha: source.head,
     authorizedFingerprint: authorizationFor(source),
-    verification: { passed: true, status: 'PASS' },
+    verification: verificationFor(source),
     serverUrl: 'https://capital.example.test',
     userKey: 'user-key',
     fetchImpl: async (url, options = {}) => {
@@ -118,7 +120,7 @@ test('missing platform configuration and local-only repositories stop before Pus
     branch: missingConfig.branch,
     commitSha: missingConfig.head,
     authorizedFingerprint: authorizationFor(missingConfig),
-    verification: { passed: true, status: 'PASS' },
+    verification: verificationFor(missingConfig),
   })
   assert.equal(missing.reason, 'platform_config_missing')
   assert.throws(() => git(missingConfig.remote, ['rev-parse', `refs/heads/${missingConfig.branch}`]))
@@ -131,7 +133,7 @@ test('missing platform configuration and local-only repositories stop before Pus
     branch: localOnly.branch,
     commitSha: localOnly.head,
     authorizedFingerprint: authorizationFor(localOnly),
-    verification: { passed: true, status: 'PASS' },
+    verification: verificationFor(localOnly),
     serverUrl: 'https://capital.example.test',
     userKey: 'user-key',
     fetchImpl: async url => { requests.push(String(url)); return response(200, { code: 0 }) },
@@ -150,7 +152,7 @@ test('local-only policy takes precedence over missing platform credentials', asy
     branch: source.branch,
     commitSha: source.head,
     authorizedFingerprint: authorizationFor(source),
-    verification: { passed: true, status: 'PASS' },
+    verification: verificationFor(source),
   })
 
   assert.equal(result.stage, 'preflight')
@@ -169,7 +171,7 @@ test('a rejected Git push performs no platform request and creates no candidate 
     branch: source.branch,
     commitSha: source.head,
     authorizedFingerprint: authorizationFor(source),
-    verification: { passed: true, status: 'PASS' },
+    verification: verificationFor(source),
     serverUrl: 'https://capital.example.test',
     userKey: 'user-key',
     fetchImpl: async url => { requests.push(String(url)); return response(200, { code: 0 }) },
@@ -190,14 +192,14 @@ test('accepted candidate plus failed CI refresh returns a retryable partial resu
     branch: source.branch,
     commitSha: source.head,
     authorizedFingerprint: authorizationFor(source),
-    verification: { passed: true, status: 'PASS' },
+    verification: verificationFor(source),
     serverUrl: 'https://capital.example.test',
     userKey: 'user-key',
     fetchImpl: async (url, options = {}) => {
       requests.push(`${options.method || 'GET'} ${new URL(String(url)).pathname}`)
       if (String(url).endsWith('/commit-reconcile')) return response(200, { code: 0, data: { taskId: source.taskId } })
       if (String(url).endsWith('/ci/refresh')) return response(503, { code: 503, msg: 'worker unavailable' })
-      return response(200, { code: 0, data: { id: source.taskId, currentCommit: source.head } })
+      return response(200, { code: 0, data: { id: source.taskId, currentCommit: source.head, candidateExplicit: true } })
     },
   })
 
@@ -216,3 +218,105 @@ test('accepted candidate plus failed CI refresh returns a retryable partial resu
 test('CLI rejects option-shaped remote names before Git or network work', () => {
   assert.throws(() => parseArguments(['--repo', '.', '--remote', '--force', '--task', 'task_1']), /push_candidate_remote_invalid/)
 })
+
+test('a distinct Git pushurl is bound to authorization before any remote write', async () => {
+  const source = await fixture()
+  const pushRemote = await mkdtemp(join(tmpdir(), 'cap-push-candidate-pushurl-'))
+  git(pushRemote, ['init', '--bare'])
+  git(source.repo, ['remote', 'set-url', '--add', '--push', 'origin', pushRemote])
+
+  const result = await runPushCandidateDelivery(source.repo, {
+    taskId: source.taskId,
+    branch: source.branch,
+    commitSha: source.head,
+    authorizedFingerprint: authorizationFor(source),
+    verification: verificationFor(source),
+    serverUrl: 'https://capital.example.test',
+    userKey: 'user-key',
+  })
+
+  assert.equal(result.stage, 'preflight')
+  assert.equal(result.reason, 'push_authorization_required')
+  assert.throws(() => git(pushRemote, ['rev-parse', `refs/heads/${source.branch}`]))
+
+  const authorized = await runPushCandidateDelivery(source.repo, {
+    taskId: source.taskId,
+    branch: source.branch,
+    commitSha: source.head,
+    authorizedFingerprint: buildPushAuthorizationFingerprint({ repoUrl: source.remote, pushUrl: pushRemote, taskId: source.taskId, branch: source.branch, commitSha: source.head }),
+    verification: verificationFor(source),
+    serverUrl: 'https://capital.example.test',
+    userKey: 'user-key',
+    fetchImpl: async url => {
+      if (String(url).endsWith('/commit-reconcile')) return response(200, { code: 0, data: {} })
+      if (String(url).endsWith('/ci/refresh')) return response(202, { code: 0, data: {} })
+      return response(200, { code: 0, data: { id: source.taskId, currentCommit: source.head, candidateExplicit: true } })
+    },
+  })
+  assert.equal(authorized.ok, true)
+  assert.equal(git(pushRemote, ['rev-parse', `refs/heads/${source.branch}`]), source.head)
+  assert.throws(() => git(source.remote, ['rev-parse', `refs/heads/${source.branch}`]))
+})
+
+test('verification evidence must bind the exact candidate Commit and reject unknown fields before Push', async () => {
+  for (const verification of [
+    { ...verificationFor({ head: 'a'.repeat(40) }) },
+    { ...verificationFor(sourcePlaceholder()), debugToken: 'must-not-leave-client' },
+  ]) {
+    const source = await fixture()
+    if (verification.sourceCommit === sourcePlaceholder().head) verification.sourceCommit = source.head
+    const result = await runPushCandidateDelivery(source.repo, {
+      taskId: source.taskId,
+      branch: source.branch,
+      commitSha: source.head,
+      authorizedFingerprint: authorizationFor(source),
+      verification,
+      serverUrl: 'https://capital.example.test',
+      userKey: 'user-key',
+    })
+    assert.equal(result.stage, 'preflight')
+    assert.match(result.reason, /^verification_(commit_mismatch|fields_invalid)$/)
+    assert.throws(() => git(source.remote, ['rev-parse', `refs/heads/${source.branch}`]))
+  }
+})
+
+test('canonical readback must confirm this Task and candidate Commit', async () => {
+  const source = await fixture()
+  const result = await runPushCandidateDelivery(source.repo, {
+    taskId: source.taskId,
+    branch: source.branch,
+    commitSha: source.head,
+    authorizedFingerprint: authorizationFor(source),
+    verification: verificationFor(source),
+    serverUrl: 'https://capital.example.test',
+    userKey: 'user-key',
+    fetchImpl: async url => {
+      if (String(url).endsWith('/commit-reconcile')) return response(200, { code: 0, data: {} })
+      if (String(url).endsWith('/ci/refresh')) return response(202, { code: 0, data: {} })
+      return response(200, { code: 0, data: { id: source.taskId, currentCommit: 'b'.repeat(40), candidateExplicit: true } })
+    },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.partial, true)
+  assert.equal(result.stage, 'canonical_readback')
+  assert.equal(result.reason, 'canonical_candidate_mismatch')
+})
+
+test('real CLI rejects local-only before reading verification or platform configuration', async () => {
+  const source = await fixture()
+  await writeFile(join(source.repo, '.cap/PROFILE.md'), 'harness-mode: local-only\n')
+  const result = spawnSync(process.execPath, [
+    join(import.meta.dirname, 'cap-push-candidate.mjs'), '--repo', source.repo,
+    '--task', source.taskId, '--branch', source.branch, '--commit', source.head,
+    '--authorization-fingerprint', authorizationFor(source),
+    '--verification-json', join(source.repo, 'missing-verification.json'), '--json',
+  ], { encoding: 'utf8', env: { ...process.env, HOME: join(source.repo, 'missing-home') } })
+
+  assert.equal(result.status, 1)
+  assert.equal(JSON.parse(result.stdout).reason, 'repository_harness_local_only')
+})
+
+function sourcePlaceholder() {
+  return { head: 'c'.repeat(40) }
+}

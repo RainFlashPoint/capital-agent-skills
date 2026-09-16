@@ -16,7 +16,7 @@ MCP 工具已经加载、但平台或调用通道暂时不可用时，研发本�
 
 历史 Outbox 永不继承新会话的授权。普通 Delivery 可按幂等协议自动重放；候选 Delivery 不进入自动重放 Outbox，发送失败后必须按当前 Task、repo、branch、Commit 重新取得授权并实时发送。
 
-Push 门禁获得当前 Task 的明确授权后，客户端使用 package 根的受控 `scripts/cap-push-candidate.mjs` 串行完成 Push、远端 ref 精确回读、候选 Delivery 实时登记、CI refresh 与 canonical Task 读取。该入口在任何凭据检查之前先执行 `harness-mode` 策略门：`local-only` 固定返回 `repository_harness_local_only`，不能因缺少平台配置而误报 `platform_config_missing`。Push、身份回读或候选请求任一步失败都 fail closed，候选不得进入 Outbox；候选已被接受但后续 refresh/readback 失败时必须返回可重试的 partial 结果，不能回滚或伪装为未发送。
+Push 门禁获得当前 Task 的明确授权后，客户端使用 package 根的受控 `scripts/cap-push-candidate.mjs` 串行完成 Push、远端 ref 精确回读、候选 Delivery 实时登记、CI refresh 与 canonical Task 读取。授权指纹同时绑定脱敏后的 fetch URL 与唯一 push URL；Push 和 `ls-remote` 必须使用同一精确 push URL，多个 push URL 或目标漂移在写入前拒绝。验证 JSON 必须绑定当前 Commit，只允许协议字段并拒绝疑似敏感参数；canonical 回读必须确认同一 Task、同一候选 Commit 与显式候选状态，否则返回 partial。该入口在任何凭据检查之前先执行 `harness-mode` 策略门：`local-only` 固定返回 `repository_harness_local_only`，不能因缺少平台配置而误报 `platform_config_missing`。Push、身份回读或候选请求任一步失败都 fail closed，候选不得进入 Outbox；候选已被接受但后续 refresh/readback 失败时必须返回可重试的 partial 结果，不能回滚或伪装为未发送。
 
 ## 开始
 
