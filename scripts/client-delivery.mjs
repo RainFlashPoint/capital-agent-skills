@@ -69,15 +69,33 @@ function remoteHead(repoRoot, remoteUrl, branch) {
 }
 
 const VERIFICATION_FIELDS = new Set(['passed', 'status', 'outcome', 'sourceCommit', 'source_commit', 'commitSha', 'commit_sha', 'executedAt', 'executed_at', 'environmentFingerprint', 'environment_fingerprint', 'commands', 'qualityAssetIds', 'quality_asset_ids'])
-const sensitiveCommand = value => /(?:bearer\s+|https?:\/\/[^/\s:@]+:[^@\s]+@|--(?:token|password|secret|api-key)(?:=|\s))/i.test(value)
+const PASS_OUTCOMES = new Set(['PASS', 'PASSED', 'SUCCESS'])
+const ENVIRONMENT_KEYS = new Set(['os', 'node', 'python', 'jdk', 'runtime', 'lock'])
+const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
+
+function normalizeEnvironmentFingerprint(value = '') {
+  const raw = text(value)
+  if (!raw) return { ok: true, value: '' }
+  if (raw.length > 500 || /[\r\n\x00-\x1f]/.test(raw)) return { ok: false }
+  const pairs = raw.split(';')
+  const seen = new Set()
+  for (const pair of pairs) {
+    const index = pair.indexOf('=')
+    const key = pair.slice(0, index).trim().toLowerCase()
+    const item = pair.slice(index + 1).trim()
+    if (index < 1 || !ENVIRONMENT_KEYS.has(key) || seen.has(key) || !/^[A-Za-z0-9._:+-]{1,128}$/.test(item)) return { ok: false }
+    seen.add(key)
+  }
+  return { ok: true, value: pairs.join(';') }
+}
 
 export function normalizeCandidateVerification(verification = {}, commitSha = '') {
   if (!verification || typeof verification !== 'object' || Array.isArray(verification)) return { ok: false, reason: 'verification_fields_invalid' }
   if (Object.keys(verification).some(key => !VERIFICATION_FIELDS.has(key))) return { ok: false, reason: 'verification_fields_invalid' }
   const sourceCommit = text(verification.sourceCommit || verification.source_commit || verification.commitSha || verification.commit_sha).toLowerCase()
   if (!sourceCommit || sourceCommit !== text(commitSha).toLowerCase()) return { ok: false, reason: 'verification_commit_mismatch' }
-  const outcome = text(verification.outcome || verification.status).toUpperCase()
-  if (verification.passed !== true || !['PASS', 'PASSED', 'SUCCESS'].includes(outcome)) return { ok: false, reason: 'local_verification_not_passed' }
+  const declaredOutcomes = [verification.status, verification.outcome].filter(value => value !== undefined).map(value => text(value).toUpperCase())
+  if (verification.passed !== true || !declaredOutcomes.length || declaredOutcomes.some(value => !PASS_OUTCOMES.has(value))) return { ok: false, reason: 'local_verification_not_passed' }
   let commands
   if (verification.commands !== undefined) {
     if (!Array.isArray(verification.commands) || verification.commands.length > 50) return { ok: false, reason: 'verification_fields_invalid' }
@@ -86,15 +104,17 @@ export function normalizeCandidateVerification(verification = {}, commitSha = ''
       if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !['command', 'exitCode', 'exit_code'].includes(key))) return { ok: false, reason: 'verification_fields_invalid' }
       const command = text(item.command)
       const exitCode = Number(item.exitCode ?? item.exit_code)
-      if (!command || command.length > 500 || sensitiveCommand(command) || !Number.isInteger(exitCode)) return { ok: false, reason: 'verification_fields_invalid' }
-      commands.push({ command, exitCode })
+      if (!command || command.length > 500 || /[\r\n\x00-\x1f]/.test(command) || !Number.isInteger(exitCode)) return { ok: false, reason: 'verification_fields_invalid' }
+      if (exitCode !== 0) return { ok: false, reason: 'verification_command_failed' }
+      commands.push({ commandHash: `sha256:${createHash('sha256').update(command).digest('hex')}`, exitCode })
     }
   }
   const executedAt = text(verification.executedAt || verification.executed_at)
-  const environmentFingerprint = text(verification.environmentFingerprint || verification.environment_fingerprint)
+  const environment = normalizeEnvironmentFingerprint(verification.environmentFingerprint || verification.environment_fingerprint)
   const qualityAssetIds = verification.qualityAssetIds || verification.quality_asset_ids
-  if (executedAt.length > 100 || environmentFingerprint.length > 500 || sensitiveCommand(environmentFingerprint) || (qualityAssetIds !== undefined && (!Array.isArray(qualityAssetIds) || qualityAssetIds.length > 100 || qualityAssetIds.some(value => typeof value !== 'string' || value.length > 200 || sensitiveCommand(value))))) return { ok: false, reason: 'verification_fields_invalid' }
-  return { ok: true, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit, ...(executedAt ? { executedAt } : {}), ...(environmentFingerprint ? { environmentFingerprint } : {}), ...(commands ? { commands } : {}), ...(qualityAssetIds ? { qualityAssetIds } : {}) } }
+  if ((executedAt && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(executedAt) || !Number.isFinite(Date.parse(executedAt)))) || !environment.ok || (qualityAssetIds !== undefined && (!Array.isArray(qualityAssetIds) || qualityAssetIds.length > 100 || qualityAssetIds.some(value => typeof value !== 'string' || !SAFE_IDENTIFIER.test(value))))) return { ok: false, reason: 'verification_fields_invalid' }
+  if (!(commands?.length) && !(qualityAssetIds?.length)) return { ok: false, reason: 'verification_evidence_missing' }
+  return { ok: true, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit, ...(executedAt ? { executedAt } : {}), ...(environment.value ? { environmentFingerprint: environment.value } : {}), ...(commands?.length ? { commands } : {}), ...(qualityAssetIds?.length ? { qualityAssetIds } : {}) } }
 }
 
 export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '', remoteName = 'origin', pushUrl = '' } = {}) {

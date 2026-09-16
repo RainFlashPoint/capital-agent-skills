@@ -54,7 +54,7 @@ test('candidate delivery is bound to exact task repo branch HEAD and passed loca
   git(repo, ['remote', 'add', 'origin', remote]); git(repo, ['push', '-u', 'origin', 'feature/test'])
   const head = git(repo, ['rev-parse', 'HEAD'])
   const fingerprint = buildPushAuthorizationFingerprint({ repoUrl: remote, taskId: 'task_candidate', branch: 'feature/test', commitSha: head })
-  const candidate = await buildCandidateDelivery(repo, { authorizedFingerprint: fingerprint, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit: head } })
+  const candidate = await buildCandidateDelivery(repo, { authorizedFingerprint: fingerprint, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit: head, commands: [{ command: 'node --test', exitCode: 0 }] } })
   assert.equal(candidate.ok, true)
   assert.equal(candidate.item.payload.delivery_candidate, true)
   assert.equal(candidate.item.payload.commit_sha, head)

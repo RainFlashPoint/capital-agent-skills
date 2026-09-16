@@ -31,7 +31,15 @@ function authorizationFor({ remote, taskId, branch, head }) {
   return buildPushAuthorizationFingerprint({ repoUrl: remote, pushUrl: remote, taskId, branch, commitSha: head })
 }
 
-const verificationFor = source => ({ passed: true, status: 'PASS', outcome: 'PASS', sourceCommit: source.head, executedAt: '2026-09-14T00:00:00.000Z' })
+const verificationFor = source => ({
+  passed: true,
+  status: 'PASS',
+  outcome: 'PASS',
+  sourceCommit: source.head,
+  executedAt: '2026-09-14T00:00:00.000Z',
+  environmentFingerprint: 'os=darwin;node=24;lock=sha256:abc123',
+  commands: [{ command: 'node --test scripts/test-push-candidate.mjs', exitCode: 0 }],
+})
 
 test('controlled candidate delivery pushes, reads the exact remote ref, records live candidate, refreshes CI and reads canonical Task', async () => {
   const source = await fixture()
@@ -66,6 +74,9 @@ test('controlled candidate delivery pushes, reads the exact remote ref, records 
   assert.equal(requests[0].body.idempotency_key, `delivery-candidate:${source.taskId}:${source.head}:${fingerprint}`)
   assert.equal(requests[0].body.verification.authorizationFingerprint, fingerprint)
   assert.equal(requests[0].body.verification.remoteReadbackSha, source.head)
+  assert.match(requests[0].body.verification.commands[0].commandHash, /^sha256:[0-9a-f]{64}$/)
+  assert.equal(JSON.stringify(requests[0].body.verification).includes('scripts/test-push-candidate.mjs'), false)
+  assert.equal(git(source.repo, ['rev-parse', '@{upstream}']), source.head)
 })
 
 test('candidate remote proof reads the live ref instead of trusting a forged local tracking ref', async () => {
@@ -262,6 +273,9 @@ test('verification evidence must bind the exact candidate Commit and reject unkn
   for (const verification of [
     { ...verificationFor({ head: 'a'.repeat(40) }) },
     { ...verificationFor(sourcePlaceholder()), debugToken: 'must-not-leave-client' },
+    { ...verificationFor(sourcePlaceholder()), commands: [{ command: 'node --test', exitCode: 1 }] },
+    { ...verificationFor(sourcePlaceholder()), commands: [] },
+    { ...verificationFor(sourcePlaceholder()), environmentFingerprint: 'os=darwin;GITHUB_TOKEN=must-not-leave-client' },
   ]) {
     const source = await fixture()
     if (verification.sourceCommit === sourcePlaceholder().head) verification.sourceCommit = source.head
@@ -275,7 +289,7 @@ test('verification evidence must bind the exact candidate Commit and reject unkn
       userKey: 'user-key',
     })
     assert.equal(result.stage, 'preflight')
-    assert.match(result.reason, /^verification_(commit_mismatch|fields_invalid)$/)
+    assert.match(result.reason, /^verification_(commit_mismatch|fields_invalid|command_failed|evidence_missing)$/)
     assert.throws(() => git(source.remote, ['rev-parse', `refs/heads/${source.branch}`]))
   }
 })
@@ -315,6 +329,26 @@ test('real CLI rejects local-only before reading verification or platform config
 
   assert.equal(result.status, 1)
   assert.equal(JSON.parse(result.stdout).reason, 'repository_harness_local_only')
+})
+
+test('remote identity drift never returns embedded credentials', async () => {
+  const source = await fixture()
+  const hook = join(source.repo, '.git/hooks/pre-push')
+  await writeFile(hook, `#!/bin/sh\ngit remote set-url origin https://user:super-secret@example.invalid/team/repo.git\n`)
+  await chmod(hook, 0o755)
+  const result = await runPushCandidateDelivery(source.repo, {
+    taskId: source.taskId,
+    branch: source.branch,
+    commitSha: source.head,
+    authorizedFingerprint: authorizationFor(source),
+    verification: verificationFor(source),
+    serverUrl: 'https://capital.example.test',
+    userKey: 'user-key',
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'repository_identity_changed')
+  assert.equal(JSON.stringify(result).includes('super-secret'), false)
 })
 
 function sourcePlaceholder() {

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFile, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, readClientConfig, readHarnessMode, sendCandidateDelivery } from './client-delivery.mjs'
+import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, readClientConfig, readHarnessMode, sanitizeRepositoryUrl, sendCandidateDelivery } from './client-delivery.mjs'
 
 const text = value => String(value || '').trim()
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -51,6 +52,18 @@ function identityFailure(actual, expected, reason) {
   return actual === expected ? null : { ok: false, stage: 'preflight', reason, expected, actual }
 }
 
+function remoteIdentityFailure(actual, expected, reason) {
+  if (actual === expected) return null
+  const digest = value => createHash('sha256').update(sanitizeRepositoryUrl(value)).digest('hex')
+  return { ok: false, stage: 'preflight', reason, expectedFingerprint: digest(expected), actualFingerprint: digest(actual) }
+}
+
+function safeGitError(error, remoteUrls = []) {
+  let detail = text(error?.stderr || error?.message).slice(0, 1000)
+  for (const remoteUrl of remoteUrls.filter(Boolean)) detail = detail.split(remoteUrl).join('[remote]')
+  return detail.replace(/(https?:\/\/)[^@\s/]+@/gi, '$1[redacted]@')
+}
+
 export async function runPushCandidateDelivery(repoRoot, options = {}) {
   const repo = resolve(repoRoot)
   const remoteName = text(options.remote || 'origin')
@@ -76,6 +89,7 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   try { pushUrls = git(repo, ['remote', 'get-url', '--push', '--all', remoteName]).split(/\r?\n/).map(text).filter(Boolean) } catch { return { ok: false, stage: 'preflight', reason: 'push_target_missing' } }
   if (pushUrls.length !== 1) return { ok: false, stage: 'preflight', reason: 'push_target_ambiguous', count: pushUrls.length }
   const pushUrl = pushUrls[0]
+  if (sanitizeRepositoryUrl(repoUrl) !== repoUrl || sanitizeRepositoryUrl(pushUrl) !== pushUrl) return { ok: false, stage: 'preflight', reason: 'remote_credentials_embedded' }
   const expectedFingerprint = buildPushAuthorizationFingerprint({ repoUrl, pushUrl, taskId, branch, commitSha })
   if (!options.authorizedFingerprint || options.authorizedFingerprint !== expectedFingerprint) {
     return { ok: false, stage: 'preflight', reason: 'push_authorization_required', expectedFingerprint }
@@ -85,17 +99,19 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   try {
     git(repo, ['push', '--porcelain', '--', pushUrl, `${commitSha}:refs/heads/${branch}`])
   } catch (error) {
-    return { ok: false, stage: 'push', reason: 'git_push_failed', detail: text(error?.stderr || error?.message).slice(0, 1000) }
+    return { ok: false, stage: 'push', reason: 'git_push_failed', detail: safeGitError(error, [repoUrl, pushUrl]) }
   }
   const postPushState = await readFile(`${repo}/.cap/STATE.md`, 'utf8').catch(() => '')
   for (const failure of [
     identityFailure(field(postPushState, 'task-id') || field(postPushState, 'task_id'), taskId, 'task_identity_changed'),
     identityFailure(git(repo, ['branch', '--show-current']), branch, 'branch_identity_changed'),
     identityFailure(git(repo, ['rev-parse', 'HEAD']), commitSha, 'commit_identity_changed'),
-    identityFailure(git(repo, ['remote', 'get-url', remoteName]), repoUrl, 'repository_identity_changed'),
-    identityFailure(git(repo, ['remote', 'get-url', '--push', '--all', remoteName]), pushUrl, 'push_target_changed'),
+    remoteIdentityFailure(git(repo, ['remote', 'get-url', remoteName]), repoUrl, 'repository_identity_changed'),
+    remoteIdentityFailure(git(repo, ['remote', 'get-url', '--push', '--all', remoteName]), pushUrl, 'push_target_changed'),
   ]) if (failure) return { ...failure, stage: 'remote_readback' }
-  const candidate = await buildCandidateDelivery(repo, { verification: normalizedVerification.verification, authorizedFingerprint: expectedFingerprint, remoteName, pushUrl })
+  // Preflight validates before any remote write; buildCandidateDelivery performs
+  // the single normalization pass that hashes commands for transmission.
+  const candidate = await buildCandidateDelivery(repo, { verification: options.verification, authorizedFingerprint: expectedFingerprint, remoteName, pushUrl })
   if (!candidate.ok) return { ok: false, stage: 'remote_readback', ...candidate }
   const candidateResult = await sendCandidateDelivery({ serverUrl: options.serverUrl, userKey: options.userKey, taskId, payload: candidate.item.payload, fetchImpl: options.fetchImpl })
   if (!candidateResult.ok) return { ok: false, stage: 'candidate_delivery', ...candidateResult, expectedFingerprint }
@@ -108,6 +124,12 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   const candidateExplicit = canonicalTask.candidateExplicit === true || canonicalTask.gates?.candidateExplicit === true
   if (text(canonicalTask.id) !== taskId || text(canonicalTask.currentCommit).toLowerCase() !== commitSha.toLowerCase() || !candidateExplicit) {
     return { ok: false, partial: true, candidateAccepted: true, ciRefreshAccepted: true, stage: 'canonical_readback', reason: 'canonical_candidate_mismatch', expected: { taskId, commitSha, candidateExplicit: true }, actual: { taskId: text(canonicalTask.id), commitSha: text(canonicalTask.currentCommit), candidateExplicit } }
+  }
+  try {
+    git(repo, ['update-ref', `refs/remotes/${remoteName}/${branch}`, commitSha])
+    git(repo, ['branch', '--set-upstream-to', `${remoteName}/${branch}`, branch])
+  } catch (error) {
+    return { ok: false, partial: true, candidateAccepted: true, ciRefreshAccepted: true, stage: 'local_tracking', reason: 'local_tracking_update_failed', detail: safeGitError(error, [repoUrl, pushUrl]), task: canonicalTask }
   }
   return { ok: true, candidateAccepted: true, ciRefreshAccepted: true, expectedFingerprint, remoteCommitSha: candidate.remoteCommitSha, task: canonicalTask }
 }
