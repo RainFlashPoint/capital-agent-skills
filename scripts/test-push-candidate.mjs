@@ -278,6 +278,9 @@ test('verification evidence must bind the exact candidate Commit and reject unkn
     { ...verificationFor(sourcePlaceholder()), environmentFingerprint: 'os=darwin;GITHUB_TOKEN=must-not-leave-client' },
     { ...verificationFor(sourcePlaceholder()), commands: [{ command: 'node --test', exitCode: false }] },
     { ...verificationFor(sourcePlaceholder()), commands: undefined, qualityAssetIds: ['ghp_super_secret_token'] },
+    { ...verificationFor(sourcePlaceholder()), source_commit: 'd'.repeat(40) },
+    { ...verificationFor(sourcePlaceholder()), commands: [{ command: 'node --test', exitCode: 0, exit_code: 1 }] },
+    { ...verificationFor(sourcePlaceholder()), commands: undefined, qualityAssetIds: ['qa_invented'] },
   ]) {
     const source = await fixture()
     if (verification.sourceCommit === sourcePlaceholder().head) verification.sourceCommit = source.head
@@ -313,6 +316,8 @@ test('remote URL credential checks reject query and fragment secrets but allow S
   assert.equal(repositoryUrlHasEmbeddedCredentials('https://example.test/repo.git#token=secret'), true)
   assert.equal(repositoryUrlHasEmbeddedCredentials('ssh://git@example.test/org/repo.git'), false)
   assert.equal(repositoryUrlHasEmbeddedCredentials('git@example.test:org/repo.git'), false)
+  assert.equal(repositoryUrlHasEmbeddedCredentials('git@example.test:org/repo.git?access_token=secret'), true)
+  assert.equal(repositoryUrlHasEmbeddedCredentials('git@example.test:org/repo.git#token=secret'), true)
 })
 
 test('verification transmits only hashes for command and environment details', () => {
