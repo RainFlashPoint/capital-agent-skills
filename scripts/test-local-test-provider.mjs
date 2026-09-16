@@ -60,6 +60,8 @@ test('installed provider executes one exact test action in an isolated worktree'
   })
   assert.equal(result.status,0,result.stderr)
   assert.match(result.stdout,/"outcome": "PASS"/)
+  const registrationHeartbeat=received.find(item=>item.url==='/api/execution/runner/heartbeat')
+  assert.deepEqual(registrationHeartbeat.body.capabilities.networkZones,['local','public','enterprise'])
   const evidence=received.find(item=>item.url.endsWith('/evidence'))
   assert.equal(evidence.body.evidence.testedHead,commit)
   assert.deepEqual(evidence.body.evidence.summary,{total:3,passed:3,failed:0,skipped:0})

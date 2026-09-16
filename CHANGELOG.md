@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.2
+
+- 新增受控 Push 候选交付入口：绑定 repo、Task、branch、Commit 与授权指纹，依次执行 Push、远端 ref 精确回读、候选登记、CI refresh 和 canonical Task 回读。
+- 候选交付改用远端实时 ref 作为真值，失败路径不进入 Outbox；候选已接受但后续刷新失败时返回可重试的 partial 结果。
+- 本机 Test Provider 如实声明 `public` 网络区；`local-only` 仓库策略优先于平台凭据检查，避免误报缺少 `x-user-key`。
+
 ## 0.11.1
 
 - 模型自动编排补齐机器可读 `nextActions` / `remediation`，失败、源码变化、锁中断和缺少命令都有可执行修复动作。

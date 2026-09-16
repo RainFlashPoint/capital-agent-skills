@@ -59,24 +59,49 @@ export function buildPushAuthorizationFingerprint({ repoUrl = '', taskId = '', b
   return createHash('sha256').update(identity).digest('hex')
 }
 
-export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '' } = {}) {
+function remoteHead(repoRoot, remoteName, branch) {
+  if (!remoteName || !branch) return ''
+  const ref = `refs/heads/${branch}`
+  const output = git(repoRoot, ['ls-remote', '--exit-code', '--refs', remoteName, ref])
+  const match = output.split(/\r?\n/).map(line => line.trim().split(/\s+/)).find(parts => parts[1] === ref)
+  return /^[0-9a-f]{40}$/i.test(match?.[0] || '') ? match[0].toLowerCase() : ''
+}
+
+export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '', remoteName = 'origin' } = {}) {
   const harnessMode = await readHarnessMode(repoRoot)
   if (harnessMode === 'local-only') return { ok: false, reason: 'repository_harness_local_only', harnessMode }
   const item = await buildCommitDelivery(repoRoot)
   if (!item) return { ok: false, reason: 'delivery_identity_missing' }
-  const repoUrl = git(repoRoot, ['remote', 'get-url', 'origin'])
-  const upstream = git(repoRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
-  const upstreamHead = upstream ? git(repoRoot, ['rev-parse', upstream]) : ''
+  const repoUrl = git(repoRoot, ['remote', 'get-url', remoteName])
+  if (!repoUrl) return { ok: false, reason: 'remote_missing', remoteName, item }
+  const remoteCommitSha = remoteHead(repoRoot, remoteName, item.payload.branch)
   const expectedFingerprint = buildPushAuthorizationFingerprint({ repoUrl, taskId: item.taskId, branch: item.payload.branch, commitSha: item.payload.commit_sha })
-  if (!upstreamHead || upstreamHead !== item.payload.commit_sha) return { ok: false, reason: 'source_commit_not_remote', expectedFingerprint, item }
+  if (!remoteCommitSha || remoteCommitSha !== item.payload.commit_sha) return { ok: false, reason: 'source_commit_not_remote', expectedFingerprint, remoteCommitSha, item }
   if (!authorizedFingerprint || authorizedFingerprint !== expectedFingerprint) return { ok: false, reason: 'push_authorization_required', expectedFingerprint, item }
   const outcome = text(verification.outcome || verification.status).toUpperCase()
   if (verification.passed !== true || !['PASS', 'PASSED', 'SUCCESS'].includes(outcome)) return { ok: false, reason: 'local_verification_not_passed', expectedFingerprint, item }
   return {
     ok: true,
     expectedFingerprint,
-    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}`, delivery_candidate: true, verification } },
+    remoteCommitSha,
+    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}:${expectedFingerprint}`, delivery_candidate: true, verification: { ...verification, authorizationFingerprint: expectedFingerprint, remoteReadbackSha: remoteCommitSha } } },
   }
+}
+
+export async function sendCandidateDelivery({ serverUrl, userKey, taskId, payload, fetchImpl = fetch, timeoutMs = 15_000 }) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetchImpl(`${String(serverUrl).replace(/\/+$/, '')}/api/tasks/${encodeURIComponent(taskId)}/commit-reconcile`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-user-key': userKey }, body: JSON.stringify(payload), signal: controller.signal,
+    })
+    const body = await response.json().catch(() => ({}))
+    return response.ok && Number(body?.code ?? 0) === 0
+      ? { ok: true, status: response.status, data: body.data || {} }
+      : { ok: false, status: response.status, reason: 'candidate_request_failed', detail: text(body?.msg || body?.message || `HTTP ${response.status}`).slice(0, 500) }
+  } catch (error) {
+    return { ok: false, status: 0, reason: error?.name === 'AbortError' ? 'candidate_request_timeout' : 'candidate_request_failed', detail: text(error?.message).slice(0, 500) }
+  } finally { clearTimeout(timer) }
 }
 
 export async function sendCommitDelivery({ serverUrl, userKey, taskId, payload, fetchImpl = fetch }) {

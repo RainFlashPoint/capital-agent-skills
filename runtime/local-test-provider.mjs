@@ -182,7 +182,7 @@ async function main() {
   const repoUrl = sanitizeRepoUrl(String(remote.stdout || '').trim())
   await post(config, '/api/execution/runner/heartbeat', {
     hostname: hostname(), version: config.runtimeVersion || 'skills-local-test-provider',
-    capabilities: { test: true, patch: false, repositories: [repoUrl], runtimes: [`node${process.versions.node.split('.')[0]}`], networkZones: ['local', 'enterprise'], maxConcurrency: 1 },
+    capabilities: { test: true, patch: false, repositories: [repoUrl], runtimes: [`node${process.versions.node.split('.')[0]}`], networkZones: ['local', 'public', 'enterprise'], maxConcurrency: 1 },
   })
   const claim = await post(config, '/api/execution/runner/harness/actions/claim', { actionId })
   if (!claim?.action) throw new Error('指定 Test Action 当前不可领取')
