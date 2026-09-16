@@ -7,6 +7,7 @@
 - 验证证据必须绑定候选 Commit：字段别名重复即拒绝，失败或畸形退出码不可声明 PASS，必须存在成功命令且命令和环境仅上传哈希，质量资产只能作为补充；canonical 回读必须确认同一 Task 与候选。
 - Push 前强制校验非空 Task 身份，成功后安全刷新本地远端跟踪分支；远端漂移与 Git 错误只返回脱敏摘要，拒绝 HTTP userinfo 及 URL query/fragment，同时兼容标准 SSH 用户名；本机 Test Provider 如实声明 `public` 网络区。
 - `local-only` 仓库策略优先于平台凭据检查，避免误报缺少 `x-user-key`，也避免生产 CLI 提前读取平台配置。
+- canonical 回读兼容顶层与 `gates` 投影，并支持 SHA-1/SHA-256 Git 对象 ID，避免远端已写入后被客户端误报为 partial。
 
 ## 0.11.1
 

@@ -10,11 +10,11 @@ import { parseArguments, runPushCandidateDelivery } from './cap-push-candidate.m
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const response = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
 
-async function fixture() {
+async function fixture({ objectFormat = '' } = {}) {
   const repo = await mkdtemp(join(tmpdir(), 'cap-push-candidate-'))
   const remote = await mkdtemp(join(tmpdir(), 'cap-push-candidate-remote-'))
-  git(remote, ['init', '--bare'])
-  git(repo, ['init', '-b', 'feature/test'])
+  git(remote, ['init', '--bare', ...(objectFormat ? [`--object-format=${objectFormat}`] : [])])
+  git(repo, ['init', '-b', 'feature/test', ...(objectFormat ? [`--object-format=${objectFormat}`] : [])])
   git(repo, ['config', 'user.name', 'test'])
   git(repo, ['config', 'user.email', 'test@example.com'])
   await mkdir(join(repo, '.cap'))
@@ -348,6 +348,33 @@ test('canonical readback must confirm this Task and candidate Commit', async () 
   assert.equal(result.partial, true)
   assert.equal(result.stage, 'canonical_readback')
   assert.equal(result.reason, 'canonical_candidate_mismatch')
+})
+
+test('canonical readback accepts the established nested gates projection', async () => {
+  const source = await fixture()
+  const result = await runPushCandidateDelivery(source.repo, {
+    taskId: source.taskId, branch: source.branch, commitSha: source.head,
+    authorizedFingerprint: authorizationFor(source), verification: verificationFor(source),
+    serverUrl: 'https://capital.example.test', userKey: 'user-key',
+    fetchImpl: async url => {
+      if (String(url).endsWith('/commit-reconcile')) return response(200, { code: 0, data: {} })
+      if (String(url).endsWith('/ci/refresh')) return response(202, { code: 0, data: {} })
+      return response(200, { code: 0, data: { id: source.taskId, gates: { currentCommit: source.head, candidateExplicit: true } } })
+    },
+  })
+  assert.equal(result.ok, true)
+})
+
+test('candidate remote readback accepts SHA-256 object ids when supported by Git', async t => {
+  let source
+  try { source = await fixture({ objectFormat: 'sha256' }) } catch { t.skip('Git SHA-256 repositories are unavailable'); return }
+  git(source.repo, ['push', '-u', 'origin', source.branch])
+  const candidate = await buildCandidateDelivery(source.repo, {
+    authorizedFingerprint: authorizationFor(source), verification: verificationFor(source),
+  })
+  assert.equal(source.head.length, 64)
+  assert.equal(candidate.ok, true)
+  assert.equal(candidate.remoteCommitSha, source.head)
 })
 
 test('real CLI rejects local-only before reading verification or platform configuration', async () => {

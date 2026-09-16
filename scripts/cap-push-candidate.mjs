@@ -123,8 +123,9 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   if (!canonical.ok) return { ok: false, partial: true, candidateAccepted: true, ciRefreshAccepted: true, stage: 'canonical_readback', reason: 'canonical_task_read_failed', detail: canonical.detail }
   const canonicalTask = canonical.data || {}
   const candidateExplicit = canonicalTask.candidateExplicit === true || canonicalTask.gates?.candidateExplicit === true
-  if (text(canonicalTask.id) !== taskId || text(canonicalTask.currentCommit).toLowerCase() !== commitSha.toLowerCase() || !candidateExplicit) {
-    return { ok: false, partial: true, candidateAccepted: true, ciRefreshAccepted: true, stage: 'canonical_readback', reason: 'canonical_candidate_mismatch', expected: { taskId, commitSha, candidateExplicit: true }, actual: { taskId: text(canonicalTask.id), commitSha: text(canonicalTask.currentCommit), candidateExplicit } }
+  const canonicalCommit = text(canonicalTask.currentCommit || canonicalTask.gates?.currentCommit).toLowerCase()
+  if (text(canonicalTask.id) !== taskId || canonicalCommit !== commitSha.toLowerCase() || !candidateExplicit) {
+    return { ok: false, partial: true, candidateAccepted: true, ciRefreshAccepted: true, stage: 'canonical_readback', reason: 'canonical_candidate_mismatch', expected: { taskId, commitSha, candidateExplicit: true }, actual: { taskId: text(canonicalTask.id), commitSha: canonicalCommit, candidateExplicit } }
   }
   try {
     git(repo, ['update-ref', `refs/remotes/${remoteName}/${branch}`, commitSha])

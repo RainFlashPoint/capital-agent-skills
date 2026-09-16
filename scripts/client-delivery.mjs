@@ -79,7 +79,7 @@ function remoteHead(repoRoot, remoteUrl, branch) {
   const ref = `refs/heads/${branch}`
   const output = git(repoRoot, ['ls-remote', '--exit-code', '--refs', remoteUrl, ref])
   const match = output.split(/\r?\n/).map(line => line.trim().split(/\s+/)).find(parts => parts[1] === ref)
-  return /^[0-9a-f]{40}$/i.test(match?.[0] || '') ? match[0].toLowerCase() : ''
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(match?.[0] || '') ? match[0].toLowerCase() : ''
 }
 
 const VERIFICATION_FIELDS = new Set(['passed', 'status', 'outcome', 'sourceCommit', 'source_commit', 'commitSha', 'commit_sha', 'executedAt', 'executed_at', 'environmentFingerprint', 'environment_fingerprint', 'commands', 'qualityAssetIds', 'quality_asset_ids'])
