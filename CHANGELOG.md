@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.4
+
+- 同步 GitHub 首页的最新版本章节与插件版本，避免版本文件已升级但 README 仍对外显示 v0.11.0。
+- 隔离验证确认旧版安装清单会产生 `version_drift` / `upgrade_local_skills`，重写安装清单后收敛为 `current`。
+
 ## 0.11.3
 
 - 团队模式为 Codex 安装原生 Streamable HTTP MCP，用 `http_headers_helper` 动态读取本机 `x-user-key`，不再把 Codex 连到无远程身份的本地 STDIO Server。

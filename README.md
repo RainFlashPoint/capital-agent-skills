@@ -4,11 +4,14 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.11.3，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.11.4，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
 
-## v0.11.0 更新
+## v0.11.4 更新
 
-本地构建、测试、打包接入无需密钥的执行记录器：模型自动发现并调用项目命令、绑定当前源码快照、状态检查重验最近结果；用户只需描述需求，不必记内部命令。补齐 Ontology 安装校验、执行证据归档与历史经验只读审计。普通用户继续使用 `/cap`，详情与兼容范围见 [升级说明](docs/local-efficiency-upgrade.md)。授权体系与生产 Server/Runner 接入延后。
+- Codex 团队模式改用携带动态 `x-user-key` 的原生 Streamable HTTP MCP，安装器会迁移旧版或错误的 STDIO 配置。
+- Doctor 真实验证平台身份、Task 写能力和 MCP 工具列表；密钥不写入项目、Codex 配置或命令行参数。
+- 安装源码的版本、Commit 或文件漂移会自动产生 `upgrade_local_skills` 动作；隔离验证已确认旧版能被发现且升级后收敛为 `current`。
+- 受控 Push 候选交付、远程 ref 精确回读和本机 Test Provider 能力声明已补齐，失败候选不写 Outbox。
 
 ## v0.10.0 更新
 
