@@ -261,10 +261,13 @@ export async function installCursorActivationRule(filePath) {
 
 const CODEX_MCP_START = '# capital-agent:mcp:start'
 const CODEX_MCP_END = '# capital-agent:mcp:end'
-export async function installCodexMcpConfig(filePath, nodePath, wrapperPath) {
+const codexMcpEndpoint = serverUrl => `${normalizeServerUrl(serverUrl)}/api/mcp/message`
+const helperCommand = (nodePath, helperPath) => `${JSON.stringify(nodePath)} ${JSON.stringify(helperPath)}`
+
+export async function installCodexMcpConfig(filePath, serverUrl, nodePath, helperPath) {
   await mkdir(join(filePath, '..'), { recursive: true, mode: 0o700 })
   const existing = await readFile(filePath, 'utf8').catch(() => '')
-  const block = `${CODEX_MCP_START}\n[mcp_servers.capital-agent]\ncommand = ${JSON.stringify(nodePath)}\nargs = [${JSON.stringify(wrapperPath)}]\n${CODEX_MCP_END}`
+  const block = `${CODEX_MCP_START}\n[mcp_servers.capital-agent]\nurl = ${JSON.stringify(codexMcpEndpoint(serverUrl))}\nhttp_headers_helper = ${JSON.stringify(helperCommand(nodePath, helperPath))}\nrequired = true\n${CODEX_MCP_END}`
   let base = existing
   const managedStart = base.indexOf(CODEX_MCP_START); const managedEnd = base.indexOf(CODEX_MCP_END)
   if (managedStart >= 0 && managedEnd >= managedStart) base = `${base.slice(0, managedStart)}${base.slice(managedEnd + CODEX_MCP_END.length)}`
@@ -273,7 +276,6 @@ export async function installCodexMcpConfig(filePath, nodePath, wrapperPath) {
     if (line.trim() === '[mcp_servers.capital-agent]') { skipping = true; continue }
     if (skipping && /^\s*\[/.test(line)) skipping = false
     if (skipping) continue
-    if (line.trim() === `args = [${JSON.stringify(wrapperPath)}]`) continue
     kept.push(line)
   }
   base = kept.join('\n')
@@ -282,8 +284,8 @@ export async function installCodexMcpConfig(filePath, nodePath, wrapperPath) {
   return { filePath, changed: next !== existing }
 }
 
-export async function hasCodexMcpConfig(filePath, wrapperPath = '') {
-  const state = await inspectCodexMcpConfig(filePath, wrapperPath)
+export async function hasCodexMcpConfig(filePath, serverUrl = '', helperPath = '') {
+  const state = await inspectCodexMcpConfig(filePath, serverUrl, helperPath)
   return state.registered && state.valid
 }
 
@@ -299,20 +301,65 @@ async function withEntryValidity(entry = {}, expectedWrapperPath = '') {
   return { ...entry, ...(expectedWrapperPath ? { current: entry.wrapperPath === expectedWrapperPath } : {}), valid }
 }
 
-export async function inspectCodexMcpConfig(filePath, expectedWrapperPath = '') {
+function tomlString(section, name) {
+  const literal = section.match(new RegExp(`^\\s*${name}\\s*=\\s*("(?:\\\\.|[^"])*")`, 'm'))?.[1]
+  try { return literal ? JSON.parse(literal) : '' } catch { return '' }
+}
+
+function helperScriptPath(command = '') {
+  const quoted = [...String(command).matchAll(/"((?:\\.|[^"])*)"/g)].map(match => {
+    try { return JSON.parse(`"${match[1]}"`) } catch { return '' }
+  })
+  return quoted.find(value => basename(value) === 'mcp-http-headers.mjs') || ''
+}
+
+export async function inspectCodexMcpConfig(filePath, expectedServerUrl = '', expectedHelperPath = '') {
   const content = await readFile(filePath, 'utf8').catch(() => '')
   const marker = '[mcp_servers.capital-agent]'
   const start = content.indexOf(marker)
-  if (start < 0) return withEntryValidity({}, expectedWrapperPath)
+  if (start < 0) return { registered: false, transport: 'missing', valid: false, reason: 'not_registered' }
   const remainder = content.slice(start + marker.length)
   const nextSection = remainder.search(/^\s*\[/m)
   const section = nextSection >= 0 ? remainder.slice(0, nextSection) : remainder
+  const url = tomlString(section, 'url')
+  const headersHelper = tomlString(section, 'http_headers_helper')
+  if (url || headersHelper) {
+    const helperPath = helperScriptPath(headersHelper)
+    const expectedUrl = expectedServerUrl ? codexMcpEndpoint(expectedServerUrl) : url
+    const helperAvailable = helperPath ? await lstat(helperPath).then(stat => stat.isFile() || stat.isSymbolicLink()).catch(() => false) : false
+    const current = Boolean(url === expectedUrl && (!expectedHelperPath || helperPath === expectedHelperPath))
+    const valid = Boolean(url && headersHelper && helperAvailable && current)
+    return { registered: Boolean(url || headersHelper), transport: 'streamable-http', url, headersHelper, helperPath, current, valid, reason: valid ? '' : !helperAvailable ? 'headers_helper_unavailable' : 'http_config_mismatch' }
+  }
   const command = section.match(/^\s*command\s*=\s*("(?:\\.|[^"])*")/m)?.[1]
   const argsLiteral = section.match(/^\s*args\s*=\s*(\[[^\r\n]*\])/m)?.[1]
   try {
-    return withEntryValidity(parseStdioEntry({ command: command ? JSON.parse(command) : '', args: argsLiteral ? JSON.parse(argsLiteral) : [] }), expectedWrapperPath)
+    const entry = parseStdioEntry({ command: command ? JSON.parse(command) : '', args: argsLiteral ? JSON.parse(argsLiteral) : [] })
+    const args = argsLiteral ? JSON.parse(argsLiteral) : []
+    const local = args.some(value => /mcp-stdio\.(?:sh|mjs|js)$/i.test(value))
+    const remote = args.some(value => basename(value) === 'mcp-remote.mjs')
+    return { ...entry, registered: Boolean(command), transport: local ? 'stdio-local' : remote ? 'stdio-remote' : 'stdio', current: false, valid: false, reason: local ? 'team_transport_local_stdio' : 'legacy_transport' }
   } catch {
-    return withEntryValidity({}, expectedWrapperPath)
+    return { registered: false, transport: 'invalid', current: false, valid: false, reason: 'invalid_config' }
+  }
+}
+
+export async function probeRemoteMcp(serverUrl, userKey, fetchImpl = fetch) {
+  const endpoint = codexMcpEndpoint(serverUrl)
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'x-user-key': userKey }
+  const call = async (id, method, params = {}) => {
+    const response = await fetchImpl(endpoint, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }), signal: AbortSignal.timeout(10_000) })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok || body.error) throw new Error(body.error?.message || `MCP HTTP ${response.status}`)
+    return body.result || {}
+  }
+  try {
+    const initialized = await call(1, 'initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'capital-agent-setup-doctor', version: '1' } })
+    const listed = await call(2, 'tools/list')
+    const tools = Array.isArray(listed.tools) ? listed.tools.map(tool => String(tool.name || '')).filter(Boolean) : []
+    return { ok: Boolean(initialized.serverInfo && tools.length), tools }
+  } catch (error) {
+    return { ok: false, tools: [], error: error instanceof Error ? error.message : String(error) }
   }
 }
 

@@ -7,7 +7,7 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, localTestProviderPolicy, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, skillTargets, writeInstallManifest } from './setup-lib.mjs'
+import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, localTestProviderPolicy, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, probeRemoteMcp, skillTargets, writeInstallManifest } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -93,13 +93,14 @@ if (args.doctor && args.local) {
 
 if (args.doctor) {
   const health = await checkPlatformHandshake(serverUrl,userKey,fetch,{clientId,clientName:hostname(),clientVersion:'setup',mcpReachable:true,capabilities:{doctor:true}})
-  const expectedWrapper = join(here,'mcp-remote.mjs')
-  const codexMcp = await inspectCodexMcpConfig(codexConfigPath(homedir()),expectedWrapper)
+  const expectedHelper = join(here,'mcp-http-headers.mjs')
+  const codexMcp = await inspectCodexMcpConfig(codexConfigPath(homedir()),serverUrl,expectedHelper)
   const cursorMcp = await inspectCursorMcpConfig(cursorMcpConfigPath(homedir()))
   const claudeMcp = await inspectClaudeMcpConfig(join(homedir(),'.claude.json'))
   const mcpRuntime = await readFile(mcpRuntimePackage,'utf8').then(value=>JSON.parse(value).version===MCP_REMOTE_VERSION).catch(()=>false)
   const clientMcpStates = [codexMcp,claudeMcp,cursorMcp]
-  const clientMcpProbes = clientMcpStates.map(state => probeInstalledMcp(state))
+  const remoteMcp = codexMcp.valid ? await probeRemoteMcp(serverUrl,userKey) : { ok: false, tools: [] }
+  const clientMcpProbes = [remoteMcp.ok, probeInstalledMcp(claudeMcp), probeInstalledMcp(cursorMcp)]
   const mcpRegistered = clientMcpStates.some(state => state.registered && state.valid)
   const mcpTools = mcpRuntime && clientMcpStates.every((state,index) => !state.registered || clientMcpProbes[index])
   const provider = providerPolicy.supported ? await inspectLocalTestProvider(homedir()) : { ok: false, config: {} }
@@ -118,7 +119,13 @@ if (args.doctor) {
   const installState = await inspectInstallManifest(homedir(), root)
   const legacySkills = await inspectLegacyCodexSkills(homedir(), join(root, 'skills'))
   const installDetail = installStateDetail(installState)
-  const label = (state,index) => !state.registered ? '未注册' : !state.valid ? 'FAIL（配置路径不可用）' : clientMcpProbes[index] ? 'PASS' : 'FAIL（实际调用失败）'
+  const label = (state,index) => {
+    if (!state.registered) return '未注册'
+    if (state.reason === 'team_transport_local_stdio') return 'FAIL（错误地指向本地 STDIO，请运行 --upgrade 迁移到 HTTP）'
+    if (state.reason === 'legacy_transport') return 'FAIL（旧版 STDIO 代理，请运行 --upgrade 迁移到 HTTP）'
+    if (!state.valid) return 'FAIL（配置 URL 或 Header Helper 不可用）'
+    return clientMcpProbes[index] ? 'PASS' : 'FAIL（实际调用失败）'
+  }
   process.stdout.write(`安装源码一致性: ${installDetail}\n旧版 Codex Skill 隔离: ${legacySkillDetail(legacySkills)}\n平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${label(codexMcp,0)}\nClaude MCP: ${label(claudeMcp,1)}\nCursor MCP: ${label(cursorMcp,2)}\nCodex Skill: ${codexSkill?'PASS':'未安装'}\nClaude Skill: ${claudeSkill?'PASS':'未安装'}\nCursor Skill: ${cursorSkill?'PASS':'未安装'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${providerStatus}\nProvider 权限: ${providerPermission}\n当前会话加载状态: Doctor 已验证磁盘配置与独立 MCP 调用，但不能让已打开的客户端热加载；当前任务仍无 MCP 工具时请完全重启客户端。\n`)
   if (!installState.ok || !legacySkills.ok || !health.ok || !mcpRuntime || !mcpTools || !mcpRegistered || !providerReady || (!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode=1
   process.exit()
@@ -178,7 +185,8 @@ if (!args.claudeOnly) installed.push(`Codex: ${(await installSkillLinks(join(roo
 if (!args.codexOnly) installed.push(`Claude: ${(await installSkillLinks(join(root,'skills'),targets.claude)).length}`)
 if (!args.codexOnly && !args.claudeOnly) installed.push(`Cursor: ${(await installSkillLinks(join(root,'skills'),targets.cursor)).length}`)
 const wrapper = join(here,'mcp-remote.mjs')
-if (!args.configOnly && !args.claudeOnly) await installCodexMcpConfig(codexConfigPath(homedir()),process.execPath,wrapper)
+const httpHeadersHelper = join(here,'mcp-http-headers.mjs')
+if (!args.configOnly && !args.claudeOnly) await installCodexMcpConfig(codexConfigPath(homedir()),serverUrl,process.execPath,httpHeadersHelper)
 if (!args.configOnly && !args.codexOnly && !args.claudeOnly) await installCursorMcpConfig(cursorMcpConfigPath(homedir()),process.execPath,wrapper)
 if (!args.configOnly && !args.codexOnly && process.platform === 'win32') await installClaudeMcpConfig(join(homedir(),'.claude.json'),process.execPath,wrapper)
 else if (!args.configOnly && !args.codexOnly && commandExists('claude')) { try { run('claude',['mcp','remove','capital-agent','-s','user']) } catch {}; run('claude',['mcp','add','-s','user','capital-agent','--',process.execPath,wrapper]) }

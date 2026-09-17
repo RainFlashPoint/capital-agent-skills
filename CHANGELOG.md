@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.3
+
+- 团队模式为 Codex 安装原生 Streamable HTTP MCP，用 `http_headers_helper` 动态读取本机 `x-user-key`，不再把 Codex 连到无远程身份的本地 STDIO Server。
+- 安装/升级幂等迁移旧版 Codex stdio 条目，保留其它个人配置；Claude/Cursor 继续使用兼容的 stdio 远程代理。
+- Doctor 显式区分 HTTP、旧版远程 stdio 和错误本地 stdio，并携带用户身份真实执行 MCP `initialize` / `tools/list`。
+
 ## 0.11.2
 
 - 新增受控 Push 候选交付入口：绑定 fetch/push URL、Task、branch、Commit 与授权指纹，依次执行 Push、同目标远端 ref 精确回读、候选登记、CI refresh 和 canonical Task 回读。

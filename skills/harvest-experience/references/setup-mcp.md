@@ -21,13 +21,16 @@ export CAPITAL_AGENT_SERVER_URL="https://your-capital-agent-server"
 export CAPITAL_AGENT_USER_KEY="your-personal-key"
 ```
 
-Codex `~/.codex/config.toml`：
+Codex `~/.codex/config.toml` 使用原生 Streamable HTTP：
 
 ```toml
 [mcp_servers.capital-agent]
-command = "node"
-args = ["/path/to/capital-agent-skills/scripts/mcp-remote.mjs"]
+url = "https://your-capital-agent-server/api/mcp/message"
+http_headers_helper = "\"/path/to/node\" \"/path/to/capital-agent-skills/scripts/mcp-http-headers.mjs\""
+required = true
 ```
+
+`mcp-http-headers.mjs` 在运行时从本机 `~/.config/capital-agent/env` 读取最新的 `CAPITAL_AGENT_USER_KEY`，只向 Codex 输出 `x-user-key` header JSON。Key 不写入 `config.toml`、命令行参数或项目文件；Codex 在新建连接时调用 helper，同源 POST 返回 401/403 后也会重新获取 header。
 
 Claude Code：
 
@@ -35,7 +38,7 @@ Claude Code：
 claude mcp add capital-agent -- node /path/to/capital-agent-skills/scripts/mcp-remote.mjs
 ```
 
-启动器在运行时读取 `CAPITAL_AGENT_SERVER_URL` 和 `CAPITAL_AGENT_USER_KEY`。开源仓库、MCP 配置和业务代码均不包含真实平台地址或身份。
+Claude/Cursor 的 stdio 启动器在运行时读取 `CAPITAL_AGENT_SERVER_URL` 和 `CAPITAL_AGENT_USER_KEY`。开源仓库、业务代码和可共享的安装配置均不包含真实身份。
 
 也可以运行一次 `scripts/setup.mjs` 自动保存为 `~/.config/capital-agent/env`（权限 `0600`）并注册 Codex、Claude Code 与 Cursor。该文件只在研发本机，不属于任何 Git 仓库。
 
@@ -50,9 +53,8 @@ claude mcp add --transport http capital-agent https://<YOUR_SERVER>/api/mcp/mess
 claude mcp list   # 应显示 capital-agent: Connected
 ```
 
-**Codex / 仅支持 stdio 的客户端**也可以直接配置 mcp-remote，但真实值只允许出现在研发本机的 `~/.codex/config.toml`：
+**Codex：** 优先运行安装器生成上述 `url + http_headers_helper`，不要把 Key 直接写入 `config.toml`。仅支持 stdio 的其他客户端可使用 `mcp-remote`，但真实值仍只允许保存在研发本机的私有配置中：
 ```toml
-[mcp_servers.capital-agent]
 command = "npx"
 args = ["-y", "mcp-remote", "https://<YOUR_SERVER>/api/mcp/message", "--header", "x-user-key:<YOUR_KEY>"]
 ```
@@ -68,7 +70,9 @@ args = ["/path/to/capital-agent-server/bin/mcp-stdio.sh"]
 
 ## 验证连通
 
-注册后新开一个会话，触发一次 `enrich_context`（agent_type=dev、input=你的需求、repo_url=当前仓库）。返回相关经验即接通。沉淀量/复用率可在平台 `/experience` 页查看。
+先运行 `node scripts/setup.mjs --server "https://your-capital-agent-server" --doctor`：Doctor 会区分 Codex 的 `streamable-http`、旧版 `stdio-remote` 和错误的本地 `stdio-local`，并真实调用远程 MCP `initialize` / `tools/list`。若报告旧或错误 transport，运行团队模式 `--upgrade`即会幂等迁移。
+
+注册后完全退出并重新打开客户端，新建会话触发一次 `enrich_context`（agent_type=dev、input=你的需求、repo_url=当前仓库）。返回相关经验即接通。沉淀量/复用率可在平台 `/experience` 页查看。
 
 远程连接必须携带个人 `x-user-key`。`create_or_attach_task`、`record_task_delivery`、`request_docker_verification` 等写操作拒绝匿名调用；共享匿名 MCP 只能读取知识。
 

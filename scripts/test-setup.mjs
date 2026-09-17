@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, probeRemoteMcp, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
+import { buildMcpHttpHeaders } from './mcp-http-headers.mjs'
 
 test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
@@ -33,35 +34,74 @@ test('uses the current Codex user skill discovery directory', () => {
   assert.equal(activationRuleTargets('/home/dev').cursor, '/home/dev/.cursor/rules/capital-agent.mdc')
   assert.equal(cursorMcpConfigPath('/home/dev'), '/home/dev/.cursor/mcp.json')
 })
-test('installs Codex MCP config without requiring the codex CLI or replacing other config', async () => {
+test('installs native HTTP Codex MCP config without persisting the user key or replacing other config', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-codex-config-'))
-  const wrapper = join(home,'repo','mcp-remote.mjs'); await mkdir(join(home,'repo'),{recursive:true}); await writeFile(wrapper,'// fixture\n')
+  const helper = join(home,'repo','mcp-http-headers.mjs'); await mkdir(join(home,'repo'),{recursive:true}); await writeFile(helper,'// fixture\n')
   const target = codexConfigPath(home); await mkdir(join(home,'.codex'),{recursive:true})
   await writeFile(target,'model = "example"\n\n[mcp_servers.other]\ncommand = "other"\n\n[mcp_servers.capital-agent]\ncommand = "old"\nargs = ["old"]\n')
-  await installCodexMcpConfig(target,'/opt/node',wrapper)
-  await installCodexMcpConfig(target,'/opt/node',wrapper)
+  await installCodexMcpConfig(target,'https://example.test/','/opt/node',helper)
+  await installCodexMcpConfig(target,'https://example.test/','/opt/node',helper)
   const content=await readFile(target,'utf8')
   assert.match(content,/model = "example"/)
   assert.match(content,/\[mcp_servers\.other\]/)
   assert.equal(content.split('[mcp_servers.capital-agent]').length-1,1)
   assert.equal(content.split('capital-agent:mcp:start').length-1,1)
   assert.doesNotMatch(content,/command = "old"|args = \["old"\]/)
-  assert.equal(content.split(`args = [${JSON.stringify(wrapper)}]`).length-1,1)
-  assert.equal(await hasCodexMcpConfig(target,wrapper),true)
+  assert.match(content,/url = "https:\/\/example\.test\/api\/mcp\/message"/)
+  assert.match(content,/http_headers_helper = /)
+  assert.match(content,/required = true/)
+  assert.doesNotMatch(content,/x-user-key|secret-user-key/)
+  assert.equal(await hasCodexMcpConfig(target,'https://example.test',helper),true)
 })
-test('doctor accepts an existing Codex MCP wrapper installed from another checkout', async () => {
+test('doctor accepts the native HTTP transport and rejects stale local or proxy stdio transports', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-codex-doctor-'))
   const target = codexConfigPath(home)
-  const installedWrapper = join(home,'main-checkout','scripts','mcp-remote.mjs')
-  const worktreeWrapper = join(home,'feature-worktree','scripts','mcp-remote.mjs')
+  const helper = join(home,'main-checkout','scripts','mcp-http-headers.mjs')
   await mkdir(join(home,'.codex'),{recursive:true})
   await mkdir(join(home,'main-checkout','scripts'),{recursive:true})
-  await writeFile(installedWrapper,'// fixture\n')
-  await writeFile(target,`[mcp_servers.capital-agent]\ncommand = "/opt/node"\nargs = [${JSON.stringify(installedWrapper)}]\n`)
-  assert.equal(await hasCodexMcpConfig(target,worktreeWrapper),true)
-  assert.deepEqual(await inspectCodexMcpConfig(target,worktreeWrapper),{registered:true,command:'/opt/node',args:[installedWrapper],wrapperPath:installedWrapper,current:false,valid:true})
-  await writeFile(target,`[mcp_servers.capital-agent]\ncommand = "/opt/node"\nargs = [${JSON.stringify(join(home,'missing','mcp-remote.mjs'))}]\n`)
-  assert.equal(await hasCodexMcpConfig(target,worktreeWrapper),false)
+  await writeFile(helper,'// fixture\n')
+  await installCodexMcpConfig(target,'https://example.test','/opt/node',helper)
+  const state = await inspectCodexMcpConfig(target,'https://example.test',helper)
+  assert.equal(state.registered,true)
+  assert.equal(state.transport,'streamable-http')
+  assert.equal(state.current,true)
+  assert.equal(state.valid,true)
+  await writeFile(target,'[mcp_servers.capital-agent]\ncommand = "bash"\nargs = ["/repo/capital-agent-server/bin/mcp-stdio.sh"]\n')
+  const local = await inspectCodexMcpConfig(target,'https://example.test',helper)
+  assert.equal(local.transport,'stdio-local')
+  assert.equal(local.valid,false)
+  assert.equal(local.reason,'team_transport_local_stdio')
+  await writeFile(target,'[mcp_servers.capital-agent]\ncommand = "/opt/node"\nargs = ["/repo/scripts/mcp-remote.mjs"]\n')
+  const proxy = await inspectCodexMcpConfig(target,'https://example.test',helper)
+  assert.equal(proxy.transport,'stdio-remote')
+  assert.equal(proxy.valid,false)
+  assert.equal(proxy.reason,'legacy_transport')
+})
+test('HTTP header helper reads the latest local key without returning unrelated config', async () => {
+  const home = await mkdtemp(join(tmpdir(),'cap-http-headers-'))
+  await mkdir(join(home,'.config','capital-agent'),{recursive:true})
+  await writeFile(join(home,'.config','capital-agent','env'),'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=first-key\nCAPITAL_AGENT_CLIENT_ID=client-1\n')
+  assert.deepEqual(await buildMcpHttpHeaders({home,env:{CAPITAL_AGENT_USER_KEY:'stale-process-key'}}),{'x-user-key':'first-key'})
+  await writeFile(join(home,'.config','capital-agent','env'),'CAPITAL_AGENT_USER_KEY=refreshed-key\n')
+  assert.deepEqual(await buildMcpHttpHeaders({home,env:{}}),{'x-user-key':'refreshed-key'})
+  const emptyHome = await mkdtemp(join(tmpdir(),'cap-http-headers-empty-'))
+  await assert.rejects(buildMcpHttpHeaders({home:emptyHome,env:{CAPITAL_AGENT_USER_KEY:'bad\nkey'}}),/invalid/i)
+})
+test('remote MCP probe sends identity headers and verifies the tool list', async () => {
+  const calls=[]
+  const fakeFetch=async (url,options)=>{
+    calls.push({url,options})
+    const request=JSON.parse(options.body)
+    return {ok:true,status:200,json:async()=>request.method === 'initialize'
+      ? {jsonrpc:'2.0',id:request.id,result:{protocolVersion:'2024-11-05',capabilities:{},serverInfo:{name:'capital-agent'}}}
+      : {jsonrpc:'2.0',id:request.id,result:{tools:[{name:'enrich_context'},{name:'create_or_attach_task'}]}}}
+  }
+  const result=await probeRemoteMcp('https://example.test','secret-user-key',fakeFetch)
+  assert.equal(result.ok,true)
+  assert.deepEqual(result.tools,['enrich_context','create_or_attach_task'])
+  assert.equal(calls.length,2)
+  assert.equal(calls[0].url,'https://example.test/api/mcp/message')
+  assert.equal(calls[0].options.headers['x-user-key'],'secret-user-key')
 })
 test('doctor reads the actual Cursor and Claude MCP commands instead of probing the current checkout', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-installed-clients-')); const wrapper = join(home,'installed','mcp-remote.mjs')

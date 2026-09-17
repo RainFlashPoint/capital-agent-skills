@@ -199,6 +199,8 @@ grep -q 'outbox_lock_timeout' scripts/cap-outbox.mjs || err "Outbox 未实现跨
 grep -q 'outbox_symlink_not_allowed' scripts/cap-outbox.mjs || err "Outbox 未拒绝软链逃逸"
 grep -q 'SANDBOX_UNAVAILABLE' runtime/local-test-provider.mjs || err "本地 Provider 未对缺失沙箱 fail-closed"
 grep -q 'CAPITAL_AGENT_MCP_USER_KEY' scripts/mcp-remote.mjs || err "MCP user key 未移出 argv"
+grep -q 'http_headers_helper' scripts/setup-lib.mjs || err "Codex 团队 MCP 未使用 Header Helper"
+grep -q "'x-user-key'" scripts/mcp-http-headers.mjs || err "Codex MCP Header Helper 未输出用户身份"
 grep -q '团队模式禁止用可编辑 STATE 自证 Server Gate' "$REF/templates/hooks/pre-push" || err "团队 pre-push 仍允许 STATE 自签 Gate"
 ok "P0 运行边界与发布门禁检查完成"
 
