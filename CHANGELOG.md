@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0
+
+- 新增 `cap-status --compact` 决策投影，保留安装、平台、仓库、Task/Action、Outbox、边界、纠偏、Push 与下一动作；默认完整 JSON 和文本输出保持兼容。
+- 阻断、Server 纠偏、未知 blocker、Outbox 阻塞或无归属事件自动返回 `full-fallback`，避免轻量模式隐藏新协议或异常证据。
+- 公开 `cap` 入口改为按复杂度和阶段懒加载：L1/L2 使用最小协议，高风险或未知分类升级完整 `cap-flow`。
+- 增加本地 mock full/compact A/B 回归，校验决策签名等价、风险态完整回退及平均 JSON 字节数至少下降 50%。
+
 ## 0.11.4
 
 - 同步 GitHub 首页的最新版本章节与插件版本，避免版本文件已升级但 README 仍对外显示 v0.11.0。

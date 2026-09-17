@@ -503,6 +503,265 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   }
 }
 
+const KNOWN_COMPACT_BLOCKERS = new Set([
+  'mcp_runtime_missing_restart_required',
+  'task_creation_blocked',
+  'push_required',
+  'provider_unavailable',
+  'env_blocked',
+  'action_failed',
+  'manual_approval_required',
+  'server_gate_blocked',
+])
+
+function actionSummary(action) {
+  if (!action || typeof action !== 'object') return action || null
+  return {
+    kind: action.kind || '',
+    id: action.id || action.actionId || '',
+    type: action.type || action.actionType || '',
+    status: action.status || action.actionStatus || '',
+    commit: action.commit || action.sourceCommit || action.commitSha || '',
+    code: action.code || '',
+    label: action.label || '',
+    action: action.action || '',
+    reason: action.reason || '',
+    remediation: action.remediation || '',
+    requiresUser: action.requiresUser === true,
+  }
+}
+
+function blockerSummary(blocker) {
+  if (!blocker || typeof blocker !== 'object') return blocker || null
+  return {
+    code: blocker.code || '',
+    reason: blocker.reason || '',
+    category: blocker.category || '',
+    classification: blocker.classification || '',
+    stage: blocker.stage || '',
+    detail: blocker.detail || '',
+    remediation: blocker.remediation || '',
+    preflight: blocker.preflight && typeof blocker.preflight === 'object' ? {
+      code: blocker.preflight.code || '',
+      reason: blocker.preflight.reason || '',
+      status: blocker.preflight.status || '',
+      detail: blocker.preflight.detail || '',
+      remediation: blocker.preflight.remediation || '',
+    } : null,
+  }
+}
+
+function nextActionSummary(action) {
+  if (!action || typeof action !== 'object') return action || null
+  return {
+    kind: action.kind || '',
+    label: action.label || '',
+    reason: action.reason || '',
+    requiresUser: action.requiresUser === true,
+    stage: action.stage || '',
+    action: action.action || '',
+  }
+}
+
+function pruneCompact(value) {
+  if (Array.isArray(value)) {
+    const items = value.map(pruneCompact).filter(item => item !== undefined)
+    return items.length ? items : undefined
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value)
+      .map(([key, item]) => [key, pruneCompact(item)])
+      .filter(([, item]) => item !== undefined)
+    return entries.length ? Object.fromEntries(entries) : undefined
+  }
+  if (value === '' || value === false || value === null || value === undefined || value === 0) return undefined
+  return value
+}
+
+function needsFullStatus(result = {}) {
+  const blockerNeedsFull = blocker => {
+    if (!blocker) return false
+    if (typeof blocker !== 'object') return true
+    const code = blocker.code || ''
+    if (!code || !KNOWN_COMPACT_BLOCKERS.has(code)) return true
+    const allowed = new Set(['code', 'reason', 'category', 'classification', 'stage', 'detail', 'remediation', 'preflight'])
+    if (Object.keys(blocker).some(key => !allowed.has(key))) return true
+    if (blocker.preflight !== undefined) {
+      if (!blocker.preflight || typeof blocker.preflight !== 'object' || Array.isArray(blocker.preflight)) return true
+      const preflightAllowed = new Set(['code', 'reason', 'status', 'detail', 'remediation'])
+      if (Object.keys(blocker.preflight).some(key => !preflightAllowed.has(key))) return true
+    }
+    return false
+  }
+  return result.mode === 'session_root_blocked'
+    || result.mode === 'boundary_blocked'
+    || result.boundary?.blocked === true
+    || result.correction?.required === true
+    || result.workflow?.status === 'blocked'
+    || Number(result.platform?.outbox?.blocked || 0) > 0
+    || Number(result.platform?.outbox?.unscopedPending || 0) > 0
+    || Number(result.platform?.outbox?.retainedUnscopedPending || 0) > 0
+    || blockerNeedsFull(result.task?.blocker)
+    || blockerNeedsFull(result.workflow?.blocker)
+}
+
+/**
+ * Return the minimum deterministic status projection needed to choose the next
+ * Capital Agent action. Ambiguous or exceptional states retain the complete
+ * evidence so a newer server contract can never be hidden by an older client.
+ */
+export function compactCapStatus(result = {}) {
+  if (needsFullStatus(result)) return { ...result, outputMode: 'full-fallback' }
+  const installation = result.installation || {}
+  const platform = result.platform || {}
+  const outbox = platform.outbox || {}
+  const repository = result.repository || {}
+  const task = result.task || {}
+  const reconciliation = result.reconciliation || {}
+  const boundary = result.boundary || {}
+  const workflow = result.workflow || {}
+  const compact = pruneCompact({
+    schemaVersion: 1,
+    outputMode: 'compact',
+    mode: result.mode || '',
+    installation: {
+      status: installation.status || '',
+      upgradeRecommended: installation.upgradeRecommended === true,
+      bootstrapRecommended: installation.bootstrapRecommended === true,
+      reason: installation.reason || '',
+      sourceRoot: installation.sourceRoot || '',
+      changedFileCount: Array.isArray(installation.changedFiles) ? installation.changedFiles.length : Number(installation.changedFileCount || 0),
+    },
+    platform: {
+      configured: platform.configured === true,
+      connected: platform.connected ?? null,
+      serverUrl: platform.serverUrl || '',
+      mcpRuntime: platform.mcpRuntime || 'unknown',
+      localFallback: platform.localFallback === true,
+      handshake: platform.handshake ? { ok: platform.handshake.ok === true, reason: platform.handshake.reason || '', status: platform.handshake.status || 0 } : null,
+      runtime: platform.runtime ? { buildCommit: platform.runtime.buildCommit || '', schemaRevision: platform.runtime.schemaRevision || '', taskStoreMode: platform.runtime.taskStoreMode || '', database: platform.runtime.database || '' } : null,
+      pendingDeliveries: {
+        total: Number(platform.pendingDeliveries?.total || 0),
+        sent: Number(platform.pendingDeliveries?.sent || 0),
+        pending: Number(platform.pendingDeliveries?.pending || 0),
+        confirmed: Number(platform.pendingDeliveries?.confirmed || 0),
+      },
+      outbox: {
+        totalPending: Number(outbox.totalPending || 0),
+        pending: Number(outbox.pending || 0),
+        historicalPending: Number(outbox.historicalPending || 0),
+        retainedHistoricalPending: Number(outbox.retainedHistoricalPending || 0),
+        unscopedPending: Number(outbox.unscopedPending || 0),
+        retainedUnscopedPending: Number(outbox.retainedUnscopedPending || 0),
+        ready: Number(outbox.ready || 0),
+        blocked: Number(outbox.blocked || 0),
+        oldestCreatedAt: outbox.oldestCreatedAt || '',
+        next: outbox.next ? { id: outbox.next.id || '', type: outbox.next.type || '', localTaskRef: outbox.next.localTaskRef || '' } : null,
+      },
+    },
+    repository: {
+      root: repository.root || '',
+      remote: repository.remote || '',
+      branch: repository.branch || '',
+      head: repository.head || '',
+      upstream: repository.upstream || '',
+      upstreamHead: repository.upstreamHead || '',
+      dirty: repository.dirty === true,
+      harnessMode: repository.harnessMode || '',
+      harnessEligible: repository.harnessEligible === true,
+      sessionRoot: repository.sessionRoot ? {
+        blocked: repository.sessionRoot.blocked === true,
+        code: repository.sessionRoot.code || '',
+      } : null,
+    },
+    task: {
+      id: task.id || '',
+      previousId: task.previousId || '',
+      sessionId: task.sessionId || '',
+      previousSessionId: task.previousSessionId || '',
+      requiresNewSession: task.requiresNewSession === true,
+      remoteStatus: task.remoteStatus || '',
+      remoteStage: task.remoteStage || '',
+      gatesReady: task.gatesReady === true,
+      currentCommit: task.currentCommit || '',
+      currentGate: task.currentGate || '',
+      currentAction: actionSummary(task.currentAction),
+      blocker: blockerSummary(task.blocker),
+      nextAction: actionSummary(task.nextAction),
+      executionMode: task.executionMode || '',
+      verificationCommands: task.verificationCommands || [],
+      parentTaskId: task.parentTaskId || '',
+      retirementStatus: task.retirementStatus || '',
+      historyArtifactRoot: task.historyArtifactRoot || '',
+      localExecution: task.localExecution ? {
+        source: task.localExecution.source || '', stage: task.localExecution.stage || '', status: task.localExecution.status || '',
+        nextAction: task.localExecution.nextAction || '', gated: task.localExecution.gated === true,
+        executionRequired: task.localExecution.executionRequired === true, executionAction: actionSummary(task.localExecution.executionAction),
+        executionGate: task.localExecution.executionGate || '', executionArtifact: task.localExecution.executionArtifact || '',
+        executionReason: task.localExecution.executionReason || '', nextActions: task.localExecution.nextActions || [], remediation: task.localExecution.remediation || '',
+      } : null,
+      serverDelivery: task.serverDelivery ? {
+        source: task.serverDelivery.source || '', taskId: task.serverDelivery.taskId || '', stage: task.serverDelivery.stage || '', status: task.serverDelivery.status || '',
+        currentCommit: task.serverDelivery.currentCommit || '', currentGate: task.serverDelivery.currentGate || '', action: actionSummary(task.serverDelivery.action),
+        gatesReady: task.serverDelivery.gatesReady === true,
+      } : null,
+    },
+    reconciliation: {
+      recordedHead: reconciliation.recordedHead || '',
+      headPushed: reconciliation.headPushed === true,
+      pushRequired: reconciliation.pushRequired === true,
+      initialDeliveryNeeded: reconciliation.initialDeliveryNeeded === true,
+      localUnrecorded: reconciliation.localUnrecorded === true,
+      remoteUnrecorded: reconciliation.remoteUnrecorded === true,
+      needsDeliveryReconciliation: reconciliation.needsDeliveryReconciliation === true,
+      unrecordedCommitCount: Array.isArray(reconciliation.unrecordedCommits) ? reconciliation.unrecordedCommits.length : Number(reconciliation.unrecordedCommitCount || 0),
+    },
+    boundary: {
+      blocked: boundary.blocked === true,
+      code: boundary.code || '',
+      mismatches: boundary.mismatches || [],
+    },
+    correction: result.correction || { required: false, reason: '' },
+    nextActions: (result.nextActions || []).map(nextActionSummary),
+    remediation: result.remediation || '',
+    workflow: {
+      currentStage: workflow.currentStage || '', status: workflow.status || '', stage: workflow.stage || '', action: workflow.action || '',
+      reason: workflow.reason || '', gated: workflow.gated === true, options: workflow.options || [],
+      upgradeRecommended: workflow.upgradeRecommended === true, upgradeReason: workflow.upgradeReason || '',
+      deferredOnly: workflow.deferredOnly === true, executionRequired: workflow.executionRequired === true,
+      blocker: blockerSummary(workflow.blocker), platformAction: actionSummary(workflow.platformAction),
+    },
+    reasons: result.reasons || [],
+  })
+  // `false` means a rejected probe while an omitted value means unobserved.
+  if (platform.connected === false) compact.platform.connected = false
+  return compact
+}
+
+/** Stable comparison surface used by local full/compact A/B tests. */
+export function statusDecisionSignature(result = {}) {
+  const installation = result.installation || {}
+  const platform = result.platform || {}
+  const outbox = platform.outbox || {}
+  const task = result.task || {}
+  const reconciliation = result.reconciliation || {}
+  const workflow = result.workflow || {}
+  return {
+    mode: result.mode || '',
+    installation: { status: installation.status || '', upgradeRecommended: installation.upgradeRecommended === true, bootstrapRecommended: installation.bootstrapRecommended === true, reason: installation.reason || '', changedFileCount: Array.isArray(installation.changedFiles) ? installation.changedFiles.length : Number(installation.changedFileCount || 0) },
+    platform: { configured: platform.configured === true, connected: platform.connected ?? null, serverUrl: platform.serverUrl || '', mcpRuntime: platform.mcpRuntime || 'unknown', localFallback: platform.localFallback === true, handshake: platform.handshake ? { ok: platform.handshake.ok === true, reason: platform.handshake.reason || '', status: platform.handshake.status || 0 } : null, runtime: platform.runtime || null, pendingDeliveries: { total: Number(platform.pendingDeliveries?.total || 0), sent: Number(platform.pendingDeliveries?.sent || 0), pending: Number(platform.pendingDeliveries?.pending || 0), confirmed: Number(platform.pendingDeliveries?.confirmed || 0) }, outbox: { totalPending: Number(outbox.totalPending || 0), pending: Number(outbox.pending || 0), historicalPending: Number(outbox.historicalPending || 0), retainedHistoricalPending: Number(outbox.retainedHistoricalPending || 0), unscopedPending: Number(outbox.unscopedPending || 0), retainedUnscopedPending: Number(outbox.retainedUnscopedPending || 0), ready: Number(outbox.ready || 0), blocked: Number(outbox.blocked || 0), oldestCreatedAt: outbox.oldestCreatedAt || '', next: outbox.next ? { id: outbox.next.id || '', type: outbox.next.type || '', localTaskRef: outbox.next.localTaskRef || '' } : null } },
+    repository: { root: result.repository?.root || '', remote: result.repository?.remote || '', branch: result.repository?.branch || '', head: result.repository?.head || '', upstream: result.repository?.upstream || '', upstreamHead: result.repository?.upstreamHead || '', dirty: result.repository?.dirty === true, harnessMode: result.repository?.harnessMode || '', harnessEligible: result.repository?.harnessEligible === true, sessionRootBlocked: result.repository?.sessionRoot?.blocked === true },
+    task: { id: task.id || '', previousId: task.previousId || '', sessionId: task.sessionId || '', previousSessionId: task.previousSessionId || '', requiresNewSession: task.requiresNewSession === true, remoteStatus: task.remoteStatus || '', remoteStage: task.remoteStage || '', gatesReady: task.gatesReady === true, currentCommit: task.currentCommit || '', currentGate: task.currentGate || '', currentAction: actionSummary(task.currentAction), blocker: blockerSummary(task.blocker), nextAction: actionSummary(task.nextAction), executionMode: task.executionMode || '', verificationCommands: task.verificationCommands || [], parentTaskId: task.parentTaskId || '', retirementStatus: task.retirementStatus || '', historyArtifactRoot: task.historyArtifactRoot || '', localExecution: task.localExecution ? { stage: task.localExecution.stage || '', status: task.localExecution.status || '', nextAction: task.localExecution.nextAction || '', gated: task.localExecution.gated === true, executionRequired: task.localExecution.executionRequired === true, executionGate: task.localExecution.executionGate || '' } : null, serverDelivery: task.serverDelivery ? { source: task.serverDelivery.source || '', taskId: task.serverDelivery.taskId || '', stage: task.serverDelivery.stage || '', status: task.serverDelivery.status || '', currentCommit: task.serverDelivery.currentCommit || '', currentGate: task.serverDelivery.currentGate || '', action: actionSummary(task.serverDelivery.action), gatesReady: task.serverDelivery.gatesReady === true } : null },
+    reconciliation: { recordedHead: reconciliation.recordedHead || '', headPushed: reconciliation.headPushed === true, pushRequired: reconciliation.pushRequired === true, initialDeliveryNeeded: reconciliation.initialDeliveryNeeded === true, localUnrecorded: reconciliation.localUnrecorded === true, remoteUnrecorded: reconciliation.remoteUnrecorded === true, needsDeliveryReconciliation: reconciliation.needsDeliveryReconciliation === true, unrecordedCommitCount: Array.isArray(reconciliation.unrecordedCommits) ? reconciliation.unrecordedCommits.length : Number(reconciliation.unrecordedCommitCount || 0) },
+    boundary: { blocked: result.boundary?.blocked === true, code: result.boundary?.code || '', mismatches: result.boundary?.mismatches || [] },
+    correction: result.correction || { required: false, reason: '' },
+    nextActions: (result.nextActions || []).map(nextActionSummary),
+    remediation: result.remediation || '',
+    workflow: { currentStage: workflow.currentStage || '', status: workflow.status || '', stage: workflow.stage || '', action: workflow.action || '', reason: workflow.reason || '', gated: workflow.gated === true, options: workflow.options || [], upgradeRecommended: workflow.upgradeRecommended === true, upgradeReason: workflow.upgradeReason || '', deferredOnly: workflow.deferredOnly === true, executionRequired: workflow.executionRequired === true, blocker: blockerSummary(workflow.blocker), platformAction: actionSummary(workflow.platformAction) },
+    reasons: result.reasons || [],
+  }
+}
+
 function render(result) {
   const explicitLocal = result.mode === 'local_explicit'
   const explicitLocalFallback = result.mode === 'local_fallback_explicit'
@@ -550,6 +809,7 @@ function render(result) {
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const argv = process.argv.slice(2)
   const json = argv.includes('--json')
+  const compact = argv.includes('--compact')
   const offline = argv.includes('--offline')
   const allowLocalFallback = argv.includes('--allow-local-once')
   const runtimeFlag = argv.find(arg => arg.startsWith('--mcp-runtime='))?.split('=')[1]
@@ -561,5 +821,5 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
     if (!argv[index].startsWith('-')) { repoArg = argv[index]; break }
   }
   const result = await inspectCapStatus({ repoRoot: repoArg, offline, mcpRuntime, allowLocalFallback, environment: process.env })
-  process.stdout.write(json ? `${JSON.stringify(result, null, 2)}\n` : `${render(result)}\n`)
+  process.stdout.write(json || compact ? `${JSON.stringify(compact ? compactCapStatus(result) : result, null, 2)}\n` : `${render(result)}\n`)
 }

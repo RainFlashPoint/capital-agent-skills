@@ -3,92 +3,79 @@ name: cap
 description: Capital Agent 研发工作的统一入口。用于实现功能、修复问题、测试验证、代码评审和发布交付；系统根据任务复杂度自动选择必要步骤，用户不需要理解或手动调用内部阶段。
 ---
 
-# Capital Agent 研发入口
+# Capital Agent 轻量研发入口
 
-完整读取并遵循同级目录 `../cap-flow/SKILL.md`；真实编码会话同时读取 `../harvest-experience/SKILL.md`，自动完成经验注入与沉淀。本技能是研发唯一公开入口，也是唯一安装到客户端列表的 Skill，不复制内部流程规则。
+这是研发唯一公开入口。目标是先用少量上下文完成确定性分流，再按风险加载必要协议；轻量不代表跳过门禁。
 
-## 用户语言
+## 1. 启动：先取 compact 状态
 
-不要要求用户输入 `cap-define`、`cap-implement`、`cap-test` 等内部技能名。识别下列自然语言并在内部完成路由：
-
-| 用户说法 | 对外名称 | 内部阶段 |
-|---|---|---|
-| 了解项目、建立项目档案 | 项目了解 | `understand` / `cap-understand` |
-| 梳理需求、确认方案、写规格 | 需求确认 | `define` / `cap-define` |
-| 拆任务、制定计划 | 开发计划 | `plan` / `cap-plan` |
-| 开始开发、实现、修复 | 编码实现 | `implement` / `cap-implement` |
-| 测试、验证 | 测试验证 | `test` / `cap-test` |
-| 代码评审、Review | 代码评审 | `review` / `cap-review` |
-| 发布、上线 | 发布上线 | `release` / `cap-release` |
-
-`/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布` 是可选快捷表达；日常直接 `$cap` 加需求即可。
-
-## 研发上下文门禁（所有阶段必经）
-
-以下规则适用于需求确认、开发计划、编码实现、测试验证、代码评审和发布上线；任何实质工作前都必须执行：
-
-1. **锁定当前 Git 根目录**：以用户当前打开的仓库为唯一工作根，核对分支、HEAD、工作树和远程地址；历史 `.cap`、其他 clone 或 worktree 只能用于校验，不能反向选择目录。
-2. **检查项目本地 `.cap`**：读取存在的 `.cap/STATE.md`、`.cap/task-context.md`、`.cap/plan.md`，以及 `.cap/review/`、`.cap/verify/`。核对任务、分支、工作树、改动范围、已通过门禁和未完成项是否与当前 Git 状态一致。
-3. **本地事实不可降级**：`.cap` 缺失、状态不一致或存在未解决门禁时，先报告事实并按本地状态处理；不得假设上下文正确或直接进入下一阶段。知识库不可用不能成为跳过 `.cap` 的理由。
-4. **知识库是增强步骤**：完成 `.cap` 检查后，团队/Server 模式按 `../harvest-experience/SKILL.md` 尝试 `enrich_context`；调用失败允许离线继续，但交付说明必须记录注入失败、影响和降级方式，不得宣称已同步。显式本地模式不调用 MCP，改用项目本地历史索引和经验原稿。
-5. **交付前复核与沉淀**：复核 `git diff --name-only`、`git diff --check`、`.cap` 证据是否覆盖实际改动、本地验证结果和提交范围。团队/Server 模式存在真实代码或配置改动时必须按 harvest-experience 调用 `record_experience`；显式本地模式必须生成并校验 `.cap/experience.md`，不调用 MCP。两种模式都只处理意图、变更文件路径、仓库地址和验证信息，禁止传代码正文、私钥、密码、完整证书、完整签名或敏感业务数据。
-
-用户显式调用 `$cap` 后：
-
-1. 先检查当前宿主是否实际暴露 Capital Agent MCP 工具，再从**用户当前打开的仓库**运行 package 根的 `scripts/cap-status.mjs <target-repo> --json --mcp-runtime <loaded|missing|unknown>`，获得 Git、平台配置、Task 和确定性下一动作。第一次调用会把 canonical Git root 锁定为本会话主仓；后续 `.cap/STATE.md`、`task-context.md`、历史索引及其中的 `worktree` / 绝对路径都只能校验和定位仓内证据，**绝不能自动反向选择、跳转或覆盖目标仓库**。只读参考仓按 `cap-flow/references/cross-project-handoff.md` 处理；确需在另一独立项目开发时，用户必须明确说“切换到项目 B 继续开发”，先生成已审阅 outgoing 摘要，再用 `scripts/cap-session-root.mjs switch <A> <B> --handoff <outgoing.md>` 原子复制摘要并切换唯一可写主仓，随后重建 B 的 Task/Session。来源项目只传带来源 Commit 和待验证标记的业务摘要，不传递 Gate、Delivery、Outbox 或完成结论；目标仓原有脏文件与本任务 `modify` 路径重叠时必须先解决归属；同一远程项目的 sibling worktree 仍需新会话。若返回 `mode=session_root_blocked`，停止读取错误仓的 `.cap` 与源码，回到锁定仓库。能检查工具列表时必须传 `loaded` 或 `missing`；只有宿主无法提供工具可见性时才传 `unknown`。若返回 `mode=restart_required`，说明团队模式配置已经落盘但当前会话没有加载 MCP：先暂停阶段推进，并给用户两个直白选择：①完全退出并重新打开客户端、新建任务后恢复团队模式；②回复“本次本地继续”，以 `--allow-local-once` 重跑状态检查。第二种只对本任务生效，不修改机器团队配置；允许继续代码侦察和本地研发，但不创建平台 Task、不回写 Experience/Delivery/Server Gate，也不写 Outbox。不得未经用户选择就静默降级。
-   若返回 `mode=boundary_blocked`，立即停止需求确认、计划、编码、测试和评审；只能按 blocker 调用 `scripts/cap-task-state-switch.mjs`，先保存旧 `.cap` 活动态并初始化本次 Task，随后重跑状态检查。不得在解释“这是旧任务”后继续编码。
-   同时读取 `repository.harnessMode`。`local-only` 表示 Skills、工具链或流程维护仓：创建 Task 时传 `completion_mode=evidence_only`，仍记录普通 Commit、本地验证和经验，但禁止 `delivery_candidate=true`，禁止创建 Server Test/Review Action；本地测试与维护评审是该仓的交付证据。只有 `server` 仓库使用 `completion_mode=code_change` 并进入业务 Harness。不得按 GitHub/GitLab 域名推断。
-   若返回 `mode=local_explicit`，这是用户主动选择的完整本地运行模式；`mode=local_fallback_explicit` 是用户只为当前任务明确选择的本地继续。两者都跳过平台握手、Task / Session、MCP、Harness Action、Delivery 和 Outbox，但仍必须生成并校验本地 `.cap/experience.md`，保留项目记忆；后者不改持久配置，下个新任务仍优先团队模式。测试、评审与发布结论只能表述为本地证据，不得声称 Server Gate PASS。
-2. 若 MCP 提供 `create_or_attach_task`，首次调用前先用 `scripts/cap-task-request.mjs` 的确定性规则移除 remote URL 凭据、商户号、公司名、账号和密钥等具体值，只发送业务意图、代码范围和验证边界；随后创建/复用 Task、写回 `.cap/STATE.md` 并重跑 `cap-status.mjs`。若仍因 `unacceptable risk` / 敏感元数据策略被拒，只允许基于同一脱敏结果重试一次；重试成功时明确说明“Task 已用脱敏摘要创建，具体配置仅保留本地”，再次失败则标记 `task_creation_blocked` 并停止编码。非敏感风险拒绝不得套用脱敏重试。
-   若 `cap-status` 返回 `task.requiresNewSession=true`，说明已完成父 Task 存在活动 follow-up：必须把 `task.id` 作为显式 `task_id` 绑定，**不得传旧 session_id**，让平台为 follow-up 创建新 Skills Session；同时按本轮需求重新传 `verification_commands`，不得继承父 Task 的验证命令。MCP 工具已经加载、但普通远端调用失败时，必须明确报告 `离线执行 + 原因 + 影响 + 修复方式`，并按本轮事件使用 Outbox，禁止静默降级；当前会话根本没有加载 MCP 时必须走上面的 `restart_required`，不能套用离线执行。这条普通离线降级也不适用于上面的敏感风险拒绝。
-   平台暂时不可用时，把原本应调用 MCP 的结构化元数据写入目标仓 `.cap/outbox.jsonl`，使用 package 根 `scripts/cap-outbox.mjs enqueue`。恢复后先读取 `replay-plan`。属于**当前用户明确发起的本轮 Task** 的事件可按依赖顺序调用原 MCP 工具；成功后 `ack`，失败则 `fail` 保留事件。属于已完成 Task、旧 Session 或之前会话的**历史事件**，不得因用户本轮调用 `$cap` 就推定已获授权：先说明目的地、事件数量和将发送的元数据种类（路径、分支、Commit、Task/Session ID），取得明确同意后再逐条重放。用户未授权或暂未回答时保留 Outbox，并继续当前需求，不能让历史补报阻塞编码。不得把本地 PASS 重放成 Server Gate PASS，也不得上传代码正文。
-3. 创建/绑定 Task 后先读取 STATE 中已有的 Harness Action 引用；Test/Review/Patch 使用 `get_task_action / wait_task_action` 续接。编码实现由当前 Skills Session 或受控执行 Provider 完成，结果通过 Artifact、Delivery 和 Commit 回写，不再认领另一套旧 Task Action。
-4. 若状态包含 `git_delivery_reconciliation_needed`，立即扫描 `delivery-head..HEAD`；对 IDEA、人工或其它 Agent 产生的 Commit 幂等补调用 `record_task_delivery`。平台没有 Delivery 查询工具时也要重报当前 HEAD，由平台幂等去重，不能依赖原编码会话仍然存在。
-   重放普通 Delivery 前先对照 Server Task 的 evidence；同一 `idempotency_key` 已存在即确认对应 Outbox 事件，不再重复发送。只有普通 Delivery 可这样自动确认，候选 Delivery 仍要求当前授权并禁止历史重放。
-   进入独立测试或评审前必须检查 `cap-status.repository.head/upstreamHead` 与 `reconciliation.pushRequired`。当前精确 Commit 尚未在上游分支可见时，进入明确的 **Push 门禁**：用一句话说明“将把当前分支的精确 Commit 推送到哪个远程”，请求一次授权；不得先创建 Action，也不得把 Server 的仓库预检失败解释为 Provider 故障。授权身份同时绑定非空合法 Task、fetch URL 与唯一 push URL；多个 push URL、目标变化、HTTP userinfo、URL query/fragment（含 SCP 风格）或授权指纹不符都必须在外部写入前拒绝，标准 SSH 用户名不视作秘密。授权后调用 package 根的受控 `scripts/cap-push-candidate.mjs`，在同一动作内完成 Push → 同一 push URL 的远端 ref 精确回读 → 候选 Delivery 实时登记 → CI refresh → canonical Task 读取 → 本地跟踪分支刷新，不再要求用户重复说“继续”。验证证据必须绑定当前 Commit，重复别名、失败或畸形退出码不能声明 PASS，至少有一条成功命令，命令和环境只上传哈希，质量资产只能作为补充；canonical Task 未明确回读同一 Task、同一候选 Commit 时只能返回 partial，不能报成功。候选失败禁止写入 Outbox。授权只覆盖当前 Task、当前仓库、当前分支和当前 Commit；分支、Commit、仓库或目标环境变化后失效。`local-only` 必须在读取平台凭据前拒绝该动作，不能把仓库策略误报成缺少 `x-user-key`。
-5. 用统一“客户端握手快报”告诉用户平台连接、仓库、分支、Task、当前阶段、已认领 Action 和下一步；不得先写规格或代码再补报。
-   平台 Task 可读取时，快报与后续聊天只使用 Server canonical projection，并让 `cap-status` 将纠偏后的 stage/status 写回本地游标。若没有同时出现 `delivery_candidate=true` 和绑定该候选的 Test Action，即使本地 STATE 写着 `test`，也只能称为“编码实现 / 等待形成最终候选”，不得称为“平台正在测试验证”。若直接探测不可用且尚未从 MCP 取得 canonical projection，也必须停留在“等待 MCP 确认”，不能复述本地 `test` 冒充平台阶段。
-   `cap-status` 返回 `direct_probe_unavailable` 且 `platform.mcpRuntime=loaded|unknown` 时，只能表述为“直接探测不可用，等待 MCP 确认”，不得报告平台断网、网络错误或连接失败；必须继续调用 MCP 做最终确认。MCP 成功即按平台已连接继续，只有 MCP 已加载且直接探测与 MCP 调用都失败时才报告平台暂时不可用。`platform.mcpRuntime=missing` 不等待确认，直接执行 `restart_required`。
-   快报必须同时显示 Outbox 待同步数、可重放数、阻塞数与下一事件类型；存在待同步事件时不得只说“平台已连接”。
-   若待同步项属于历史 Task，快报必须标记“等待历史元数据补报授权”，不能直接执行，也不能含糊描述成普通连接恢复。
-6. 在完成“研发上下文门禁”后，调用中心知识层注入与本需求相关的历史经验；失败按门禁章节记录离线降级。
-7. 按 `cap-flow` 的 Orient → Route → Handoff 推进当前研发任务。没有人工门禁时，在同一会话立即进入 `cap-status.mjs` 判定的下一动作，禁止只上传 Artifact 或只更新 STATE 就结束。
-   普通开发 Commit 和入口对账只登记 Delivery，不触发 Test Action。仅当 `repository.harnessMode=server`，编码实现完成、精确 Commit 已在远端可见且没有人工门禁时，才对同一 Commit 再调用一次 `record_task_delivery(delivery_candidate=true)` 提交最终候选版本；Server 幂等创建 Test Action，客户端有界等待。Test 成功后由 Server 自动创建 Review Action，客户端继续读取/等待新的 Action，直到成功、明确阻塞或达到等待上限。`local-only` 仓库到本地验证与维护评审 PASS 即进入发布收口，不创建 Action。历史 Outbox 永远不能打断当前 Task 主线。
-8. 按阶段使用唯一 Action 协议，禁止双写：
-   - 编码实现：由当前 Skills Session 或受控执行 Provider 完成；通过 Artifact + Delivery 回写真实 Commit，不创建阶段 Action，不写 Test/Review PASS。
-   - 测试验证：强制 `create_task_action(action_type=test) → wait_task_action/get_task_action`；Server 决定 Gate，客户端不得自行写验证 PASS。
-     Action ready 后按运行平台路由 Provider：macOS/Linux 运行 package 根 `scripts/cap-local-test-provider.mjs <target-repo> <action-id>` 唤醒已注册的本地独立 Test Provider，必须限定本次 Action ID；本机 Provider 不可用时明确阻塞，不得让 Server 猜测研发机 Maven/npm/SDK 环境。原生 Windows 不调用该脚本，继续有界执行 `wait_task_action/get_task_action`，由 Server/Linux Runner 领取同一 Action；只有 Server 返回无匹配 Runner、容量不足或其它结构化阻塞时才报告对应阻塞，不得把 Windows 有意缺少本机 Provider 写成失败。
-   - 代码评审：强制 `create_task_action(action_type=review) → wait_task_action/get_task_action`；Review 只读，客户端不得自行写 Review PASS。
-   - 代码修复：只续接 Server Review 生成的 Harness Patch Action；由受控 Patch Provider 回写新 Commit 与 Patch Evidence，Skills 不自行伪造完成结果。
-   Server 返回新 Commit 的 Test/Review Action 时在同一会话继续；统一 Task `done` 后才进入 Delivery 与经验沉淀。
-   `get_task_action / wait_task_action` 返回终态时，必须同步刷新 `.cap/STATE.md` 与对应 `.cap/verify/*.md` 或 `.cap/review/*.md`，替换已经失效的“未提交、未推送、Action 未创建”等描述。两处统一记录 Action ID、源 Commit、Provider 终态、Server Gate、分类和解除条件；`ENV_BLOCKED` 不得写 PASS。
-9. 会话结束时按门禁章节沉淀意图、改动文件路径和验证信息，并维护统一 Task/Skills Session。
-
-进入测试验证或代码评审前同时加载 `../cap-flow/references/harness-action-protocol.md`。验证阶段优先使用 `create_task_action → wait_task_action/get_task_action` 请求独立 Test Provider；STATE 只保存 Action 引用，不能用本地 `PASS` 自证平台 Gate。Review 默认只读；可修 Finding 生成独立 Patch Action，不在同一 Review Run 中修改源码并自签 PASS。
-
-握手成功示例：
+真实研发任务开始前，先确认当前宿主是否暴露 Capital Agent MCP，再从用户当前打开的仓库运行：
 
 ```text
-Capital Agent 已连接
-仓库：example-org/example-repo · feature/example
-Task：task_xxx（已创建或已复用）
-当前：开发计划
-下一步：编码实现（本会话立即继续）
+node scripts/cap-status.mjs <repo> --compact --mcp-runtime <loaded|missing|unknown>
 ```
 
-客户端未重载示例：
+`--compact` 返回选择下一动作所需的 Git、安装、平台、Task、Action、Outbox、边界、纠偏和工作流字段。`outputMode=compact` 时按本文件路由；`outputMode=full-fallback` 表示发现阻断、纠偏、未知 blocker 或异常同步状态，结果已自动保留完整证据，必须加载并遵循 `../cap-flow/SKILL.md`，不得自行裁剪。
 
-```text
-Capital Agent 已配置，但当前会话没有加载 MCP 工具
-当前状态：需要选择运行方式
-代码修改：尚未开始
-1. 重启后使用团队模式（推荐）
-2. 本次明确改用本地模式继续（不创建平台 Task、不回写经验或 Server Gate）
-现有分支和工作区改动不会丢失
-```
+第一次状态检查把 canonical Git root 锁定为本会话唯一可写主仓。`.cap`、历史文档、另一个 clone/worktree 中的绝对路径只能校验，不能反向选择仓库。
 
-只有持久 `--local` 或用户明确选择“本次本地继续”后才能称为“本地模式”；MCP 已加载但平台暂时不可用时称为“离线执行”，并明确哪些平台证据进入本轮 Outbox。
+安装状态优先处理：`installation.upgradeRecommended=true` 时先升级本地 Skills 并重跑状态；`bootstrapRecommended=true` 时初始化安装清单。升级完成但当前会话已加载旧 Skill 时，提示新任务验证，不把内存中的旧说明冒充新版本。
 
-开始任何阶段前，加载并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。项目画像只能作为定位索引；每个新任务必须先从当前仓库代码建立 `.cap/task-context.md`。
+## 2. 不可跳过的本地门禁
 
-向用户汇报时使用“需求确认、开发计划、编码实现、测试验证、代码评审、发布上线”等对外名称。只有诊断状态文件或开发 Skills 本身时，才在括号中补充内部 ID。
+所有阶段都先读当前仓的 `.cap/STATE.md`、`.cap/task-context.md` 和存在的 plan/verify/review 证据，核对 branch、HEAD、工作树、Task 与未完成门禁。新任务或事实变化时，按以下文件执行：
+
+- `../cap-flow/references/task-reconnaissance.md`：代码与历史侦察、task-context 新鲜度；
+- `../cap-flow/references/progress-protocol.md`：状态与阶段推进；
+- `../cap-flow/references/complexity-routing.md`：L1–L4 分类；
+- 当前阶段 Skill：`../cap-understand`、`../cap-define`、`../cap-plan`、`../cap-implement`、`../cap-test`、`../cap-review` 或 `../cap-release`。
+
+用户语言与内部阶段：项目了解=`understand`，需求确认=`define`，开发计划=`plan`，编码实现=`implement`，测试验证=`test`，代码评审=`review`，发布上线=`release`。不要要求用户记内部名。
+
+L1/L2 且无风险触发时，只加载上述必要 reference 与当前阶段 Skill。L3/L4，或涉及安全、权限、支付、数据库迁移、外部副作用、MCP/发布、跨项目、复杂并发、回滚困难时，加载完整 `../cap-flow/SKILL.md`。分类未知时一律升级到完整协议；不得为了省 Token 猜测低风险。
+
+任务跨越多个依赖阶段时维护 `.cap/spec.md`、`.cap/plan.md` 和 `.cap/STATE.md`；每次进入 plan/implement/test/review/release 前运行 task-context 门禁。工作区出现任务前脏文件时先确认归属，禁止覆盖用户改动。
+
+## 3. 状态分流
+
+- `mode=session_root_blocked`：立即停止读取错误仓源码，回到锁定仓。只读参考按 `cap-flow/references/cross-project-handoff.md`；切换独立项目必须由用户明确要求，先审阅 handoff，再运行 `scripts/cap-session-root.mjs switch`。同一项目 sibling worktree 使用新会话。
+- `mode=boundary_blocked`：停止需求、计划、编码和测试；只用 `scripts/cap-task-state-switch.mjs` 保存旧活动态并建立本次 Task，然后重跑状态。
+- `mode=restart_required`：团队配置已存在但本会话没有 MCP。给用户两项选择：重启后使用团队模式；或明确“本次本地继续”并以 `--allow-local-once` 重跑。未经选择禁止静默降级。
+- `mode=local_explicit` / `mode=local_fallback_explicit`：仅做本地研发与证据，不创建平台 Task，不回写 Experience/Delivery/Server Gate，不写 Outbox；结果只能称本地 PASS。
+- 平台已连接或待 MCP 确认：以 Server canonical Task 为权威；直接 HTTP 探测失败但 MCP 已加载时继续用 MCP 确认，不能直接宣称平台断网。
+
+仅在平台已由 MCP 确认可用的团队模式中，`mode=platform_ready` 或 `task.id` 为空时，才必须先调用 `create_or_attach_task`，把 Task/Session 写回 `.cap/STATE.md` 并重跑 compact status，完成前不得进入研发阶段。该规则不适用于 `mode=restart_required`、`mode=local_explicit`、`mode=local_fallback_explicit` 或 `mode=local_degraded`，这些模式不得创建平台 Task 或补写 Delivery。团队模式下 `task.requiresNewSession=true` 时绑定返回的 follow-up `task.id`，不得复用旧 `session_id`，并重新提交本任务的验证命令；`reconciliation.needsDeliveryReconciliation=true` 时先对当前 Task 幂等补记普通 Delivery，不能把它误当候选 Delivery。
+
+`repository.harnessMode=local-only` 的工具/Skills 仓只做本地维护验证；local-only 必须在读取平台凭据前拒绝候选 Push/Harness 动作。`harnessMode=server` 才能进入平台候选 Test/Review。
+
+每次启动向用户简报：模式、仓库/分支、Task、当前阶段、阻断或 Action、Outbox 数和下一动作；随后在没有人工门禁时继续工作，不以“状态已检查”结束。
+
+## 4. 平台、Task 与离线边界
+
+团队模式先按 `../harvest-experience/SKILL.md` 注入经验。调用 `create_or_attach_task` 前使用 `scripts/cap-task-request.mjs` 脱敏，只发送意图、代码范围和验证边界；敏感风险拒绝最多以同一脱敏结果重试一次，仍失败则记 `task_creation_blocked` 并停止编码。
+
+MCP 已加载但远端暂时失败时，明确说明离线原因、影响与恢复方式；本轮应发送的结构化元数据可用 `scripts/cap-outbox.mjs enqueue` 写入 `.cap/outbox.jsonl`。只重放当前用户明确发起的当前 Task；历史 Task/Session 或无归属事件必须标记“等待历史元数据补报授权”，未获授权时保留且不阻塞当前主线。禁止把本地 PASS 补报成 Server Gate PASS，禁止上传代码正文或秘密。
+
+当前会话根本没加载 MCP 时不能写 Outbox 伪装离线团队流程，必须走 `mode=restart_required`。显式本地模式也不写 Outbox。
+
+## 5. 实现、Push 与 Harness
+
+编码由当前 Skills Session 或受控 Provider 完成，提交真实 Artifact/Commit/Delivery。任何状态摘要都必须按当前 HEAD、源码 fingerprint 与最新执行结果重验；旧 PASS、可编辑摘要或历史 Delivery 不能覆盖新失败。
+
+进入 Server Test/Review 前，当前精确 Commit 必须在上游可见。`reconciliation.pushRequired=true` 时只请求一次精确授权，说明远程、分支、Commit；授权只覆盖该 Task/仓库/分支/Commit，任一变化即失效。授权后使用 `scripts/cap-push-candidate.mjs` 完成 Push、远端 ref 回读、候选 Delivery 登记和 canonical Task 复核。候选失败不写 Outbox。
+
+进入测试或评审时加载 `../cap-flow/references/harness-action-protocol.md`：
+
+- 测试：Server 创建/返回 Test Action，再用 `get_task_action` / `wait_task_action` 续接；macOS/Linux 运行 `scripts/cap-local-test-provider.mjs <repo> <action-id>`，本机 Provider 不可用时明确阻塞。原生 Windows 不调用该脚本，只等待 Server/Linux Runner。
+- 评审：Review Action 只读，客户端不能自签 PASS。
+- 代码修复：只续接 Server Review 生成的 Harness Patch Action；新 Commit 必须重新经过对应门禁。
+
+只有 `harnessMode=server`、精确 Commit 已远端可见且 `delivery_candidate=true` 时才形成候选并进入 Test；Test 通过后由 Server 推进 Review。没有 canonical 同 Task/同 Commit 证据时最多报告 partial。
+
+## 6. 收口
+
+提交前至少执行：目标测试、`bash scripts/validate-skills`（若本仓适用）、`git diff --check`，并核对改动文件未越过 task-context 范围。行为变更同步 CHANGELOG 与版本元数据。
+
+团队模式的真实改动按 `../harvest-experience/SKILL.md` 只回写意图、文件路径、仓库与验证摘要，不传代码和秘密；本地模式生成并校验 `.cap/experience.md`。发布、归档与 Retire 细节按当前阶段 Skill 执行。
+
+向用户只声称证据实际证明的结果：本地证据不等于 Server Gate，提交不等于已推送，分支推送不等于已合并或已发布。

@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.11.4，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.12.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.12.0 更新
+
+- `cap-status --compact` 只返回模型选择下一动作所需的状态；异常、纠偏或未知协议会自动 `full-fallback`，不牺牲门禁。
+- 公开入口改为按复杂度和阶段加载：普通 L1/L2 任务不再一次性注入整套流程，高风险和未知分类仍走完整协议。
+- 本地 mock full/compact A/B 固化决策等价与体积门槛，防止以后为了省 Token 误删安全信号。
 
 ## v0.11.4 更新
 
