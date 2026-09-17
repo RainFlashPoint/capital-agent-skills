@@ -151,20 +151,39 @@ export async function nativeArgv(argv,env) {
 export async function observeCommand(argv,{cwd,env=process.env,timeoutMs=120000,maxOutputBytes=1024*1024}) {
  argv=await nativeArgv(argv,env);timeoutCheck(timeoutMs)
  return new Promise(resolveResult=>{
-  let child,stdout='',stderr='',bytes=0,reason='',timer
-  const finish=(exitCode,signal)=>{clearTimeout(timer);resolveResult({exitCode:Number.isInteger(exitCode)?exitCode:null,signal:signal||null,status:reason||((exitCode===0&&!signal)?'passed':'failed'),stdout,stderr})}
-  const stop=why=>{if(reason)return;reason=why
+  const boundedCapture=limit=>{
+   const headLimit=Math.ceil(limit/2),tailLimit=limit-headLimit
+   let total=0,head=Buffer.alloc(0),tail=Buffer.alloc(0)
+   return {append(data){const chunk=Buffer.isBuffer(data)?data:Buffer.from(data);total+=chunk.length
+    let offset=0
+    if(head.length<headLimit){const take=Math.min(headLimit-head.length,chunk.length);head=Buffer.concat([head,chunk.subarray(0,take)]);offset=take}
+    if(offset<chunk.length&&tailLimit>0){tail=Buffer.concat([tail,chunk.subarray(offset)]);if(tail.length>tailLimit)tail=tail.subarray(tail.length-tailLimit)}
+   },text(){if(total<=limit)return Buffer.concat([head,tail]).toString('utf8')
+    const lastLineBreak=Math.max(head.lastIndexOf(10),head.lastIndexOf(13))
+    const tailBreaks=[tail.indexOf(10),tail.indexOf(13)].filter(index=>index>=0),firstLineBreak=tailBreaks.length?Math.min(...tailBreaks):-1
+    if(lastLineBreak<0&&firstLineBreak<0)return `… [oversized single line removed for credential safety; bytes=${total}] …\n`
+    const safeHead=lastLineBreak<0?Buffer.alloc(0):head.subarray(0,lastLineBreak+1)
+    const safeTail=firstLineBreak<0?Buffer.alloc(0):tail.subarray(firstLineBreak+1)
+    return `${safeHead.toString('utf8')}… [output truncated; incomplete boundary lines removed] …\n${safeTail.toString('utf8')}`
+   }}
+  }
+  let child,bytes=0,reason='',timer,killTimer
+  const stdoutCapture=boundedCapture(maxOutputBytes),stderrCapture=boundedCapture(maxOutputBytes)
+  const finish=(exitCode,signal)=>{clearTimeout(timer);clearTimeout(killTimer);resolveResult({exitCode:Number.isInteger(exitCode)?exitCode:null,signal:signal||null,status:reason||((exitCode===0&&!signal)?'passed':'failed'),stdout:stdoutCapture.text(),stderr:stderrCapture.text()})}
+  const kill=()=>{
    if(process.platform==='win32'){try {const killer=spawn('taskkill',['/pid',String(child.pid),'/T','/F'],{stdio:'ignore'});killer.on('error',()=>child.kill())} catch {child.kill()}}
    else {try{process.kill(-child.pid,'SIGKILL')}catch{child.kill('SIGKILL')}}
+  }
+  const stop=(why,{graceMs=0}={})=>{if(reason)return;reason=why;if(graceMs>0)killTimer=setTimeout(kill,graceMs);else kill()
   }
   try{const inherited={...env};delete inherited.CAP_LOCAL_EXECUTION_SECRET
    child=spawn(argv[0],argv.slice(1),{cwd,env:inherited,shell:false,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']})
   }catch{reason='spawn_failed';finish(null,null);return}
   child.on('error',()=>{reason='spawn_failed'})
   for(const [stream,key] of [[child.stdout,'stdout'],[child.stderr,'stderr']])stream.on('data',data=>{
-   const remaining=Math.max(0,maxOutputBytes-bytes),chunk=data.subarray(0,remaining).toString('utf8');bytes+=data.length
-   if(key==='stdout')stdout+=chunk;else stderr+=chunk
-   if(bytes>maxOutputBytes)stop('output_limit')
+   bytes+=data.length
+   if(key==='stdout')stdoutCapture.append(data);else stderrCapture.append(data)
+   if(bytes>maxOutputBytes)stop('output_limit',{graceMs:100})
   })
   timer=setTimeout(()=>stop('timed_out'),timeoutMs)
   child.on('close',finish)

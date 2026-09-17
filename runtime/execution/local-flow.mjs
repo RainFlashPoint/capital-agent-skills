@@ -11,8 +11,34 @@ const hashPattern=/^[a-f0-9]{64}$/
 const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/
 const same=(a,b)=>canonical(a)===canonical(b)
 const validDate=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value
+const diagnosticLimit=16*1024
+function redactDiagnostic(value='') {
+ let redacted=String(value)
+ redacted=redacted.replace(/-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/gi,'[REDACTED PRIVATE KEY]')
+ redacted=redacted.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/gi,'$1[REDACTED]@')
+ const key=String.raw`(?:(?:[a-z0-9]+[_-])*(?:authorization|cookie|password|passwd|token|secret|key(?:[_-]?id)?|credential(?:s)?|session(?:[_-]?id)?|database[_-]?url|db[_-]?url|connection[_-]?string)|accessToken|refreshToken|clientSecret|apiKey|privateKey|userKey|sessionToken|sessionId|databaseUrl|connectionString|secretAccessKey|accessKeyId)`
+ redacted=redacted.replace(new RegExp(`(["'])(${key})\\1\\s*:\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^,}\\n]*)`,'gi'),(_,quote,name)=>`${quote}${name}${quote}: "[REDACTED]"`)
+ redacted=redacted.replace(new RegExp(`([?&]${key}=)[^&#\\s]*`,'gi'),'$1[REDACTED]')
+ redacted=redacted.replace(new RegExp(`(^|[^a-z0-9_-])(${key})\\s*[:=]\\s*(?:"[^"\\n]*"|'[^'\\n]*'|[^\\n]*)`,'gim'),(_,prefix,name)=>`${prefix}${name}=[REDACTED]`)
+ redacted=redacted.replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi,match=>`${match.split(/\s/,1)[0]} [REDACTED]`)
+ redacted=redacted.replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,'[REDACTED]')
+ redacted=redacted.replace(/\b(?:sk|ak)-[A-Za-z0-9_-]{12,}\b|\b(?:ghp_|github_pat_|glpat-|xox[baprs]-)[A-Za-z0-9_-]{12,}\b/g,'[REDACTED]')
+ return redacted
+}
 function diagnosticText(value='') {
- return String(value).replace(/(authorization|password|passwd|token|secret|api[_-]?key|private[_-]?key)\s*[:=]\s*(?:"[^"\n]*"|'[^'\n]*'|[^\n]*)/gi,'$1=[REDACTED]').replace(/\b(?:sk|ak)-[A-Za-z0-9_-]{12,}\b/g,'[REDACTED]').slice(0,16*1024)
+ const redacted=redactDiagnostic(value)
+ if(redacted.length<=diagnosticLimit)return redacted
+ const marker='\n… [truncated; showing head and tail] …\n',budget=diagnosticLimit-marker.length,head=Math.ceil(budget/2)
+ return `${redacted.slice(0,head)}${marker}${redacted.slice(-(budget-head))}`
+}
+function executionDiagnostic(stdout='',stderr='') {
+ return {schemaVersion:1,status:'',stdout:diagnosticText(stdout),stderr:diagnosticText(stderr),truncated:String(stdout).length>diagnosticLimit||String(stderr).length>diagnosticLimit}
+}
+export function compactExecutionResult(run={}) {
+ const gate=run.gate||{},receipt=run.receipt||{},fallback=gate.passed!==true||gate.gate!=='PASS'||receipt.status!=='passed'||receipt.exitCode!==0||Boolean(receipt.signal)
+ const projected={schemaVersion:1,outputMode:fallback?'full-fallback':'compact',trust:'local-observed',stage:gate.stage||run.envelope?.stage||'',action:gate.action||run.envelope?.action||'',gate,execution:{envelopeId:receipt.envelopeId||run.envelope?.id||'',status:receipt.status||'',exitCode:receipt.exitCode??null,signal:receipt.signal??null},output:{stdout:{bytes:Buffer.byteLength(String(run.stdout||'')),sha256:receipt.stdoutHash||digest(String(run.stdout||''))},stderr:{bytes:Buffer.byteLength(String(run.stderr||'')),sha256:receipt.stderrHash||digest(String(run.stderr||''))}},artifactDir:run.artifactDir||''}
+ if(fallback){const diagnostic=executionDiagnostic(run.stdout,run.stderr);projected.diagnostic={...diagnostic,status:receipt.status||diagnostic.status||''}}
+ return projected
 }
 function actionStage(action){return {build:'implement',test:'test',package:'release'}[action]}
 // Stable, model-facing recovery contract.  These are recommendations for the
@@ -104,13 +130,13 @@ export async function runLocalAction(repoPath='.',options={}) {
   const identityChanged=!same(initial.identity,after.identity)
   const receipt={schemaVersion:2,authority:'local-observed',...initial.identity,envelopeId:envelope.id,envelopeHash:digest(envelope),finishedAt:new Date().toISOString(),exitCode:result.exitCode,signal:result.signal,status:result.status,stdoutHash:digest(result.stdout),stderrHash:digest(result.stderr),afterSnapshot:identityChanged?null:after.snapshot,runtime:{node:process.version,platform:process.platform,arch:process.arch}}
   const gate=gateFor(envelope,receipt)
-  const diagnostic={schemaVersion:1,status:result.status,stdout:diagnosticText(result.stdout),stderr:diagnosticText(result.stderr),truncated:result.stdout.length>16*1024||result.stderr.length>16*1024}
+  const diagnostic={...executionDiagnostic(result.stdout,result.stderr),status:result.status}
   receipt.diagnosticPath='diagnostic.json';receipt.diagnosticHash=digest(diagnostic)
   await atomicJson(join(artifactDir,'diagnostic.json'),diagnostic,{exclusive:true})
   await atomicJson(join(artifactDir,'bundle.json'),{schemaVersion:2,envelope,receipt,envelopeHash:digest(envelope),receiptHash:digest(receipt)},{exclusive:true})
   // Human-facing summaries are derivatives; readers recompute from bundle.json, never trust these PASS fields.
   await atomicJson(join(artifactDir,'gate.json'),gate,{exclusive:true})
-  return {envelope,receipt,gate,artifactDir,stdout:result.stdout,stderr:result.stderr}
+  return {envelope,receipt,gate,artifactDir,stdout:result.stdout,stderr:result.stderr,diagnostic}
  }finally {await rm(lock,{recursive:true,force:true})}
 }
 export async function inspectLocalExecution(repoPath='.',options={}) {

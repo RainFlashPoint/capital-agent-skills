@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { runLocalAction, inspectLocalExecution, doctorLocalExecution } from '../runtime/execution/local-flow.mjs'
+import { runLocalAction, inspectLocalExecution, doctorLocalExecution, compactExecutionResult } from '../runtime/execution/local-flow.mjs'
 
 const cli=fileURLToPath(new URL('./cap-execute.mjs',import.meta.url))
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()
@@ -101,14 +101,30 @@ test('timeouts and capped output are failures, not zero-exit success',async t=>{
  const root=await fixture(t)
  let run=await runLocalAction(root,{environment:{},timeoutMs:100,command:[process.execPath,'-e','setInterval(()=>{},1000)']})
  assert.equal(run.receipt.status,'timed_out');assert.equal(run.gate.gate,'BLOCKED')
- run=await runLocalAction(root,{environment:{},command:[process.execPath,'-e','process.stdout.write("x".repeat(2*1024*1024))']})
+ run=await runLocalAction(root,{environment:{},command:[process.execPath,'-e','process.stdout.write("x".repeat(2*1024*1024));process.stderr.write("FINAL_DIAGNOSTIC_MARKER\\n")']})
  assert.equal(run.receipt.status,'output_limit');assert.equal(run.gate.gate,'BLOCKED')
+ assert.match(run.stderr,/FINAL_DIAGNOSTIC_MARKER/)
+ const projected=compactExecutionResult(run);assert.equal(projected.outputMode,'full-fallback');assert.match(projected.diagnostic.stderr,/FINAL_DIAGNOSTIC_MARKER/)
 })
 test('CLI help/doctor and malformed inputs do not require secrets or echo input',async t=>{
  const root=await fixture(t)
  let r=spawnSync(process.execPath,[cli,'doctor','--repo',root,'--json'],{encoding:'utf8'});assert.equal(r.status,0);assert.equal(JSON.parse(r.stdout).trust,'local-observed')
  r=spawnSync(process.execPath,[cli,'--repo',root,'--command','["private-marker"'],{encoding:'utf8'});assert.notEqual(r.status,0);assert.doesNotMatch(r.stderr,/private-marker|SyntaxError|at file/)
  r=spawnSync(process.execPath,[cli,'--unknown'],{encoding:'utf8'});assert.notEqual(r.status,0)
+})
+
+test('CLI compact mode suppresses successful noise and restores failed diagnostics',async t=>{
+ const root=await fixture(t),env={...process.env,CAPITAL_AGENT_MODE:'local',CAPITAL_AGENT_SESSION_LOCK_DIR:join(root,'.cap/session-locks')}
+ let r=spawnSync(process.execPath,[cli,'run','--repo',root,'--compact','--',process.execPath,'-e','process.stdout.write("success-noise\\n".repeat(2000))'],{encoding:'utf8',env})
+ assert.equal(r.status,0,r.stderr)
+ let projected=JSON.parse(r.stdout)
+ assert.equal(projected.outputMode,'compact');assert.equal(projected.gate.gate,'PASS');assert.doesNotMatch(r.stdout,/success-noise/)
+ r=spawnSync(process.execPath,[cli,'run','--repo',root,'--compact','--',process.execPath,'-e','console.error("first clue\\n"+"noise\\n".repeat(5000)+"last clue\\ntoken=sk-123456789012345");process.exit(3)'],{encoding:'utf8',env})
+ assert.equal(r.status,1)
+ projected=JSON.parse(r.stdout)
+ assert.equal(projected.outputMode,'full-fallback');assert.equal(projected.gate.gate,'BLOCKED');assert.match(projected.diagnostic.stderr,/first clue/);assert.match(projected.diagnostic.stderr,/REDACTED/);assert.doesNotMatch(r.stdout,/sk-123456789012345/)
+ r=spawnSync(process.execPath,[cli,'run','--repo',root,'--compact','--json','--',process.execPath,'-e',''],{encoding:'utf8',env})
+ assert.notEqual(r.status,0);assert.match(r.stderr,/execution_output_mode_conflict/)
 })
 
 test('cap-status consumes real evidence and blocks stale or failed results despite declared next',async t=>{

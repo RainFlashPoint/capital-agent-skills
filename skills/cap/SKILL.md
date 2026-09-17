@@ -50,6 +50,8 @@ L1/L2 且无风险触发时，只加载上述必要 reference 与当前阶段 Sk
 
 每次启动向用户简报：模式、仓库/分支、Task、当前阶段、阻断或 Action、Outbox 数和下一动作；随后在没有人工门禁时继续工作，不以“状态已检查”结束。
 
+模型可见输出也走保守压缩：本地测试、构建、打包优先用 `scripts/cap-execute.mjs run --compact`；PASS 只返回 Gate、哈希、字节数与 Artifact，非 PASS 自动 `full-fallback` 到脱敏头尾诊断，canonical receipt/bundle 与退出码不变。Git 先读短状态、路径、统计和补丁健康，失败、冲突、评审、安全或发布时再展开相关 patch；不得为省 Token 隐藏证据。
+
 ## 4. 平台、Task 与离线边界
 
 团队模式先按 `../harvest-experience/SKILL.md` 注入经验。调用 `create_or_attach_task` 前使用 `scripts/cap-task-request.mjs` 脱敏，只发送意图、代码范围和验证边界；敏感风险拒绝最多以同一脱敏结果重试一次，仍失败则记 `task_creation_blocked` 并停止编码。

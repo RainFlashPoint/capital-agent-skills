@@ -86,6 +86,8 @@ grep -q 'experienceIndex' scripts/intake.py || err "Retire 未把经验召回线
 grep -q 'cap-status.mjs' "$ROOT/cap/SKILL.md" || err "cap 未执行客户端握手与下一动作判定"
 grep -q 'cap-status.mjs.*--compact' "$ROOT/cap/SKILL.md" || err "cap 未使用轻量状态入口"
 grep -q 'outputMode=full-fallback' "$ROOT/cap/SKILL.md" || err "cap 未声明异常状态完整回退"
+grep -q 'cap-execute.mjs run --compact' "$ROOT/cap/SKILL.md" || err "cap 未使用轻量测试/构建输出入口"
+[ -f scripts/test-cap-execution-compact.mjs ] || err "缺少执行输出 compact/full-fallback A/B 回归"
 grep -q 'complexity-routing.md' "$ROOT/cap/SKILL.md" || err "cap 轻入口未加载复杂度路由"
 grep -q 'outbox.jsonl' "$ROOT/cap/SKILL.md" || err "cap 未声明离线 Outbox 补报协议"
 grep -q '等待历史元数据补报授权' "$ROOT/cap/SKILL.md" || err "cap 未区分当前 Task 与历史 Outbox 授权边界"

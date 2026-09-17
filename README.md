@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.12.0，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.12.1，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.12.1 更新
+
+- `cap-execute run --compact` 在测试、构建和打包成功时只向模型返回 Gate、哈希、字节数与证据位置；默认输出和 `--json` 保持兼容。
+- 失败、超时、输出超限或源码漂移自动返回脱敏头尾诊断，不以 Token 节省换取排障信息。
+- 常规 Git 检查先使用短状态、路径、统计与补丁健康，诊断、评审、安全或发布场景再展开相关 patch。
 
 ## v0.12.0 更新
 
