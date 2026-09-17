@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.2
+
+- Codex 的 Capital Agent MCP 从强制启动迁移为可选启动，平台暂时不可达时不再阻止整个会话和普通对话；安装与升级幂等迁移历史 `required=true`。
+- Doctor 将会阻断会话启动的强制 MCP 配置判为失败并提示升级；团队模式仍在每个研发任务入口主动检查 MCP、尝试平台握手，缺失时进入 `restart_required`，禁止静默默认本地。
+- `local_fallback_explicit` 从 Task + 分支进一步绑定当前运行会话；新会话、Task/分支变化或 MCP 恢复加载时自动失效并重试团队模式，避免一次本地选择长期残留。
+
 ## 0.12.1
 
 - 新增 `cap-execute run --compact` 模型输出投影：成功态只返回 Gate、结果哈希、字节数和 Artifact 引用，默认输出与既有 `--json` 保持兼容。

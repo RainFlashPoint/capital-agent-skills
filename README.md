@@ -4,7 +4,13 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.12.1，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.12.2，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.12.2 更新
+
+- Codex 的 Capital Agent MCP 改为可选启动：平台暂时不可达时仍可进入会话和普通对话。
+- 可选启动不等于默认本地。团队配置下每个新研发任务仍主动检查 MCP 并尝试平台握手；缺少工具时进入选择门，禁止静默长期本地化。
+- “本次本地继续”绑定当前运行会话、分支和 Task；新会话或 MCP 恢复加载后自动失效。升级会迁移旧 `required=true`，Doctor 会把未迁移配置判为失败。
 
 ## v0.12.1 更新
 
@@ -294,7 +300,7 @@ Windows PowerShell：
 $src = (Get-Content "$HOME\.capital-agent\install-manifest.json" | ConvertFrom-Json).sourceRoot; powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$src\scripts\setup.ps1" --upgrade; powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$src\scripts\setup.ps1" --doctor
 ```
 
-安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。安装或升级后建议完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务让 MCP 生效。若团队配置已经存在、但当前会话没有加载 Capital Agent MCP，Skills 会让用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；本地继续不会修改机器配置，但本任务不创建平台 Task、不回写经验或 Server Gate。需要手工连接自建 Server 时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
+安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。Codex MCP 使用可选启动，因此平台暂时不可达不会阻止普通对话；但团队配置下每个新研发任务仍会主动检查 MCP 并尝试平台握手，不会因为启动可选就默认为本地。安装或升级后建议完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务让 MCP 生效。若团队配置已经存在、但当前会话没有加载 Capital Agent MCP，Skills 会让用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；本地继续只绑定当前运行会话 + 分支 + Task，不会修改机器配置，新会话会重新尝试团队模式。需要手工连接自建 Server 时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
 
 平台地址和个人身份只保存在研发机器配置中。开源仓库不内置公司地址、个人凭据或项目代码。
 

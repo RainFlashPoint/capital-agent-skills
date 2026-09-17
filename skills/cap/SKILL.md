@@ -38,10 +38,10 @@ L1/L2 且无风险触发时，只加载上述必要 reference 与当前阶段 Sk
 
 ## 3. 状态分流
 
-- `mode=session_root_blocked`：立即停止读取错误仓源码，回到锁定仓。只读参考按 `cap-flow/references/cross-project-handoff.md`；切换独立项目必须由用户明确要求，先审阅 handoff，再运行 `scripts/cap-session-root.mjs switch`。同一项目 sibling worktree 使用新会话。
+- `mode=session_root_blocked`：停止读取错误仓并回到锁定仓；跨项目按 `cross-project-handoff.md` 审阅 handoff 后运行 `cap-session-root.mjs switch`，同项目 worktree 使用新会话。
 - `mode=boundary_blocked`：停止需求、计划、编码和测试；只用 `scripts/cap-task-state-switch.mjs` 保存旧活动态并建立本次 Task，然后重跑状态。
-- `mode=restart_required`：团队配置已存在但本会话没有 MCP。给用户两项选择：重启后使用团队模式；或明确“本次本地继续”并以 `--allow-local-once` 重跑。未经选择禁止静默降级。
-- `mode=local_explicit` / `mode=local_fallback_explicit`：仅做本地研发与证据，不创建平台 Task，不回写 Experience/Delivery/Server Gate，不写 Outbox；结果只能称本地 PASS。
+- `mode=restart_required`：团队配置存在但会话无 MCP。可选启动只保证能聊天；每个新研发任务仍检查 MCP 并尝试团队握手。让用户选择重启，或明确“本次本地继续”后以 `--allow-local-once` 重跑；禁止静默降级。
+- `mode=local_explicit` / `mode=local_fallback_explicit`：只做本地证据，不写平台 Task/Experience/Delivery/Gate/Outbox，只能称本地 PASS。后者绑定运行会话 + 分支 + Task，新会话或 MCP 加载后失效。
 - 平台已连接或待 MCP 确认：以 Server canonical Task 为权威；直接 HTTP 探测失败但 MCP 已加载时继续用 MCP 确认，不能直接宣称平台断网。
 
 仅在平台已由 MCP 确认可用的团队模式中，`mode=platform_ready` 或 `task.id` 为空时，才必须先调用 `create_or_attach_task`，把 Task/Session 写回 `.cap/STATE.md` 并重跑 compact status，完成前不得进入研发阶段。该规则不适用于 `mode=restart_required`、`mode=local_explicit`、`mode=local_fallback_explicit` 或 `mode=local_degraded`，这些模式不得创建平台 Task 或补写 Delivery。团队模式下 `task.requiresNewSession=true` 时绑定返回的 follow-up `task.id`，不得复用旧 `session_id`，并重新提交本任务的验证命令；`reconciliation.needsDeliveryReconciliation=true` 时先对当前 Task 幂等补记普通 Delivery，不能把它误当候选 Delivery。

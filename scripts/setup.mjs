@@ -121,6 +121,7 @@ if (args.doctor) {
   const installDetail = installStateDetail(installState)
   const label = (state,index) => {
     if (!state.registered) return '未注册'
+    if (state.reason === 'required_startup_blocks_session') return 'FAIL（required=true 会在 MCP 暂时断连时阻止 Codex 会话启动，请运行 --upgrade 迁移为可选启动）'
     if (state.reason === 'team_transport_local_stdio') return 'FAIL（错误地指向本地 STDIO，请运行 --upgrade 迁移到 HTTP）'
     if (state.reason === 'legacy_transport') return 'FAIL（旧版 STDIO 代理，请运行 --upgrade 迁移到 HTTP）'
     if (!state.valid) return 'FAIL（配置 URL 或 Header Helper 不可用）'

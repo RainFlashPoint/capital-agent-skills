@@ -24,10 +24,12 @@ test('post-commit payload carries task, commit and changed paths without code co
 
 test('task-scoped local fallback is visible to post-commit and does not leak to another task', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'cap-local-fallback-'))
-  await activateLocalFallback(repo, { branch: 'feature/test', taskId: 'task_local' })
-  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_local' }), true)
-  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_next' }), false)
-  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/other', taskId: 'task_local' }), false)
+  const currentSession = { CODEX_THREAD_ID: 'thread-current' }
+  await activateLocalFallback(repo, { branch: 'feature/test', taskId: 'task_local', environment: currentSession })
+  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_local', environment: currentSession }), true)
+  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_next', environment: currentSession }), false)
+  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/other', taskId: 'task_local', environment: currentSession }), false)
+  assert.equal(await isLocalFallbackActive(repo, { branch: 'feature/test', taskId: 'task_local', environment: { CODEX_THREAD_ID: 'thread-next' } }), false)
 })
 
 test('persistent explicit local mode makes post-commit a hard no-op', async () => {

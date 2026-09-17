@@ -10,7 +10,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { checkPlatformHandshake, normalizeServerUrl, inspectInstallManifest } from './setup-lib.mjs'
 import { flushPendingDeliveries, readHarnessMode, sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { inspectOutbox } from './cap-outbox.mjs'
-import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
+import { activateLocalFallback, isLocalFallbackActive, revokeLocalFallback } from './local-fallback.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { inspectLocalExecution, executionNextActions } from '../runtime/execution/local-flow.mjs'
@@ -347,10 +347,11 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const boundary = inspectTaskBoundary({ stateText, branch, worktree: gitRoot || repo })
   const taskId = field(stateText, 'task-id')
   const sessionId = field(stateText, 'session-id')
+  if (teamConfigured && mcpRuntimeState === 'loaded') await revokeLocalFallback(repo)
   if (teamConfigured && mcpRuntimeState === 'missing' && allowLocalFallback === true) {
-    await activateLocalFallback(repo, { branch, taskId })
+    await activateLocalFallback(repo, { branch, taskId, environment })
   }
-  const explicitLocalFallback = teamConfigured && mcpRuntimeState === 'missing' && await isLocalFallbackActive(repo, { branch, taskId })
+  const explicitLocalFallback = teamConfigured && mcpRuntimeState === 'missing' && await isLocalFallbackActive(repo, { branch, taskId, environment })
   const localRun = explicitLocal || explicitLocalFallback
   const restartRequired = teamConfigured && mcpRuntimeState === 'missing' && !explicitLocalFallback
   const parentTaskId = field(stateText, 'parent-task-id')

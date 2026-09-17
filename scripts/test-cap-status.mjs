@@ -178,9 +178,10 @@ test('configured team mode offers a choice gate when the current session has not
 
 test('an explicit one-task local fallback keeps development available without changing team configuration', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-local-once-'))
+  const environment = { CODEX_THREAD_ID: 'thread-local-once', CAPITAL_AGENT_SESSION_LOCK_DIR: join(home, 'session-locks') }
   await mkdir(join(home, '.config/capital-agent'), { recursive: true })
   await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
-  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, mcpRuntime: 'missing', allowLocalFallback: true, fetchImpl: async () => { throw new Error('explicit local fallback must not probe or send') } })
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment, mcpRuntime: 'missing', allowLocalFallback: true, fetchImpl: async () => { throw new Error('explicit local fallback must not probe or send') } })
   assert.equal(result.mode, 'local_fallback_explicit')
   assert.equal(result.platform.configured, true)
   assert.equal(result.platform.connected, null)
@@ -188,20 +189,52 @@ test('an explicit one-task local fallback keeps development available without ch
   assert.equal(result.workflow.gated, undefined)
   assert.equal(result.task.blocker, null)
   assert.deepEqual(result.reasons, [])
-  const resumed = await inspectCapStatus({ repoRoot: repo, homeDir: home, mcpRuntime: 'missing', fetchImpl: async () => { throw new Error('persisted local fallback must not probe or send') } })
+  const resumed = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment, mcpRuntime: 'missing', fetchImpl: async () => { throw new Error('persisted local fallback must not probe or send') } })
   assert.equal(resumed.mode, 'local_fallback_explicit')
 })
 
 test('one-task local fallback expires when the active task identity changes', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-local-once-task-'))
+  const environment = { CODEX_THREAD_ID: 'thread-task-change', CAPITAL_AGENT_SESSION_LOCK_DIR: join(home, 'session-locks') }
   await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
   await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
   await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_one\nstage: implement\nstatus: in-progress\n')
-  const selected = await inspectCapStatus({ repoRoot: repo, homeDir: home, mcpRuntime: 'missing', allowLocalFallback: true })
+  const selected = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment, mcpRuntime: 'missing', allowLocalFallback: true })
   assert.equal(selected.mode, 'local_fallback_explicit')
   await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_two\nstage: implement\nstatus: in-progress\n')
-  const nextTask = await inspectCapStatus({ repoRoot: repo, homeDir: home, mcpRuntime: 'missing' })
+  const nextTask = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment, mcpRuntime: 'missing' })
   assert.equal(nextTask.mode, 'restart_required')
+})
+
+test('local fallback expires in a new runtime session even when task and branch are unchanged', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-local-once-session-'))
+  const lockRoot = join(home, 'session-locks')
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_same\nstage: implement\nstatus: in-progress\n')
+  const firstSession = { CODEX_THREAD_ID: 'thread-local-once-a', CAPITAL_AGENT_SESSION_LOCK_DIR: lockRoot }
+  const selected = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: firstSession, mcpRuntime: 'missing', allowLocalFallback: true })
+  assert.equal(selected.mode, 'local_fallback_explicit')
+  const nextSession = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: { CODEX_THREAD_ID: 'thread-local-once-b', CAPITAL_AGENT_SESSION_LOCK_DIR: lockRoot }, mcpRuntime: 'missing' })
+  assert.equal(nextSession.mode, 'restart_required')
+})
+
+test('local fallback cannot be activated without a stable runtime session identity', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-local-once-no-session-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: {}, mcpRuntime: 'missing', allowLocalFallback: true })
+  assert.equal(result.mode, 'restart_required')
+})
+
+test('a loaded MCP runtime revokes an earlier local fallback before another missing state', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-local-once-recovered-'))
+  const environment = { CODEX_THREAD_ID: 'thread-recovered', CAPITAL_AGENT_SESSION_LOCK_DIR: join(home, 'session-locks') }
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  assert.equal((await inspectCapStatus({ repoRoot: repo, homeDir: home, environment, mcpRuntime: 'missing', allowLocalFallback: true })).mode, 'local_fallback_explicit')
+  await inspectCapStatus({ repoRoot: repo, homeDir: home, environment, mcpRuntime: 'loaded', fetchImpl: async () => { throw new Error('probe unavailable') } })
+  assert.equal((await inspectCapStatus({ repoRoot: repo, homeDir: home, environment, mcpRuntime: 'missing' })).mode, 'restart_required')
 })
 
 test('restart gate takes priority over stale task state without mutating the old task', async () => {

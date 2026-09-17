@@ -27,10 +27,10 @@ Codex `~/.codex/config.toml` 使用原生 Streamable HTTP：
 [mcp_servers.capital-agent]
 url = "https://your-capital-agent-server/api/mcp/message"
 http_headers_helper = "\"/path/to/node\" \"/path/to/capital-agent-skills/scripts/mcp-http-headers.mjs\""
-required = true
+required = false
 ```
 
-`mcp-http-headers.mjs` 在运行时从本机 `~/.config/capital-agent/env` 读取最新的 `CAPITAL_AGENT_USER_KEY`，只向 Codex 输出 `x-user-key` header JSON。Key 不写入 `config.toml`、命令行参数或项目文件；Codex 在新建连接时调用 helper，同源 POST 返回 401/403 后也会重新获取 header。
+`required = false` 只保证平台暂时不可达时 Codex 仍能进入会话和普通对话，不表示团队模式默认降级为本地。每个新研发任务仍由 Cap 检查 MCP 工具并主动尝试平台握手；缺少工具时进入 `restart_required` 选择门。`mcp-http-headers.mjs` 在运行时从本机 `~/.config/capital-agent/env` 读取最新的 `CAPITAL_AGENT_USER_KEY`，只向 Codex 输出 `x-user-key` header JSON。Key 不写入 `config.toml`、命令行参数或项目文件；Codex 在新建连接时调用 helper，同源 POST 返回 401/403 后也会重新获取 header。
 
 Claude Code：
 

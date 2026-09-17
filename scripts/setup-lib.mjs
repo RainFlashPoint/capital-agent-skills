@@ -201,7 +201,7 @@ const ACTIVATION_END = '<!-- capital-agent:auto-activation:end -->'
 export const activationRuleBlock = `${ACTIVATION_START}
 ## Capital Agent 自动研发入口
 
-当当前目录位于 Git 仓库中，且用户意图是实现功能、修复问题、重构、补测试、代码评审或发布交付时，必须在实质分析或修改前加载已安装的 \`cap\` Skill。先以用户当前打开的仓库（或本轮首次明确指定的目标仓）运行 \`scripts/cap-status.mjs\`，锁定本会话当前唯一可写主仓；旧 \`.cap\` 中的 worktree 或绝对路径只用于校验，绝不能自动反向选择另一个目录。只读参考仓按 \`cap-flow/references/cross-project-handoff.md\` 处理；确需在另一独立项目开发时，用户必须明确说“切换到项目 B 继续开发”，先生成已审阅 outgoing 摘要，再使用 \`scripts/cap-session-root.mjs switch <A> <B> --handoff <outgoing.md>\` 原子复制摘要并切换主仓，随后为 B 重建 Task/Session；目标仓原有脏文件与本任务修改范围重叠时必须先解决归属；同一远程项目的 clone/worktree 仍需新会话。检查当前宿主是否实际暴露 Capital Agent MCP 工具，并把结果作为 \`loaded\` / \`missing\` 传给 \`scripts/cap-status.mjs --mcp-runtime\`。若返回 \`session_root_blocked\`，停止读取错误仓并回到锁定仓库，除非用户已经明确执行上述独立项目切换。若返回 \`restart_required\`，先提示用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；用户选择本地继续后，使用 \`--allow-local-once\` 重跑状态检查，本任务不创建平台 Task、不回写经验或 Server Gate，但不修改机器的团队模式配置。若 \`CAPITAL_AGENT_MODE=local\`，按纯本地流程完成代码侦察、实现和本地证据，不连接平台、不创建 Task、不写 Outbox；否则按 Skill 要求完成平台握手、创建或绑定统一 Task、实现和证据回写。不要等待用户显式输入 \`$cap\` 或 \`/cap\`。
+当当前目录位于 Git 仓库中，且用户意图是实现功能、修复问题、重构、补测试、代码评审或发布交付时，必须在实质分析或修改前加载已安装的 \`cap\` Skill。先以用户当前打开的仓库（或本轮首次明确指定的目标仓）运行 \`scripts/cap-status.mjs\`，锁定本会话当前唯一可写主仓；旧 \`.cap\` 中的 worktree 或绝对路径只用于校验，绝不能自动反向选择另一个目录。只读参考仓按 \`cap-flow/references/cross-project-handoff.md\` 处理；确需在另一独立项目开发时，用户必须明确说“切换到项目 B 继续开发”，先生成已审阅 outgoing 摘要，再使用 \`scripts/cap-session-root.mjs switch <A> <B> --handoff <outgoing.md>\` 原子复制摘要并切换主仓，随后为 B 重建 Task/Session；目标仓原有脏文件与本任务修改范围重叠时必须先解决归属；同一远程项目的 clone/worktree 仍需新会话。Codex MCP 的磁盘配置允许会话在平台暂时不可达时启动，但这不代表本地模式；团队配置下每个新研发任务仍必须检查当前宿主是否实际暴露 Capital Agent MCP 工具，并把结果作为 \`loaded\` / \`missing\` 传给 \`scripts/cap-status.mjs --mcp-runtime\`，主动尝试平台握手。若返回 \`session_root_blocked\`，停止读取错误仓并回到锁定仓库，除非用户已经明确执行上述独立项目切换。若返回 \`restart_required\`，先提示用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；用户选择本地继续后，使用 \`--allow-local-once\` 重跑状态检查，本次选择只绑定当前运行会话 + 分支 + Task，不创建平台 Task、不回写经验或 Server Gate，也不修改机器的团队模式配置；新会话或 MCP 恢复加载时必须再次走团队尝试。若 \`CAPITAL_AGENT_MODE=local\`，按纯本地流程完成代码侦察、实现和本地证据，不连接平台、不创建 Task、不写 Outbox；否则按 Skill 要求完成平台握手、创建或绑定统一 Task、实现和证据回写。不要等待用户显式输入 \`$cap\` 或 \`/cap\`。
 
 纯问答、概念讨论、调研、翻译、状态查询，以及明确不需要代码或仓库变更的请求，不创建平台 Task。MCP 已加载但远端调用临时失败时，必须明确报告离线降级及影响，不得宣称已经同步；MCP 未加载且团队模式已配置时，必须先取得用户“本次本地继续”的明确选择，不能静默降级。用户的显式指令始终优先。
 ${ACTIVATION_END}`
@@ -267,7 +267,7 @@ const helperCommand = (nodePath, helperPath) => `${JSON.stringify(nodePath)} ${J
 export async function installCodexMcpConfig(filePath, serverUrl, nodePath, helperPath) {
   await mkdir(join(filePath, '..'), { recursive: true, mode: 0o700 })
   const existing = await readFile(filePath, 'utf8').catch(() => '')
-  const block = `${CODEX_MCP_START}\n[mcp_servers.capital-agent]\nurl = ${JSON.stringify(codexMcpEndpoint(serverUrl))}\nhttp_headers_helper = ${JSON.stringify(helperCommand(nodePath, helperPath))}\nrequired = true\n${CODEX_MCP_END}`
+  const block = `${CODEX_MCP_START}\n[mcp_servers.capital-agent]\nurl = ${JSON.stringify(codexMcpEndpoint(serverUrl))}\nhttp_headers_helper = ${JSON.stringify(helperCommand(nodePath, helperPath))}\nrequired = false\n${CODEX_MCP_END}`
   let base = existing
   const managedStart = base.indexOf(CODEX_MCP_START); const managedEnd = base.indexOf(CODEX_MCP_END)
   if (managedStart >= 0 && managedEnd >= managedStart) base = `${base.slice(0, managedStart)}${base.slice(managedEnd + CODEX_MCP_END.length)}`
@@ -306,6 +306,11 @@ function tomlString(section, name) {
   try { return literal ? JSON.parse(literal) : '' } catch { return '' }
 }
 
+function tomlBoolean(section, name, fallback = false) {
+  const literal = section.match(new RegExp(`^\\s*${name}\\s*=\\s*(true|false)\\s*(?:#.*)?$`, 'mi'))?.[1]
+  return literal ? literal.toLowerCase() === 'true' : fallback
+}
+
 function helperScriptPath(command = '') {
   const quoted = [...String(command).matchAll(/"((?:\\.|[^"])*)"/g)].map(match => {
     try { return JSON.parse(`"${match[1]}"`) } catch { return '' }
@@ -324,12 +329,14 @@ export async function inspectCodexMcpConfig(filePath, expectedServerUrl = '', ex
   const url = tomlString(section, 'url')
   const headersHelper = tomlString(section, 'http_headers_helper')
   if (url || headersHelper) {
+    const required = tomlBoolean(section, 'required', false)
     const helperPath = helperScriptPath(headersHelper)
     const expectedUrl = expectedServerUrl ? codexMcpEndpoint(expectedServerUrl) : url
     const helperAvailable = helperPath ? await lstat(helperPath).then(stat => stat.isFile() || stat.isSymbolicLink()).catch(() => false) : false
     const current = Boolean(url === expectedUrl && (!expectedHelperPath || helperPath === expectedHelperPath))
-    const valid = Boolean(url && headersHelper && helperAvailable && current)
-    return { registered: Boolean(url || headersHelper), transport: 'streamable-http', url, headersHelper, helperPath, current, valid, reason: valid ? '' : !helperAvailable ? 'headers_helper_unavailable' : 'http_config_mismatch' }
+    const valid = Boolean(url && headersHelper && helperAvailable && current && !required)
+    const reason = valid ? '' : required ? 'required_startup_blocks_session' : !helperAvailable ? 'headers_helper_unavailable' : 'http_config_mismatch'
+    return { registered: Boolean(url || headersHelper), transport: 'streamable-http', url, headersHelper, helperPath, required, current, valid, reason }
   }
   const command = section.match(/^\s*command\s*=\s*("(?:\\.|[^"])*")/m)?.[1]
   const argsLiteral = section.match(/^\s*args\s*=\s*(\[[^\r\n]*\])/m)?.[1]
