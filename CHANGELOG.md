@@ -22,6 +22,8 @@
 - 收紧最终并发边界：经验载荷同步拒绝敏感 Session ID；Retire 以独占锁串行化并在清理前复核 Gate 与活动工件 CAS；Task 切换在锁内重验 STATE，预先 fsync 新 context/STATE 并以 STATE 作为原子发布提交点。
 - 补齐中断恢复保护：死进程锁按 PID 与 inode 回收，Task 切换使用持久 pending journal 回复半切换，`prepare-next` 拒绝绕过未完成 Retire；knowledge audit 对无效 JSON 也按实际打开字节计费。
 - 进一步收敛恢复边界：pending snapshot 强制校验仓内 containment 与目录类型，损坏 journal 失败关闭；POSIX/Node `prepare-next` 对软链根、扫描截断和未完成 Retire 统一阻断；经验载荷兼容 SHA-256 Commit，EVOLUTION 与 audit 严格执行字节上限，Retire 清理前逐工件重验 CAS。
+- pending journal 恢复再按旧 Task 与 fingerprint 绑定 stale 快照，拒绝指向 `.cap` 根或其他 Task 快照；journal 采用 fsync 临时文件原子发布，并回收中断后遗留的空快照目录。
+- 恢复扫描对子级软链与不可读根失败关闭，并将快照父级和 fingerprint 绑定到原 Task；损坏 EVOLUTION 在累计超限时正确报告 invalid/overBudget。
 
 ## 0.12.3
 

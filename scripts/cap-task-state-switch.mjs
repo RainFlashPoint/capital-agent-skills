@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile, readdir } from 'node:fs/promises'
 import { resolve, join, dirname, relative, sep, basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { inspectTaskBoundary } from './cap-status.mjs'
@@ -89,13 +89,33 @@ async function recoverPendingTaskSwitch(repo) {
   if (!await exists(pendingPath)) return false
   let pending
   try { pending = JSON.parse(await readFile(pendingPath, 'utf8')) } catch { throw new Error('task_switch_pending_invalid: pending boundary journal is not valid JSON') }
-  if (!pending?.snapshotRoot || !pending?.taskId || pending.schemaVersion !== 1) {
+  if (!pending?.snapshotRoot || !pending?.taskId || !pending?.oldTaskId || !pending?.fingerprint || pending.schemaVersion !== 1) {
     throw new Error('task_switch_pending_invalid: pending boundary journal identity is invalid')
   }
   const snapshotRoot = resolve(repo, pending.snapshotRoot)
+  const staleRoot = join(capRoot, 'local-state', 'stale')
+  await ensureSafeCapDirectory(repo, staleRoot)
   await ensureSafeCapDirectory(repo, snapshotRoot)
+  const canonicalStale = await realpath(staleRoot)
+  const canonicalSnapshot = await realpath(snapshotRoot).catch(() => '')
+  if (!canonicalSnapshot || (canonicalSnapshot !== canonicalStale && !canonicalSnapshot.startsWith(`${canonicalStale}${sep}`))) {
+    throw new Error(`task_switch_pending_invalid: snapshot root must stay under ${staleRoot}`)
+  }
+  const snapshotRelative = relative(canonicalStale, canonicalSnapshot)
+  if (!snapshotRelative || snapshotRelative.startsWith(`..${sep}`) || snapshotRelative === '..') {
+    throw new Error('task_switch_pending_invalid: snapshot root is not a stale snapshot directory')
+  }
+  const expectedParent = join(canonicalStale, safeSegment(pending.oldTaskId))
+  const canonicalParent = await realpath(dirname(canonicalSnapshot)).catch(() => '')
+  if (canonicalParent !== expectedParent || !basename(canonicalSnapshot).startsWith(`${pending.fingerprint}`)) {
+    throw new Error('task_switch_pending_invalid: snapshot identity does not match the retired Task')
+  }
   const snapshotInfo = await lstat(snapshotRoot).catch(() => null)
-  if (!snapshotInfo || !snapshotInfo.isDirectory()) throw new Error('task_switch_pending_invalid: snapshot root is not a directory')
+  if (!snapshotInfo) {
+    await rm(pendingPath, { force: true }).catch(() => {})
+    return true
+  }
+  if (!snapshotInfo.isDirectory()) throw new Error('task_switch_pending_invalid: snapshot root is not a directory')
   const statePath = join(capRoot, 'STATE.md')
   const currentState = await readFile(statePath, 'utf8').catch(() => '')
   const currentTaskId = field(currentState, 'task-id')
@@ -219,10 +239,19 @@ async function switchTaskStateLocked({ repoRoot = '.', taskId, sessionId, expect
     // repeated boundary. Keep each snapshot rather than treating the same
     // empty-state fingerprint as a collision.
     snapshotRoot = join(capRoot, 'local-state', 'stale', safeSegment(oldTaskId), `${fingerprint}-${randomUUID()}`)
-  } else if (await exists(snapshotRoot)) throw new Error(`stale snapshot already exists: ${snapshotRoot}`)
-  await ensureSafeCapDirectory(repo, snapshotRoot)
+  } else if (await exists(snapshotRoot)) {
+    const snapshotEntries = await readdir(snapshotRoot)
+    if (snapshotEntries.length === 0) await rm(snapshotRoot, { recursive: true, force: true })
+    else throw new Error(`stale snapshot already exists: ${snapshotRoot}`)
+  }
+  await ensureSafeCapDirectory(repo, dirname(snapshotRoot))
   const pendingPath = join(capRoot, 'local-state', 'locks', 'task-switch.pending.json')
-  await writeFile(pendingPath, JSON.stringify({ schemaVersion: 1, taskId, oldState, oldContext, snapshotRoot, createdAt: new Date().toISOString() }) + '\n', { flag: 'wx', mode: 0o600 })
+  const pendingTemporaryPath = await writeSyncedTemporaryFile(
+    pendingPath,
+    JSON.stringify({ schemaVersion: 1, taskId, oldTaskId, fingerprint, oldState, oldContext, snapshotRoot, createdAt: new Date().toISOString() }) + '\n',
+  )
+  await rename(pendingTemporaryPath, pendingPath)
+  await ensureSafeCapDirectory(repo, snapshotRoot)
 
   const moved = []
   let newStateStarted = false

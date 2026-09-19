@@ -93,7 +93,7 @@ test('Task switch recovers a pending boundary journal before retrying', async ()
   await mkdir(snapshotRoot, { recursive: true })
   await writeFile(join(snapshotRoot, 'spec.md'), 'old spec\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
-    schemaVersion: 1, taskId: 'task_interrupted', oldState: await readFile(join(repo, '.cap/STATE.md'), 'utf8'),
+    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: 'recovery', oldState: await readFile(join(repo, '.cap/STATE.md'), 'utf8'),
     oldContext: '', snapshotRoot, createdAt: new Date().toISOString(),
   }) + '\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999, taskId: 'task_interrupted' }) + '\n')
@@ -110,7 +110,7 @@ test('Task switch rejects a pending journal whose snapshot escapes the repositor
   await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
   await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
-    schemaVersion: 1, taskId: 'task_interrupted', snapshotRoot: outside,
+    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: 'outside', snapshotRoot: outside,
   }) + '\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999 }) + '\n')
   await assert.rejects(
@@ -118,6 +118,21 @@ test('Task switch rejects a pending journal whose snapshot escapes the repositor
     /unsafe_cap_state_path/,
   )
   assert.equal(await readFile(outsideSpec, 'utf8'), 'outside secret\n')
+})
+
+test('Task switch rejects a pending journal targeting the cap root', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
+    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: 'cap', snapshotRoot: join(repo, '.cap'),
+  }) + '\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999 }) + '\n')
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }),
+    /snapshot root must stay under/,
+  )
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
 })
 
 test('Task switch fails closed on a corrupt pending journal without creating a snapshot', async () => {
@@ -131,6 +146,14 @@ test('Task switch fails closed on a corrupt pending journal without creating a s
     /task_switch_pending_invalid/,
   )
   await assert.rejects(access(join(repo, '.cap/local-state/stale/task_old')), error => error?.code === 'ENOENT')
+})
+
+test('Task switch reclaims an empty orphan snapshot left before journal publication', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/local-state/stale/task_old/orphan'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' })
+  assert.equal(result.switched, true)
 })
 
 test('Task switch revalidates the observed STATE after acquiring its operation lock', async () => {

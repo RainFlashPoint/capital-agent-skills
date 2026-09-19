@@ -1429,6 +1429,8 @@ def cmd_knowledge_audit(args):
             total_bytes += evolution_bytes
             evolution_truncated = True
             evolution_invalid = True
+            if total_bytes > MAX_KNOWLEDGE_AUDIT_BYTES:
+                over_budget = True
         except (OSError, ValueError):
             total_bytes += evolution_bytes
             evolution_truncated = True
@@ -2036,11 +2038,15 @@ def cmd_prepare_next(args):
         try:
             entries = list(os.scandir(root))
         except OSError:
+            invalid_roots.append(root_name)
             continue
         for index, entry in enumerate(entries):
             if index >= MAX_KNOWLEDGE_AUDIT_INDEXES:
                 scan_truncated = True
                 break
+            if entry.is_symlink():
+                invalid_roots.append(f"{root_name}/{entry.name}")
+                continue
             if not entry.is_dir(follow_symlinks=False):
                 continue
             transaction_path = os.path.join(entry.path, "retirement.json")

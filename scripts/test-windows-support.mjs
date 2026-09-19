@@ -383,3 +383,14 @@ test('Node prepare-next fails closed on a symlinked retirement root', async () =
   assert.equal(result.status, 3)
   assert.equal(JSON.parse(result.stdout).reason, 'retirement_recovery_required')
 })
+
+test('Node prepare-next fails closed on a symlinked retirement child', async () => {
+  const repo = await fixture()
+  const outside = await mkdtemp(join(tmpdir(), 'cap-runtime-child-outside-'))
+  await symlink(outside, join(repo, '.cap', 'history'))
+  await mkdir(join(repo, '.cap', 'archive'), { recursive: true })
+  await symlink(outside, join(repo, '.cap', 'archive', 'task_external'))
+  const result = runRuntime(['prepare-next', join(repo, '.cap')])
+  assert.equal(result.status, 3)
+  assert.equal(JSON.parse(result.stdout).reason, 'retirement_recovery_required')
+})

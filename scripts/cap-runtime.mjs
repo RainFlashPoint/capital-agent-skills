@@ -156,7 +156,8 @@ export async function prepareNext(capCandidate = '.cap') {
     for (let index = 0; index < entries.length; index += 1) {
       if (index >= MAX_RETIREMENT_SCAN) { truncated = true; break }
       const entry = entries[index]
-      if (entry.isSymbolicLink() || !entry.isDirectory()) continue
+      if (entry.isSymbolicLink()) { invalidRoots.push(`${rootName}/${entry.name}`); continue }
+      if (!entry.isDirectory()) continue
       const transactionPath = join(root, entry.name, 'retirement.json')
       try {
         const info = await lstat(transactionPath)
