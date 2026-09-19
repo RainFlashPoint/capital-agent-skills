@@ -395,7 +395,7 @@ class RetireTest(unittest.TestCase):
 
             def swap_before_open(candidate):
                 nonlocal swapped
-                if candidate == path and not swapped:
+                if os.path.realpath(candidate) == os.path.realpath(path) and not swapped:
                     swapped = True
                     os.remove(path)
                     os.symlink(external, path)
@@ -404,6 +404,33 @@ class RetireTest(unittest.TestCase):
             with mock.patch.object(intake.os.path, "getsize", side_effect=swap_before_open):
                 index = intake._experience_index(path)
             self.assertFalse(index and index.get("title") == "EXTERNAL_SWAP_MARKER")
+
+    def test_history_index_read_uses_one_no_follow_descriptor(self):
+        with tempfile.TemporaryDirectory() as cap, tempfile.TemporaryDirectory() as outside:
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root)
+            path = os.path.join(index_root, "task_safe.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(_valid_history_index("task_safe"), f)
+            external = os.path.join(outside, "external.json")
+            external_item = _valid_history_index("task_safe")
+            external_item["title"] = "EXTERNAL_HISTORY_MARKER"
+            with open(external, "w", encoding="utf-8") as f:
+                json.dump(external_item, f)
+            original_open = intake.os.open
+            swapped = False
+
+            def swap_before_descriptor(candidate, flags, *args, **kwargs):
+                nonlocal swapped
+                if os.path.realpath(candidate) == os.path.realpath(path) and not swapped:
+                    swapped = True
+                    os.remove(path)
+                    os.symlink(external, path)
+                return original_open(candidate, flags, *args, **kwargs)
+
+            with mock.patch.object(intake.os, "open", side_effect=swap_before_descriptor):
+                item = intake._read_valid_history_index(cap, "task_safe")
+            self.assertIsNone(item)
 
     def test_history_identity_fields_reject_sensitive_token_shapes(self):
         token_task = "ghp_" + "a" * 32
@@ -528,6 +555,58 @@ class RetireTest(unittest.TestCase):
             self.assertNotEqual(resumed.returncode, 0)
             self.assertIn("cap-gate", resumed.stderr.lower())
 
+    def test_retire_operation_lock_blocks_a_second_writer(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write(f"stage: done\ntask-id: task_locked\ncap-gate: PASS reviewed-head={VALID_COMMIT}\n")
+            with open(os.path.join(cap, ".retire.lock"), "w", encoding="utf-8") as f:
+                f.write("other writer\n")
+            result = run_retire(
+                "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_locked", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--gate-kind", "local",
+                "--gate-commit", VALID_COMMIT, "--strict", default_gate=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("retire_in_progress", result.stderr)
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+            self.assertTrue(os.path.isfile(os.path.join(cap, "spec.md")))
+
+    def test_retire_rejects_active_artifact_drift_after_snapshot(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
+            state_path = os.path.join(cap, "STATE.md")
+            with open(state_path, "w", encoding="utf-8") as f:
+                f.write(f"stage: done\ntask-id: task_artifact_cas\ncap-gate: PASS reviewed-head={VALID_COMMIT}\n")
+            original_validate = intake._validate_retire_manifest
+            changed = False
+
+            def mutate_after_snapshot(*args, **kwargs):
+                nonlocal changed
+                result = original_validate(*args, **kwargs)
+                if not changed:
+                    changed = True
+                    with open(os.path.join(cap, "spec.md"), "w", encoding="utf-8") as f:
+                        f.write("concurrent newer task data\n")
+                return result
+
+            argv = [
+                "retire", "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_artifact_cas", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--gate-kind", "local",
+                "--gate-commit", VALID_COMMIT, "--strict",
+            ]
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with mock.patch.object(intake, "_validate_retire_manifest", side_effect=mutate_after_snapshot), \
+                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = intake.main(argv)
+            self.assertNotEqual(result, 0)
+            self.assertIn("active artifacts changed", stderr.getvalue())
+            self.assertEqual(_read(os.path.join(cap, "spec.md")), "concurrent newer task data\n")
+
     def test_server_retire_revalidates_canonical_gate_on_recovery(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
@@ -549,7 +628,11 @@ class RetireTest(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     result = intake.main(args)
                 self.assertEqual(result, 0)
-                verify.assert_called_once_with(cap, "task_server_resume", VALID_COMMIT)
+                self.assertEqual(verify.call_count, 2)
+                self.assertEqual(
+                    verify.call_args_list,
+                    [mock.call(cap, "task_server_resume", VALID_COMMIT)] * 2,
+                )
 
     def test_evolution_entry_must_be_a_bounded_single_line(self):
         for entry in ("- first line\ncontinuation", "- control\x01character", "- " + "x" * 501):
@@ -1427,6 +1510,40 @@ class RetireTest(unittest.TestCase):
             with mock.patch.object(intake, "MAX_KNOWLEDGE_AUDIT_BYTES", 600), \
                     mock.patch.object(intake, "MAX_EVOLUTION_BYTES", 800), \
                     mock.patch.object(intake, "_read_evolution_text", side_effect=replace_before_read), \
+                    contextlib.redirect_stdout(output):
+                result = intake.cmd_knowledge_audit(type("Args", (), {"cap": cap})())
+            self.assertEqual(result, 0)
+            audit = json.loads(output.getvalue())
+            self.assertTrue(audit["total"]["overBudget"])
+            self.assertTrue(audit["total"]["truncated"])
+
+    def test_knowledge_audit_accounts_for_history_index_size_from_the_open_file(self):
+        with tempfile.TemporaryDirectory() as cap:
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root)
+            index_path = os.path.join(index_root, "task_safe.json")
+            with open(index_path, "w", encoding="utf-8") as f:
+                json.dump(_valid_history_index("task_safe"), f)
+            replacement = os.path.join(cap, "replacement.json")
+            large = _valid_history_index("task_safe")
+            large["title"] = "x" * 500
+            large["intentSummary"] = "y" * 500
+            large["keywords"] = [f"keyword-{n}-" + "z" * 450 for n in range(8)]
+            with open(replacement, "w", encoding="utf-8") as f:
+                json.dump(large, f)
+            original_reader = intake._read_history_index_payload
+            replaced = False
+
+            def replace_before_read(cap_dir, task_id, *args, **kwargs):
+                nonlocal replaced
+                if not replaced:
+                    replaced = True
+                    os.replace(replacement, index_path)
+                return original_reader(cap_dir, task_id, *args, **kwargs)
+
+            output = io.StringIO()
+            with mock.patch.object(intake, "MAX_KNOWLEDGE_AUDIT_BYTES", 600), \
+                    mock.patch.object(intake, "_read_history_index_payload", side_effect=replace_before_read), \
                     contextlib.redirect_stdout(output):
                 result = intake.cmd_knowledge_audit(type("Args", (), {"cap": cap})())
             self.assertEqual(result, 0)

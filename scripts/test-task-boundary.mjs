@@ -58,6 +58,61 @@ test('stale Task state is moved aside before a fresh Task boundary is initialize
   assert.equal(execFileSync('git', ['status', '--porcelain', '--', 'README.md'], { cwd: repo, encoding: 'utf8' }), '')
 })
 
+test('Task switch refuses a concurrent operation lock without moving active state', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/spec.md'), 'must remain active\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), 'other writer\n')
+
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }),
+    /task_switch_in_progress/,
+  )
+
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+  assert.equal(await readFile(join(repo, '.cap/spec.md'), 'utf8'), 'must remain active\n')
+})
+
+test('Task switch revalidates the observed STATE after acquiring its operation lock', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  const statePath = join(repo, '.cap/STATE.md')
+  await writeFile(statePath, '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+
+  await assert.rejects(
+    switchTaskState({
+      repoRoot: repo,
+      taskId: 'task_new',
+      sessionId: 'session_new',
+      afterTaskSwitchLock: async () => writeFile(statePath, '# Cap State: concurrent\ntask-id: task_concurrent\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n'),
+    }),
+    /task_switch_state_changed/,
+  )
+
+  assert.match(await readFile(statePath, 'utf8'), /task-id: task_concurrent/)
+})
+
+test('Task switch publishes the new STATE and context only after both temporary files are ready', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/task-context.md'), 'old context\n')
+
+  await assert.rejects(
+    switchTaskState({
+      repoRoot: repo,
+      taskId: 'task_new',
+      sessionId: 'session_new',
+      beforeTaskBoundaryPublish: async () => { throw new Error('injected boundary publish failure') },
+    }),
+    /injected boundary publish failure/,
+  )
+
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+  assert.equal(await readFile(join(repo, '.cap/task-context.md'), 'utf8'), 'old context\n')
+})
+
 test('Task switch rejects a symlinked local-state parent before moving active files', async () => {
   const repo = await fixture()
   const outside = await mkdtemp(join(tmpdir(), 'cap-task-boundary-outside-'))

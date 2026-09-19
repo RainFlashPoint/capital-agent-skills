@@ -108,6 +108,27 @@ def _artifact_manifest(root):
     return rows
 
 
+def _selected_artifact_manifest(root, names, *, allow_missing=False):
+    """Hash only the active artifacts selected for this retirement transaction."""
+    rows = []
+    missing = []
+    for name in names:
+        path = os.path.join(root, name)
+        if not os.path.lexists(path):
+            if allow_missing:
+                missing.append(name)
+                continue
+            raise ValueError(f"retire active artifacts changed after snapshot: missing {name}")
+        _validate_retire_artifact_tree(path, name)
+        info = os.lstat(path)
+        if stat.S_ISREG(info.st_mode):
+            rows.append({"path": name, "sha256": _sha256(path), "size": info.st_size})
+            continue
+        for item in _artifact_manifest(path):
+            rows.append({**item, "path": f"{name}/{item['path']}"})
+    return sorted(rows, key=lambda item: item["path"]), missing
+
+
 def _validate_retire_artifact_tree(path, relative_path):
     """Reject links and special nodes before a retirement snapshot copies them."""
     info = os.lstat(path)
@@ -552,14 +573,16 @@ def _prepare_history_index_path(cap, task_id):
     return _history_index_path(cap, task_id, create=True)
 
 
-def _read_history_index_payload(cap, task_id):
+def _read_history_index_payload(cap, task_id, *, with_size=False, byte_limit=MAX_HISTORY_INDEX_BYTES):
     path = _history_index_path(cap, task_id, create=False)
     if path is None or not os.path.lexists(path):
         return None
-    info = os.lstat(path)
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_HISTORY_INDEX_BYTES:
-        return None
-    return _read_json(path)
+    text, size = _read_bounded_regular_text(
+        path, f"history index {task_id}", min(MAX_HISTORY_INDEX_BYTES, byte_limit),
+        missing_ok=False, root=os.path.realpath(cap), with_size=True,
+    )
+    item = json.loads(text)
+    return (item, size) if with_size else item
 
 
 def _atomic_write_history_index(cap, task_id, value):
@@ -1329,21 +1352,31 @@ def cmd_knowledge_audit(args):
                     continue
                 if not stat.S_ISREG(info.st_mode):
                     continue
-                size = info.st_size
-                if total_bytes + size > MAX_KNOWLEDGE_AUDIT_BYTES:
-                    truncated = True
-                    over_budget = True
-                    break
-                total_bytes += size
-                index_bytes += size
-                if size > MAX_HISTORY_INDEX_BYTES:
+                if info.st_size > MAX_HISTORY_INDEX_BYTES:
                     rows.append({"file": name, "knowledgeDisposition": "invalid-oversize"})
                     continue
                 try:
-                    item = _read_history_index_payload(args.cap, name[:-5])
+                    remaining_budget = MAX_KNOWLEDGE_AUDIT_BYTES - total_bytes
+                    if remaining_budget <= 0:
+                        truncated = True
+                        over_budget = True
+                        break
+                    opened = _read_history_index_payload(
+                        args.cap, name[:-5], with_size=True,
+                        byte_limit=min(MAX_HISTORY_INDEX_BYTES, remaining_budget),
+                    )
+                    if opened is None:
+                        raise ValueError("invalid index file")
+                    item, opened_size = opened
+                    total_bytes += opened_size
+                    index_bytes += opened_size
                     if item is None:
                         raise ValueError("invalid index file")
-                except (OSError, ValueError, json.JSONDecodeError):
+                except (OSError, ValueError, json.JSONDecodeError) as error:
+                    if "exceeds" in str(error).lower() and remaining_budget < MAX_HISTORY_INDEX_BYTES:
+                        truncated = True
+                        over_budget = True
+                        break
                     rows.append({"file": name, "knowledgeDisposition": "invalid-json"})
                     continue
                 task_id = name[:-5]
@@ -1536,7 +1569,7 @@ def cmd_write_tree(args):
     return 0
 
 
-def cmd_retire(args):
+def _cmd_retire_locked(args):
     """特性退场:快照提交后按耐久 phase 推进；中断时从 retirement.json 幂等恢复。"""
     try:
         _validate_retire_artifacts(args.cap)
@@ -1819,6 +1852,26 @@ def cmd_retire(args):
                 return 2
 
     if current_phase() < RETIRE_PHASES["cleanup"]:
+        try:
+            if args.strict and requested_gate_kind == "local":
+                _verify_local_retire_gate(
+                    os.path.join(archive_dir, "STATE.md"), args.delivery_commit, args.cap,
+                )
+            elif args.strict and requested_gate_kind == "server":
+                _verify_server_retire_gate(args.cap, expected_task_id, args.delivery_commit)
+            active_artifacts, missing_artifacts = _selected_artifact_manifest(
+                args.cap, copied, allow_missing=recovered,
+            )
+            archived_artifacts = sorted(manifest.get("artifacts", []), key=lambda item: item.get("path", ""))
+            expected_active = [
+                item for item in archived_artifacts
+                if item.get("path", "").split("/", 1)[0] not in set(missing_artifacts)
+            ]
+            if active_artifacts != expected_active:
+                raise ValueError("retire active artifacts changed after snapshot")
+        except (OSError, TypeError, ValueError) as error:
+            print(str(error), file=sys.stderr)
+            return 2
         for name in copied:
             src = _retire_cleanup_path(args.cap, name)
             if os.path.islink(src):
@@ -1878,6 +1931,39 @@ def cmd_retire(args):
                       "leaf_shipped": leaf_path is not None, "backflow": backflow,
                       "leaf_evolution": leaf_evolution, "recovered": recovered}, ensure_ascii=False))
     return 0
+
+
+def cmd_retire(args):
+    """Serialize Retire so Gate validation, snapshot and cleanup observe one active Task."""
+    try:
+        _validate_retire_artifacts(args.cap)
+    except (OSError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    lock_path = os.path.join(args.cap, ".retire.lock")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        lock_fd = os.open(lock_path, flags, 0o600)
+    except FileExistsError:
+        print("retire_in_progress: another retirement operation holds the lock", file=sys.stderr)
+        return 2
+    except OSError as error:
+        print(f"retire lock unavailable: {error}", file=sys.stderr)
+        return 2
+    opened = os.fstat(lock_fd)
+    try:
+        os.write(lock_fd, f"pid={os.getpid()}\n".encode("ascii"))
+        os.fsync(lock_fd)
+        return _cmd_retire_locked(args)
+    finally:
+        os.close(lock_fd)
+        try:
+            current = os.lstat(lock_path)
+            if (not stat.S_ISLNK(current.st_mode)
+                    and (current.st_dev, current.st_ino) == (opened.st_dev, opened.st_ino)):
+                os.remove(lock_path)
+        except FileNotFoundError:
+            pass
 
 
 def cmd_prepare_next(args):

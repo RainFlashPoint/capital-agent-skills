@@ -196,6 +196,16 @@ test('sensitive task identifiers are rejected before payload and idempotency pro
   assert.equal(JSON.stringify(result).includes(tokenTask), false)
 })
 
+test('sensitive session identifiers are rejected before payload projection', () => {
+  const tokenSession = ['ghp', 's'.repeat(32)].join('_')
+  const { repo, base } = fixture()
+  writeFileSync(join(repo, '.cap/STATE.md'), `# Cap State\n\nstage: done\nstatus: development-complete\ntask-id: task_payment\nsession-id: ${tokenSession}\nbase-commit: ${base}\n`)
+  const result = generate(repo)
+  assert.equal(result.ready, false)
+  assert.ok(result.missing.includes('sensitive_identity'))
+  assert.equal(JSON.stringify(result).includes(tokenSession), false)
+})
+
 test('source commit and commit evidence must match the generated commit', () => {
   const { repo } = fixture({ experienceOverrides: { sourceCommit: 'deadbeef', evidence: '- 证据：commit:deadbeef\n- 证据：.cap/verify/logic-report.md\n- 结果：测试通过。' } })
   const result = generate(repo)

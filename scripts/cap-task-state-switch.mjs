@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { resolve, join, dirname, relative, sep } from 'node:path'
+import { resolve, join, dirname, relative, sep, basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { inspectTaskBoundary } from './cap-status.mjs'
 import { archiveHistoricalOutboxEvents } from './cap-outbox.mjs'
@@ -95,7 +95,46 @@ async function ensureSafeCapDirectory(repo, target) {
   }
 }
 
-export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expectedOldTaskId = '', title = '新研发任务', intentSummary = '', stage = 'understand', environment = {}, sessionRootRegistry = '', migrateTrackedActive = false, beforeTrackedIndexReplace, replaceTrackedIndex } = {}) {
+async function writeSyncedTemporaryFile(path, contents) {
+  const temporaryPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`)
+  let handle
+  try {
+    handle = await open(temporaryPath, 'wx', 0o600)
+    await handle.writeFile(contents, 'utf8')
+    await handle.sync()
+    await handle.close()
+    handle = null
+    return temporaryPath
+  } catch (error) {
+    await handle?.close().catch(() => {})
+    await rm(temporaryPath, { force: true }).catch(() => {})
+    throw error
+  }
+}
+
+async function publishTaskBoundary({ statePath, contextPath, stateText, contextText, beforePublish } = {}) {
+  let stateTemporaryPath = ''
+  let contextTemporaryPath = ''
+  let contextPublished = false
+  try {
+    stateTemporaryPath = await writeSyncedTemporaryFile(statePath, stateText)
+    contextTemporaryPath = await writeSyncedTemporaryFile(contextPath, contextText)
+    if (beforePublish) await beforePublish()
+    await rename(contextTemporaryPath, contextPath)
+    contextTemporaryPath = ''
+    contextPublished = true
+    await rename(stateTemporaryPath, statePath)
+    stateTemporaryPath = ''
+  } catch (error) {
+    if (contextPublished) await rm(contextPath, { force: true }).catch(() => {})
+    throw error
+  } finally {
+    if (stateTemporaryPath) await rm(stateTemporaryPath, { force: true }).catch(() => {})
+    if (contextTemporaryPath) await rm(contextTemporaryPath, { force: true }).catch(() => {})
+  }
+}
+
+async function switchTaskStateLocked({ repoRoot = '.', taskId, sessionId, expectedOldTaskId = '', title = '新研发任务', intentSummary = '', stage = 'understand', environment = {}, sessionRootRegistry = '', migrateTrackedActive = false, beforeTrackedIndexReplace, replaceTrackedIndex, beforeTaskBoundaryPublish } = {}) {
   if (!taskId || !sessionId) throw new Error('taskId and sessionId are required')
   const repo = resolve(repoRoot)
   const gitRoot = git(repo, ['rev-parse', '--show-toplevel'])
@@ -147,10 +186,12 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
       moved.push({ source, destination })
     }
     await writeFile(join(snapshotRoot, 'manifest.json'), `${JSON.stringify({ schemaVersion: 1, oldTaskId, oldSessionId: field(oldState, 'session-id'), oldBranch: field(oldState, 'branch'), currentBranch: branch, currentWorktree: gitRoot, fingerprint, knowledgeDisposition: 'needs-harvest', moved: moved.map(item => item.source.slice(capRoot.length + 1)) }, null, 2)}\n`)
+    const contextPath = join(capRoot, 'task-context.md')
+    const stateText = `# Cap State: ${title}\n\nstage: ${stage}\nstatus: in-progress\nexecution-required: true\ntask-id: ${taskId}\nsession-id: ${sessionId}\nbranch: ${branch}\nbranch-purpose: feature/${safeSegment(title, 'task')}\nbase-commit: ${head}\nworktree: ${gitRoot}\nupdated: pending\n\n## Gates passed\n- [ ] context：task-context.md 已基于当前任务与代码 HEAD 刷新\n- [x] git：旧任务状态已安全隔离，当前分支与本 Task 绑定\n\n## Decisions log\n- 旧活动状态已保存到 .cap/local-state/stale/${safeSegment(oldTaskId)}/${fingerprint}，未修改业务源码。\n\n## Next action\n-> refresh task-context before implementation\n`
+    const contextText = `# Task Context\n\n- intent: ${intentSummary || title}\n- branch: ${branch}\n- head: ${head}\n- status: pending-reconnaissance\n\n当前文件仅完成 Task 边界切换；进入需求确认、计划或编码前必须重新执行任务级代码侦察。\n`
+    await publishTaskBoundary({ statePath, contextPath, stateText, contextText, beforePublish: beforeTaskBoundaryPublish })
     newStateStarted = true
-    await writeFile(statePath, `# Cap State: ${title}\n\nstage: ${stage}\nstatus: in-progress\nexecution-required: true\ntask-id: ${taskId}\nsession-id: ${sessionId}\nbranch: ${branch}\nbranch-purpose: feature/${safeSegment(title, 'task')}\nbase-commit: ${head}\nworktree: ${gitRoot}\nupdated: pending\n\n## Gates passed\n- [ ] context：task-context.md 已基于当前任务与代码 HEAD 刷新\n- [x] git：旧任务状态已安全隔离，当前分支与本 Task 绑定\n\n## Decisions log\n- 旧活动状态已保存到 .cap/local-state/stale/${safeSegment(oldTaskId)}/${fingerprint}，未修改业务源码。\n\n## Next action\n-> refresh task-context before implementation\n`)
     newContextStarted = true
-    await writeFile(join(capRoot, 'task-context.md'), `# Task Context\n\n- intent: ${intentSummary || title}\n- branch: ${branch}\n- head: ${head}\n- status: pending-reconnaissance\n\n当前文件仅完成 Task 边界切换；进入需求确认、计划或编码前必须重新执行任务级代码侦察。\n`)
     if (trackedMigration) await commitTrackedActiveMigration(trackedMigration, {
       beforeReplace: beforeTrackedIndexReplace,
       replace: replaceTrackedIndex,
@@ -178,6 +219,48 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
     } catch {}
   }
   return { switched: true, snapshotRoot, oldTaskId, taskId, sessionId, branch, head, outboxArchive, taskBaseline: taskBaseline?.path || '', migratedTrackedActive: trackedMigration?.tracked || [] }
+}
+
+export async function switchTaskState(options = {}) {
+  const { repoRoot = '.', taskId, sessionId, environment = {}, sessionRootRegistry = '', afterTaskSwitchLock } = options
+  if (!taskId || !sessionId) throw new Error('taskId and sessionId are required')
+  const repo = resolve(repoRoot)
+  const gitRoot = git(repo, ['rev-parse', '--show-toplevel'])
+  if (await realpath(gitRoot) !== await realpath(repo)) throw new Error(`repoRoot must be the Git root: ${gitRoot}`)
+  const sessionRoot = await inspectSessionRoot({ repoRoot: gitRoot, environment, registryRoot: sessionRootRegistry, capture: false, requireExisting: Boolean(Object.keys(environment).length) })
+  if (sessionRoot.blocked) throw new Error(`${sessionRoot.code}: expected ${sessionRoot.expectedRoot || 'captured session root'}, received ${sessionRoot.currentRoot}`)
+
+  const capRoot = join(repo, '.cap')
+  const locksRoot = join(capRoot, 'local-state', 'locks')
+  await ensureSafeCapDirectory(repo, locksRoot)
+  const statePath = join(capRoot, 'STATE.md')
+  const observedState = await readFile(statePath, 'utf8').catch(() => '')
+  const lockPath = join(locksRoot, 'task-switch.lock')
+  let lock
+  let lockIdentity
+  try {
+    try {
+      lock = await open(lockPath, 'wx', 0o600)
+    } catch (error) {
+      if (error?.code === 'EEXIST') throw new Error('task_switch_in_progress: another Task boundary switch owns the operation lock')
+      throw error
+    }
+    await lock.writeFile(`${JSON.stringify({ pid: process.pid, taskId, sessionId, createdAt: new Date().toISOString() })}\n`, 'utf8')
+    await lock.sync()
+    lockIdentity = await lock.stat()
+    if (afterTaskSwitchLock) await afterTaskSwitchLock()
+    const lockedState = await readFile(statePath, 'utf8').catch(() => '')
+    if (lockedState !== observedState) throw new Error('task_switch_state_changed: active STATE changed while acquiring the Task switch lock')
+    return await switchTaskStateLocked(options)
+  } finally {
+    await lock?.close().catch(() => {})
+    if (lockIdentity) {
+      const currentIdentity = await lstat(lockPath).catch(() => null)
+      if (currentIdentity && currentIdentity.dev === lockIdentity.dev && currentIdentity.ino === lockIdentity.ino) {
+        await rm(lockPath, { force: true }).catch(() => {})
+      }
+    }
+  }
 }
 
 function args(argv) {

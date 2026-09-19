@@ -262,8 +262,9 @@ export async function buildExperiencePayload({ repo = '.', commit = 'HEAD', inte
   const outcomes = labeled(evidenceLines, ['结果', 'outcome'])
   const evidenceRefs = safeEvidence(evidenceValues, commitSha)
   const stateTaskId = field(state, 'task-id')
+  const stateSessionId = field(state, 'session-id')
   const experienceTaskId = field(experienceText, 'task-id')
-  const unsafeTaskIdentity = [stateTaskId, experienceTaskId].filter(Boolean).some(value => !safeTaskIdentity(value))
+  const unsafeTaskIdentity = [stateTaskId, stateSessionId, experienceTaskId].filter(Boolean).some(value => !safeTaskIdentity(value))
   const sourceCommit = field(experienceText, 'source-commit')
   const unsafeContent = /(?:\/Users\/|\/home\/|\/private\/|\/tmp\/|\/var\/folders\/|[A-Za-z]:\\)|(?:^|\s)\.\.\//m.test(experienceText)
   const promptInjection = /(?:ignore (?:all |the )?(?:previous|prior) instructions|忽略(?:以上|此前|之前)(?:所有)?(?:指令|规则)|system prompt|developer message|exfiltrat(?:e|ion))/i.test(experienceText)
@@ -338,7 +339,7 @@ export async function buildExperiencePayload({ repo = '.', commit = 'HEAD', inte
       changed_files: changed,
       repo_url: repoUrl,
       ...(stateTaskId || experienceTaskId ? { task_id: stateTaskId || experienceTaskId } : {}),
-      ...(field(state, 'session-id') ? { session_id: field(state, 'session-id') } : {}),
+      ...(stateSessionId ? { session_id: stateSessionId } : {}),
       commit_sha: commitSha,
       idempotency_key: `experience:${stateTaskId || experienceTaskId || 'local'}:${identity}:canonical-v1`,
       experience: { problem, solution, conditions: payloadConditions, counterexamples: payloadCounterexamples, evidence_refs: evidenceRefs, outcome },
