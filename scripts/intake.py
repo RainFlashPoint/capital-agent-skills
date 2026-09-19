@@ -1285,6 +1285,13 @@ def _append_evolution(cap_dir, entry):
             del lines[removable]
             entries = [index for index, line in enumerate(lines)
                        if line.strip() and not line.startswith("# Evolution log")]
+        while len("\n".join(lines).rstrip("\n").encode("utf-8")) + 1 > MAX_EVOLUTION_BYTES:
+            entries = [index for index, line in enumerate(lines)
+                       if line.strip() and not line.startswith("# Evolution log")]
+            removable = next((index for index in entries if _evolution_entry_is_durable(cap_dir, lines[index])), None)
+            if removable is None:
+                raise ValueError("EVOLUTION.md exceeds byte budget and has no durable entry eligible for pruning")
+            del lines[removable]
         text = "\n".join(lines).rstrip("\n") + "\n"
         _atomic_write_text(target, text)
     return target
@@ -1358,6 +1365,7 @@ def cmd_knowledge_audit(args):
                     continue
                 if info.st_size > MAX_HISTORY_INDEX_BYTES:
                     rows.append({"file": name, "knowledgeDisposition": "invalid-oversize"})
+                    over_budget = True
                     continue
                 try:
                     remaining_budget = MAX_KNOWLEDGE_AUDIT_BYTES - total_bytes
@@ -1417,6 +1425,10 @@ def cmd_knowledge_audit(args):
                 args.cap, with_size=True, decode=False,
             )
             evolution_text = evolution_payload.decode("utf-8")
+        except UnicodeDecodeError:
+            total_bytes += evolution_bytes
+            evolution_truncated = True
+            evolution_invalid = True
         except (OSError, ValueError):
             total_bytes += evolution_bytes
             evolution_truncated = True
@@ -1877,6 +1889,19 @@ def _cmd_retire_locked(args):
             print(str(error), file=sys.stderr)
             return 2
         for name in copied:
+            try:
+                current_items, current_missing = _selected_artifact_manifest(
+                    args.cap, [name], allow_missing=recovered,
+                )
+                expected_items = [
+                    item for item in archived_artifacts
+                    if item.get("path", "").split("/", 1)[0] == name
+                ]
+                if name not in current_missing and current_items != expected_items:
+                    raise ValueError("retire active artifacts changed immediately before cleanup")
+            except (OSError, TypeError, ValueError) as error:
+                print(str(error), file=sys.stderr)
+                return 2
             src = _retire_cleanup_path(args.cap, name)
             if os.path.islink(src):
                 os.remove(src)
@@ -1999,18 +2024,28 @@ def cmd_prepare_next(args):
     """新需求前置守卫：根 .cap 只能承载一个活动 Task，不替模型猜测或覆盖旧产物。"""
     state_path = os.path.join(args.cap, "STATE.md")
     incomplete = []
+    scan_truncated = False
+    invalid_roots = []
     for root_name in ("history", "archive"):
         root = os.path.join(args.cap, root_name)
-        if not os.path.isdir(root) or os.path.islink(root):
+        if os.path.lexists(root) and (os.path.islink(root) or not os.path.isdir(root)):
+            invalid_roots.append(root_name)
+            continue
+        if not os.path.isdir(root):
             continue
         try:
             entries = list(os.scandir(root))
         except OSError:
             continue
-        for entry in entries[:MAX_KNOWLEDGE_AUDIT_INDEXES]:
+        for index, entry in enumerate(entries):
+            if index >= MAX_KNOWLEDGE_AUDIT_INDEXES:
+                scan_truncated = True
+                break
             if not entry.is_dir(follow_symlinks=False):
                 continue
             transaction_path = os.path.join(entry.path, "retirement.json")
+            if not os.path.lexists(transaction_path):
+                continue
             try:
                 transaction = _read_retire_recovery_json(transaction_path, "retirement.json")
             except (OSError, ValueError):
@@ -2018,9 +2053,11 @@ def cmd_prepare_next(args):
                 continue
             if transaction and transaction.get("phase") != "complete":
                 incomplete.append(entry.name)
-    if incomplete:
+    if incomplete or scan_truncated or invalid_roots:
         result = {"ready": False, "reason": "retirement_recovery_required",
                   "retirements": sorted(set(incomplete)),
+                  "truncated": scan_truncated,
+                  "invalidRoots": sorted(invalid_roots),
                   "nextAction": "resume or repair the incomplete Retire transaction before starting a new Task"}
         print(json.dumps(result, ensure_ascii=False))
         return 3

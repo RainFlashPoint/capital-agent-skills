@@ -86,9 +86,16 @@ async function reclaimDeadTaskSwitchLock(lockPath) {
 async function recoverPendingTaskSwitch(repo) {
   const capRoot = join(repo, '.cap')
   const pendingPath = join(capRoot, 'local-state', 'locks', 'task-switch.pending.json')
+  if (!await exists(pendingPath)) return false
   let pending
-  try { pending = JSON.parse(await readFile(pendingPath, 'utf8')) } catch { return false }
-  if (!pending?.snapshotRoot || !pending?.taskId) return false
+  try { pending = JSON.parse(await readFile(pendingPath, 'utf8')) } catch { throw new Error('task_switch_pending_invalid: pending boundary journal is not valid JSON') }
+  if (!pending?.snapshotRoot || !pending?.taskId || pending.schemaVersion !== 1) {
+    throw new Error('task_switch_pending_invalid: pending boundary journal identity is invalid')
+  }
+  const snapshotRoot = resolve(repo, pending.snapshotRoot)
+  await ensureSafeCapDirectory(repo, snapshotRoot)
+  const snapshotInfo = await lstat(snapshotRoot).catch(() => null)
+  if (!snapshotInfo || !snapshotInfo.isDirectory()) throw new Error('task_switch_pending_invalid: snapshot root is not a directory')
   const statePath = join(capRoot, 'STATE.md')
   const currentState = await readFile(statePath, 'utf8').catch(() => '')
   const currentTaskId = field(currentState, 'task-id')
@@ -96,7 +103,6 @@ async function recoverPendingTaskSwitch(repo) {
     await rm(pendingPath, { force: true }).catch(() => {})
     return true
   }
-  const snapshotRoot = resolve(repo, pending.snapshotRoot)
   for (const name of ACTIVE_PATHS.slice().reverse()) {
     const source = join(snapshotRoot, name)
     const destination = join(capRoot, name)
@@ -308,7 +314,7 @@ export async function switchTaskState(options = {}) {
     await lock.writeFile(`${JSON.stringify({ pid: process.pid, taskId, sessionId, createdAt: new Date().toISOString() })}\n`, 'utf8')
     await lock.sync()
     lockIdentity = await lock.stat()
-    if (reclaimed) await recoverPendingTaskSwitch(repo)
+    if (await exists(pendingPath)) await recoverPendingTaskSwitch(repo)
     if (afterTaskSwitchLock) await afterTaskSwitchLock()
     const lockedState = await readFile(statePath, 'utf8').catch(() => '')
     if (lockedState !== observedState) throw new Error('task_switch_state_changed: active STATE changed while acquiring the Task switch lock')

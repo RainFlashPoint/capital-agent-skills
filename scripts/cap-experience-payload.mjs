@@ -145,7 +145,7 @@ export async function safeRead(repo, relativePath, { openFile = open } = {}) {
 
 function changedFiles(repo, state, commitSha) {
   const base = field(state, 'base-commit')
-  const args = base && /^[0-9a-f]{7,40}$/i.test(base)
+  const args = base && /^[0-9a-f]{7,64}$/i.test(base)
     ? ['diff', '--name-only', `${base}..${commitSha}`]
     : ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', commitSha]
   const rank = path => path.startsWith('.cap/') ? 2 : /^(?:docs?|examples?)\//.test(path) ? 1 : 0

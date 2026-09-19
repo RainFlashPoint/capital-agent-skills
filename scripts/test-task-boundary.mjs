@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildSanitizedTaskRetry, isSensitiveRiskRejection, sanitizeTaskText } from './cap-task-request.mjs'
@@ -100,6 +100,37 @@ test('Task switch recovers a pending boundary journal before retrying', async ()
   const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' })
   assert.equal(result.switched, true)
   assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_new/)
+})
+
+test('Task switch rejects a pending journal whose snapshot escapes the repository', async () => {
+  const repo = await fixture()
+  const outside = await mkdtemp(join(tmpdir(), 'cap-pending-outside-'))
+  const outsideSpec = join(outside, 'spec.md')
+  await writeFile(outsideSpec, 'outside secret\n')
+  await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
+    schemaVersion: 1, taskId: 'task_interrupted', snapshotRoot: outside,
+  }) + '\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999 }) + '\n')
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }),
+    /unsafe_cap_state_path/,
+  )
+  assert.equal(await readFile(outsideSpec, 'utf8'), 'outside secret\n')
+})
+
+test('Task switch fails closed on a corrupt pending journal without creating a snapshot', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), '{broken\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999 }) + '\n')
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }),
+    /task_switch_pending_invalid/,
+  )
+  await assert.rejects(access(join(repo, '.cap/local-state/stale/task_old')), error => error?.code === 'ENOENT')
 })
 
 test('Task switch revalidates the observed STATE after acquiring its operation lock', async () => {

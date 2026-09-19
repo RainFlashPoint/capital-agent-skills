@@ -623,6 +623,36 @@ class RetireTest(unittest.TestCase):
             self.assertIn("active artifacts changed", stderr.getvalue())
             self.assertEqual(_read(os.path.join(cap, "spec.md")), "concurrent newer task data\n")
 
+    def test_retire_rechecks_each_artifact_immediately_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write(f"stage: done\ntask-id: task_cleanup_cas\ncap-gate: PASS reviewed-head={VALID_COMMIT}\n")
+            original = intake._selected_artifact_manifest
+            calls = 0
+
+            def mutate_between_checks(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    with open(os.path.join(cap, "spec.md"), "w", encoding="utf-8") as f:
+                        f.write("new concurrent task data\n")
+                return original(*args, **kwargs)
+
+            argv = [
+                "retire", "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_cleanup_cas", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--gate-kind", "local", "--gate-commit", VALID_COMMIT, "--strict",
+            ]
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with mock.patch.object(intake, "_selected_artifact_manifest", side_effect=mutate_between_checks), \
+                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = intake.main(argv)
+            self.assertNotEqual(result, 0)
+            self.assertIn("immediately before cleanup", stderr.getvalue())
+            self.assertEqual(_read(os.path.join(cap, "spec.md")), "new concurrent task data\n")
+
     def test_server_retire_revalidates_canonical_gate_on_recovery(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
@@ -774,6 +804,13 @@ class RetireTest(unittest.TestCase):
             payload = json.loads(r.stdout)
             self.assertEqual(payload["reason"], "retirement_recovery_required")
             self.assertIn("task_pending", payload["retirements"])
+
+    def test_prepare_next_fails_closed_on_symlinked_retirement_root(self):
+        with tempfile.TemporaryDirectory() as cap, tempfile.TemporaryDirectory() as outside:
+            os.symlink(outside, os.path.join(cap, "history"))
+            r = run_prepare_next(cap)
+            self.assertEqual(r.returncode, 3)
+            self.assertEqual(json.loads(r.stdout)["reason"], "retirement_recovery_required")
 
     def test_prepare_next_blocks_active_task(self):
         with tempfile.TemporaryDirectory() as cap:

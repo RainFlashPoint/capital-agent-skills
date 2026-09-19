@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -364,4 +364,22 @@ test('Node prepare-next covers the normal new-task guard without Python', async 
   result = runRuntime(['prepare-next', join(repo, '.cap')])
   assert.equal(result.status, 3)
   assert.equal(JSON.parse(result.stdout).reason, 'retirement_required')
+})
+
+test('Node prepare-next blocks an incomplete Retire transaction', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap', 'history', 'task_pending'), { recursive: true })
+  await writeFile(join(repo, '.cap', 'history', 'task_pending', 'retirement.json'), JSON.stringify({ phase: 'cleanup' }))
+  const result = runRuntime(['prepare-next', join(repo, '.cap')])
+  assert.equal(result.status, 3)
+  assert.equal(JSON.parse(result.stdout).reason, 'retirement_recovery_required')
+})
+
+test('Node prepare-next fails closed on a symlinked retirement root', async () => {
+  const repo = await fixture()
+  const outside = await mkdtemp(join(tmpdir(), 'cap-runtime-outside-'))
+  await symlink(outside, join(repo, '.cap', 'history'))
+  const result = runRuntime(['prepare-next', join(repo, '.cap')])
+  assert.equal(result.status, 3)
+  assert.equal(JSON.parse(result.stdout).reason, 'retirement_recovery_required')
 })

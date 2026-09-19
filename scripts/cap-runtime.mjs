@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { readFile, realpath, stat, lstat, readdir } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -10,6 +10,8 @@ import { inspectSessionRoot } from './cap-session-root.mjs'
 import { inspectPreexistingDirtyOverlap } from './cap-worktree-baseline.mjs'
 
 const validStages = new Set(['', 'plan', 'implement', 'test', 'review', 'release'])
+const MAX_RETIREMENT_SCAN = 1000
+const MAX_RECOVERY_BYTES = 256 * 1024
 
 function git(repo, args) {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -140,6 +142,38 @@ export async function inspectTaskContext(repoCandidate = '.', { stage = '', inte
 
 export async function prepareNext(capCandidate = '.cap') {
   const capRoot = resolve(capCandidate)
+  const retirements = []
+  const invalidRoots = []
+  let truncated = false
+  for (const rootName of ['history', 'archive']) {
+    const root = join(capRoot, rootName)
+    let entries
+    try {
+      const rootInfo = await lstat(root)
+      if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) { invalidRoots.push(rootName); continue }
+      entries = await readdir(root, { withFileTypes: true })
+    } catch (error) { if (error?.code !== 'ENOENT') invalidRoots.push(rootName); continue }
+    for (let index = 0; index < entries.length; index += 1) {
+      if (index >= MAX_RETIREMENT_SCAN) { truncated = true; break }
+      const entry = entries[index]
+      if (entry.isSymbolicLink() || !entry.isDirectory()) continue
+      const transactionPath = join(root, entry.name, 'retirement.json')
+      try {
+        const info = await lstat(transactionPath)
+        if (info.isSymbolicLink() || !info.isFile() || info.size <= 0 || info.size > MAX_RECOVERY_BYTES) {
+          retirements.push(entry.name)
+          continue
+        }
+        const transaction = JSON.parse(await readFile(transactionPath, 'utf8'))
+        if (transaction?.phase !== 'complete') retirements.push(entry.name)
+      } catch (error) {
+        if (error?.code !== 'ENOENT') retirements.push(entry.name)
+      }
+    }
+  }
+  if (retirements.length || truncated || invalidRoots.length) {
+    return { exitCode: 3, result: { ready: false, reason: 'retirement_recovery_required', retirements: [...new Set(retirements)].sort(), invalidRoots: [...new Set(invalidRoots)].sort(), truncated, nextAction: 'resume or repair the incomplete Retire transaction before starting a new Task' } }
+  }
   const statePath = join(capRoot, 'STATE.md')
   if (!await exists(statePath)) return { exitCode: 0, result: { ready: true, reason: 'no_active_task' } }
   const state = await readFile(statePath, 'utf8')
