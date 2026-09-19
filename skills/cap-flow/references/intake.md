@@ -259,7 +259,8 @@ python3 scripts/intake.py move --root <root> --leaf <leaf-id> --to <domain>/<sub
 
 ```
 python3 scripts/intake.py retire --cap <target>/.cap --slug <feat> --date <YYYY-MM-DD> \
-  --task-id <task-id> --delivery-commit <commit> --gate-status passed --strict \
+  --task-id <task-id> --delivery-commit <commit> --gate-status passed \
+  --gate-kind <server|local> --gate-commit <commit> --strict \
   [--parent-task-id <parent-task-id>] [--title "<title>"] [--intent-summary "<summary>"] \
   [--keywords "<keyword1>,<keyword2>"] [--branch <branch>] [--base-commit <commit>] \
   [--completed-at <UTC timestamp>] \
@@ -276,12 +277,15 @@ python3 scripts/intake.py prepare-next --cap <target>/.cap
 ```
 
 它只在根目录没有活动 Task 时返回成功；进行中 Task 要求续接或换 worktree，`stage=done` 则要求先完成严格退场。
-严格退场只有在 Task ID、Delivery Commit 和 Server Gate PASS 同时明确时才执行。脚本先在临时目录复制并计算
+严格退场只有在 Task ID、Delivery Commit 和同一 Commit 的显式 Gate 证明同时明确时才执行：团队模式使用
+`--gate-kind server`，且必须对应 Server Gate PASS；`local` / `local-only` 使用 `--gate-kind local`，且必须对应
+当前 Task、当前 HEAD 的本地 `cap-gate`。两类证明不能互相冒充，`--gate-commit` 必须等于完整
+`--delivery-commit`。脚本先在临时目录复制并计算
 SHA-256，原子落下快照、`manifest.json` 与 `retirement.json` 后，再按 cleanup → index → leaf → backflow 的耐久
 phase 推进。任一步中断后重跑同一 Retire 会从已提交 phase 继续；清理、索引、叶状态和同一条 Evolution/叶记录均幂等，
 不会因为“快照已经存在”而跳过剩余收尾，也不会重复追加经验。快照尚未提交前失败时，根 `.cap` 保持不变。
 
-严格退场必须显式声明知识处置，并先证明 `experience.md` 的 `task-id` 与完整 `source-commit` 精确对应当前 Task 和 Delivery Commit：`synced` 必须带中心知识文档 ID，`pending-sync` 必须有同 Task、同 Commit、envelope/payload 幂等键一致且包含完整结构化经验载荷的可重放
+严格退场必须显式声明知识处置，并先证明 `experience.md` 的 `task-id` 与完整 `source-commit` 精确对应当前 Task 和 Delivery Commit；可复用处置还必须至少有一个有效代码路径、入口或符号锚点：`synced` 必须带中心知识文档 ID，`pending-sync` 必须有同 Task、同 Commit、envelope/payload 幂等键一致且包含完整结构化经验载荷的可重放
 `experience.record` Outbox 事件，`local-only` 必须有同一 Task/Commit 的合格 `experience.md` 本地索引，
 `no-reusable-experience` 只能用于明确没有合格经验的任务。处置值同时写入 manifest、事务请求和脱敏历史索引；缺失或互相矛盾时在清理前拒绝。旧归档没有该字段时只显示为 `legacy-unknown`，不会被猜测补齐；strict Retire 必须先显式迁移/补录旧 manifest，不能借兼容读取继续清理活动态。
 
@@ -317,7 +321,8 @@ session_id      # 会话标识
 
 **回流去向**:`<cap>/EVOLUTION.md`(脚本统一 append,缺则建头)。它是最多 50 条的活动窗口；只有带
 `[task:<id>]` 且已有历史索引证明，或带中心 `[knowledge:<id>]` 的最老条目才允许出窗。超窗但缺证明时保留并由
-`python3 scripts/intake.py knowledge-audit --cap <target>/.cap` 报告，避免经验静默丢失。PROFILE.md 不承载流水,
+`python3 scripts/intake.py knowledge-audit --cap <target>/.cap` 报告；审计有索引项数和总读取字节硬预算，并显式输出
+`scanned / truncated / overBudget / limits`，避免经验静默丢失或长期仓库增长导致无界读取。PROFILE.md 不承载流水,
 仅留一行指针。旧 `.cap/archive` 继续作为兼容历史读取，但新 Task 一律写 `.cap/history/<task-id>`。
 
 > **与中心知识库的关系(两条出口,别混)**:①**教训**——EVOLUTION.md 是**本仓本地**的演进记忆;要让耐久教训

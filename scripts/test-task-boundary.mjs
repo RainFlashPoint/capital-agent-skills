@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildSanitizedTaskRetry, isSensitiveRiskRejection, sanitizeTaskText } from './cap-task-request.mjs'
@@ -56,6 +56,36 @@ test('stale Task state is moved aside before a fresh Task boundary is initialize
   assert.equal(oldContext, 'old context\n')
   assert.equal(oldExperience, 'old experience\n')
   assert.equal(execFileSync('git', ['status', '--porcelain', '--', 'README.md'], { cwd: repo, encoding: 'utf8' }), '')
+})
+
+test('Task switch rejects a symlinked local-state parent before moving active files', async () => {
+  const repo = await fixture()
+  const outside = await mkdtemp(join(tmpdir(), 'cap-task-boundary-outside-'))
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/spec.md'), 'must remain active\n')
+  await symlink(outside, join(repo, '.cap/local-state'))
+
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }),
+    /unsafe_cap_state_path/,
+  )
+
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+  assert.equal(await readFile(join(repo, '.cap/spec.md'), 'utf8'), 'must remain active\n')
+  assert.deepEqual(await import('node:fs/promises').then(fs => fs.readdir(outside)), [])
+})
+
+test('Task switch isolates execution evidence with the old Task', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/execution/run-old'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/execution/run-old/gate.json'), '{"taskId":"task_old"}\n')
+
+  const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' })
+
+  assert.equal(await readFile(join(result.snapshotRoot, 'execution/run-old/gate.json'), 'utf8'), '{"taskId":"task_old"}\n')
+  await assert.rejects(readFile(join(repo, '.cap/execution/run-old/gate.json'), 'utf8'), error => error?.code === 'ENOENT')
 })
 
 test('matching active boundary refuses implicit replacement', async () => {

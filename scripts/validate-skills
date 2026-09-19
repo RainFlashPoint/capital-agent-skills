@@ -113,6 +113,8 @@ grep -q 'prepare-next' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未在新需�
 grep -q '禁止递归扫描 `.cap/history`' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未限制 AI 全量读取历史需求"
 grep -q 'history/<task-id>' "$REF/intake.md" || err "Retire 未切换到按 Task 的历史快照"
 grep -q 'Server Gate PASS' "$REF/intake.md" || err "Retire 未要求权威 Gate 后退场"
+grep -q -- '--gate-kind <server|local>' "$REF/intake.md" || err "Retire 未区分 local/server Gate 类型"
+grep -q -- '--gate-commit <commit>' "$REF/intake.md" || err "Retire Gate 未绑定精确 Commit"
 grep -q '不得停在口头承诺' "$REF/progress-protocol.md" || err "进度协议未强制真实执行"
 grep -q 'External operation boundary' "$REF/task-reconnaissance.md" || err "task-context 未记录外部操作边界"
 for fingerprint in index-fingerprint worktree-fingerprint untracked-fingerprint; do

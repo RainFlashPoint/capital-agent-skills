@@ -2,15 +2,15 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { resolve, join, dirname } from 'node:path'
+import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { resolve, join, dirname, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { inspectTaskBoundary } from './cap-status.mjs'
 import { archiveHistoricalOutboxEvents } from './cap-outbox.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { captureTaskBaseline, removeTaskBaseline } from './cap-worktree-baseline.mjs'
 
-const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'experience.md', 'verify', 'review', 'release']
+const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'experience.md', 'verify', 'review', 'release', 'execution']
 
 function git(repo, args) {
   return execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -68,6 +68,32 @@ function field(markdown = '', name = '') {
 function safeSegment(value = '', fallback = 'unknown') {
   return String(value || fallback).replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || fallback
 }
+async function ensureSafeCapDirectory(repo, target) {
+  const absoluteRepo = resolve(repo)
+  const canonicalRepo = await realpath(repo)
+  const absoluteTarget = resolve(target)
+  const repoRelative = relative(absoluteRepo, absoluteTarget)
+  if (!repoRelative || repoRelative === '..' || repoRelative.startsWith(`..${sep}`) || resolve(absoluteRepo, repoRelative) !== absoluteTarget) {
+    throw new Error(`unsafe_cap_state_path: ${absoluteTarget}`)
+  }
+  let current = canonicalRepo
+  for (const segment of repoRelative.split(sep).filter(Boolean)) {
+    current = join(current, segment)
+    let info
+    try {
+      info = await lstat(current)
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+      await mkdir(current)
+      info = await lstat(current)
+    }
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(`unsafe_cap_state_path: ${current}`)
+    const canonicalCurrent = await realpath(current)
+    if (canonicalCurrent !== canonicalRepo && !canonicalCurrent.startsWith(`${canonicalRepo}${sep}`)) {
+      throw new Error(`unsafe_cap_state_path: ${current}`)
+    }
+  }
+}
 
 export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expectedOldTaskId = '', title = '新研发任务', intentSummary = '', stage = 'understand', environment = {}, sessionRootRegistry = '', migrateTrackedActive = false, beforeTrackedIndexReplace, replaceTrackedIndex } = {}) {
   if (!taskId || !sessionId) throw new Error('taskId and sessionId are required')
@@ -77,6 +103,7 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
   const sessionRoot = await inspectSessionRoot({ repoRoot: gitRoot, environment, registryRoot: sessionRootRegistry, capture: false, requireExisting: Boolean(Object.keys(environment).length) })
   if (sessionRoot.blocked) throw new Error(`${sessionRoot.code}: expected ${sessionRoot.expectedRoot || 'captured session root'}, received ${sessionRoot.currentRoot}`)
   const capRoot = join(repo, '.cap')
+  await ensureSafeCapDirectory(repo, capRoot)
   const statePath = join(capRoot, 'STATE.md')
   const oldState = await readFile(statePath, 'utf8').catch(() => '')
   const branch = git(repo, ['branch', '--show-current'])
@@ -93,7 +120,6 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
   }
   let trackedMigration = null
 
-  await mkdir(capRoot, { recursive: true })
   const fingerprint = createHash('sha256').update(`${oldState}\n${branch}\n${gitRoot}`).digest('hex').slice(0, 12)
   let snapshotRoot = join(capRoot, 'local-state', 'stale', safeSegment(oldTaskId), fingerprint)
   if (!oldState) {
@@ -102,7 +128,7 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
     // empty-state fingerprint as a collision.
     snapshotRoot = join(capRoot, 'local-state', 'stale', safeSegment(oldTaskId), `${fingerprint}-${randomUUID()}`)
   } else if (await exists(snapshotRoot)) throw new Error(`stale snapshot already exists: ${snapshotRoot}`)
-  await mkdir(snapshotRoot, { recursive: true })
+  await ensureSafeCapDirectory(repo, snapshotRoot)
 
   const moved = []
   let newStateStarted = false
@@ -112,6 +138,7 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
   try {
     if (tracked.length) trackedMigration = await prepareTrackedActiveMigration(repo, tracked)
     taskBaseline = await captureTaskBaseline(repo, taskId)
+    await ensureSafeCapDirectory(repo, snapshotRoot)
     for (const name of ACTIVE_PATHS) {
       const source = join(capRoot, name)
       if (!await exists(source)) continue

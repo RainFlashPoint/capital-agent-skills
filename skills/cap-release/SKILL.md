@@ -21,7 +21,7 @@ description: >
 
 > **本地执行证据**：显式 local / local-only 模式同时遵循 `../cap-flow/references/local-execution.md`。构建、测试、打包复用当前源码快照上的真实命令结果；评审仍需独立证据，单次命令 PASS 不替代阶段全部验收。
 
-你正在执行研发主线的**发布阶段**。显式 local / local-only 仓使用与当前 HEAD 一致的本地 `cap-gate`；团队模式必须由 Server canonical state 证明同一 Commit 的 Review Action 已通过。现在由你把它**逐级晋级**
+你正在执行研发主线的**发布阶段**。显式 local / local-only 仓使用与当前 HEAD 一致的本地 `cap-gate`；团队模式必须由 Server canonical state 证明同一 Commit 的 Review Action 已通过。进入 strict Retire 时必须把证明类型显式传为 `gate-kind=local|server`，并让 `gate-commit` 精确等于 Delivery Commit，禁止用无类型的 `passed` 文本混用两种信任边界。现在由你把它**逐级晋级**
 安全送上线。两条铁律贯穿全程:
 
 1. **每升一级先过门,过不了就回滚**——deploy 完立刻 smoke/health,不健康就切回上一个好版本。

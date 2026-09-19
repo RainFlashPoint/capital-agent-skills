@@ -32,8 +32,8 @@ function historyIndex(taskId, overrides = {}) {
       problemPatterns: [],
       decisionRules: [],
       invalidationSignals: [],
-      codePaths: [],
-      entryPoints: [],
+      codePaths: ['src/fixture.ts'],
+      entryPoints: ['fixtureEntry'],
       symbols: [],
       invariants: [],
       codeAnchors: [],
@@ -214,6 +214,53 @@ test('unresolved knowledge debt remains visible when the next task has no keywor
   ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
   assert.ok(result.matches.some(item => item.file === '.cap/history/index/task_pending_unrelated.json'))
   assert.ok(result.matches.some(item => item.source_type === 'cap_stale' && item.taskId === 'task_stale_unrelated'))
+})
+
+test('unrelated debt cannot hide an exact code-anchor match at the result limit', () => {
+  const repo = fixture()
+  for (let number = 0; number < 8; number += 1) {
+    const taskId = `task_debt_${number}`
+    writeFileSync(join(repo, `.cap/history/index/${taskId}.json`), JSON.stringify(historyIndex(taskId, {
+      title: `unrelated debt ${number}`,
+      knowledgeDisposition: 'pending-sync',
+      experienceIndex: { codePaths: [`src/unrelated/${number}.ts`], retrievalCues: ['legacy debt'] },
+    })))
+  }
+  writeFileSync(join(repo, '.cap/history/index/task_exact_anchor.json'), JSON.stringify(historyIndex('task_exact_anchor', {
+    title: 'unrelated title',
+    experienceIndex: { codePaths: ['src/payment/exact-anchor.ts'], retrievalCues: ['unrelated cue'] },
+  })))
+
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'brand new work', '--anchor', 'src/payment/exact-anchor.ts', '--limit', '8', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+
+  assert.ok(result.matches.some(item => item.file === '.cap/history/index/task_exact_anchor.json'))
+  assert.equal(result.scanned.results_truncated, true)
+  assert.equal(result.scanned.relevance_slot_reserved, true)
+})
+
+test('Node reader rejects contradictory document ids and raw sensitive token formats', () => {
+  const repo = fixture()
+  const cases = {
+    task_bad_document: { knowledgeDisposition: 'local-only', knowledgeDocumentId: 'kn_contradictory', title: 'DOC_CONTRADICTION_MARKER' },
+    task_raw_jwt: { title: 'JWT_MARKER eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJlMTIzNDU2' },
+    task_github_token: { title: `GITHUB_MARKER ghp_${'a'.repeat(32)}` },
+    task_aws_key: { title: `AWS_MARKER AKIA${'A1'.repeat(8)}` },
+    task_api_token: { title: `API_MARKER sk-proj-${'a'.repeat(24)}` },
+    task_unc_path: { intentSummary: 'UNC_MARKER read \\\\fileserver\\private\\config.json' },
+  }
+  for (const [taskId, overrides] of Object.entries(cases)) {
+    writeFileSync(join(repo, `.cap/history/index/${taskId}.json`), JSON.stringify(historyIndex(taskId, overrides)))
+  }
+
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'DOC_CONTRADICTION_MARKER JWT_MARKER GITHUB_MARKER AWS_MARKER API_MARKER UNC_MARKER', '--limit', '20', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+
+  for (const taskId of Object.keys(cases)) {
+    assert.equal(result.matches.some(item => item.file === `.cap/history/index/${taskId}.json`), false, taskId)
+  }
 })
 
 test('stale reconnaissance rejects symlinked and oversized manifests', () => {

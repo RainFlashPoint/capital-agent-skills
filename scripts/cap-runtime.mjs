@@ -149,7 +149,7 @@ export async function prepareNext(capCandidate = '.cap') {
   const historyExists = historyPath ? await stat(historyPath).then(item => item.isDirectory()).catch(() => false) : false
   const result = { ready: false, taskId, stage, historyPath: historyExists ? historyPath : '' }
   if (stage === 'done') {
-    return { exitCode: 3, result: { ...result, reason: 'retirement_required', nextAction: 'run strict retire after confirming Server Gate and delivery commit' } }
+    return { exitCode: 3, result: { ...result, reason: 'retirement_required', nextAction: 'run strict retire after confirming the matching local/server Gate and delivery commit' } }
   }
   return { exitCode: 3, result: { ...result, reason: 'active_task_exists', nextAction: 'resume current task or use another branch/worktree' } }
 }

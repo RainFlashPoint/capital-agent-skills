@@ -23,6 +23,13 @@ const STALE_MANIFEST_FIELDS = new Set([
 const CURRENT_DISPOSITIONS = new Set(['synced', 'pending-sync', 'local-only', 'no-reusable-experience'])
 const EXPERIENCE_REQUIRED_DISPOSITIONS = new Set(['synced', 'pending-sync', 'local-only'])
 const STABLE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/
+const SENSITIVE_INDEX_PATTERNS = [
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/i,
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/i,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/i,
+  /\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{30,})\b/i,
+  /(?:^|[\s("'=])\\\\[^\\\s]+\\[^\\\s]+/i,
+]
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'into', 'this', 'that', 'fix', 'feat', 'chore',
   '修复', '实现', '新增', '更新', '修改', '问题', '功能', '一个', '这个', '进行', '相关',
@@ -260,6 +267,7 @@ function safeIndexText(value, limit = 500) {
   if (/\b(?:account|merchant(?:\s*id)?|customer(?:\s*id)?)\s*[:#=]\s*[a-z0-9_-]{3,}\b/i.test(text)) return null
   if (/(?:商户号|商户编号|商编|账户号|账号)\s*[:：=#]\s*[a-z0-9_-]{3,}/i.test(text)) return null
   if (/\b(?:[a-z0-9-]+\.)+(?:internal|local|corp|lan)\b/i.test(text)) return null
+  if (SENSITIVE_INDEX_PATTERNS.some(pattern => pattern.test(text))) return null
   return text
 }
 
@@ -323,8 +331,11 @@ function validHistoryIndex(item, entryName) {
   const experience = item.experienceIndex === undefined ? null : validExperienceIndex(item.experienceIndex, taskId)
   if (item.experienceIndex !== undefined && !experience) return null
   if (EXPERIENCE_REQUIRED_DISPOSITIONS.has(disposition) && !experience) return null
+  if (EXPERIENCE_REQUIRED_DISPOSITIONS.has(disposition)
+      && !(experience.codePaths?.length || experience.entryPoints?.length || experience.symbols?.length)) return null
   if (disposition === 'synced' && (typeof item.knowledgeDocumentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.knowledgeDocumentId))) return null
   if ('knowledgeDocumentId' in item && (typeof item.knowledgeDocumentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.knowledgeDocumentId))) return null
+  if (disposition !== 'synced' && item.knowledgeDocumentId) return null
   return { ...item, knowledgeDisposition: disposition, experienceIndex: experience }
 }
 
@@ -510,7 +521,7 @@ export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 
       return leftPriority - rightPriority || right.score - left.score || left.source_type.localeCompare(right.source_type) || String(left.inspect?.value).localeCompare(String(right.inspect?.value))
     })
   const seen = new Set()
-  const matches = []
+  const unique = []
   for (const candidate of candidates) {
     const canonicalBranch = String(candidate.branch || '').replace(/^origin\//, '')
     const key = candidate.source_type === 'branch'
@@ -518,10 +529,37 @@ export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 
       : `${candidate.source_type}:${candidate.commit || candidate.file || ''}`
     if (seen.has(key)) continue
     seen.add(key)
-    matches.push(publicCandidate(candidate))
-    if (matches.length >= limit) break
+    unique.push(candidate)
   }
-  return { repo: root, intent, anchors, scanned: { branches_and_tips: true, recent_commits: true, cap_memory: true, cap_history_index_only: true, code_anchors: anchors.length > 0, ...scan }, matches }
+  let selected = unique.slice(0, limit)
+  let relevanceSlotReserved = false
+  if (unique.length > limit && limit > 0) {
+    const bestRelevant = [...unique]
+      .filter(candidate => candidate.matchedAnchors.length > 0 || candidate.score > 1)
+      .sort((left, right) => right.matchedAnchors.length - left.matchedAnchors.length || right.score - left.score)[0]
+    if (bestRelevant && !selected.includes(bestRelevant)) {
+      selected = limit === 1 ? [bestRelevant] : [...selected.slice(0, limit - 1), bestRelevant]
+      relevanceSlotReserved = true
+    }
+  }
+  const matches = selected.map(publicCandidate)
+  return {
+    repo: root,
+    intent,
+    anchors,
+    scanned: {
+      branches_and_tips: true,
+      recent_commits: true,
+      cap_memory: true,
+      cap_history_index_only: true,
+      code_anchors: anchors.length > 0,
+      results_total: unique.length,
+      results_truncated: unique.length > limit,
+      relevance_slot_reserved: relevanceSlotReserved,
+      ...scan,
+    },
+    matches,
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

@@ -207,7 +207,7 @@ sh <cap-flow 目录>/scripts/cap-guard    # 脚本自包含;确定性比对 STAT
 **优先判定:上个特性走完但没退场(`STATE.stage == done`)。** 每次准备创建新需求前先运行确定性的 `prepare-next`：POSIX 沿用
 `python3 scripts/intake.py prepare-next --cap <target>/.cap`，原生 Windows 使用 `node scripts/cap-runtime.mjs prepare-next <target>/.cap`。根 `.cap` 只允许一个活动 Task；存在进行中 Task
 必须续接或换 branch/worktree，禁止覆盖。入口读到 `stage==done`(特性到终点但工件还没收尾)→ **先触发退场仪式**
-(在 Server 确认同一 Commit 的 Gate PASS 后，将活动工件快照到 `.cap/history/<task-id>/`、把耐久决策从
+(在团队模式由 Server、显式本地模式由本地 `cap-gate` 确认同一 Commit 的对应 Gate PASS 后，将活动工件快照到 `.cap/history/<task-id>/`、把耐久决策从
 `STATE.Decisions log` 蒸馏回 `.cap/EVOLUTION.md` 的 50 条活动窗口、若特性源自需求树叶则标该叶 `shipped`、清空
 STATE),再按上面三条主分支处理新特性。退场的机械部分走 `references/intake.md` 的 Retire 操作;编排器
 只**触发**,不亲自归档。用户也可显式 `/cap retire`。

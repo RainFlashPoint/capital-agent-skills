@@ -2,6 +2,7 @@
 """Tests for scripts/intake.py — stdlib unittest, no third-party deps."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -124,11 +125,17 @@ class CoverageLintTest(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
-def run_retire(*args, env=None):
+def run_retire(*args, env=None, default_gate=True):
     process_env = os.environ.copy()
     if env:
         process_env.update(env)
-    r = subprocess.run([sys.executable, INTAKE, "retire", *args],
+    command_args = list(args)
+    if default_gate and "--strict" in command_args:
+        if "--gate-kind" not in command_args:
+            command_args.extend(("--gate-kind", "server"))
+        if "--gate-commit" not in command_args and "--delivery-commit" in command_args:
+            command_args.extend(("--gate-commit", command_args[command_args.index("--delivery-commit") + 1]))
+    r = subprocess.run([sys.executable, INTAKE, "retire", *command_args],
                        capture_output=True, text=True, env=process_env)
     return r
 
@@ -232,6 +239,7 @@ def _write_completed_archive(cap, task_id="task_123", **metadata):
         "intentSummary": "test intent", "keywords": ["test"], "branch": "main",
         "baseCommit": "abc", "deliveryCommit": VALID_COMMIT, "completedAt": "2026-09-19",
         "status": "completed", "knowledgeDisposition": "no-reusable-experience",
+        "gateKind": "server", "gateCommit": VALID_COMMIT, "gateStatus": "passed",
         "artifacts": [{"path": "spec.md", "sha256": intake._sha256(archived_spec), "size": 8}],
     }
     manifest.update(metadata)
@@ -248,12 +256,128 @@ def _valid_history_index(task_id):
         "artifactRoot": f".cap/history/{task_id}",
         "experienceIndex": {
             "schema": "cap-experience-index/v1",
+            "codePaths": ["src/fixture.py"],
+            "entryPoints": ["fixture_entry"],
             "path": f".cap/history/{task_id}/experience.md",
         },
     }
 
 
 class RetireTest(unittest.TestCase):
+    def test_strict_retire_requires_typed_commit_bound_gate(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap, names=("STATE.md",), dirs=())
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_gate\n")
+            common = (
+                "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_gate", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--strict",
+            )
+            missing_kind = run_retire(*common, default_gate=False)
+            self.assertNotEqual(missing_kind.returncode, 0)
+            self.assertIn("gate kind", missing_kind.stderr.lower())
+            wrong_commit = run_retire(
+                *common, "--gate-kind", "local", "--gate-commit", OTHER_COMMIT,
+            )
+            self.assertNotEqual(wrong_commit.returncode, 0)
+            self.assertIn("gate commit", wrong_commit.stderr.lower())
+            accepted = run_retire(
+                *common, "--gate-kind", "local", "--gate-commit", VALID_COMMIT,
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            with open(os.path.join(cap, "history", "task_gate", "manifest.json"), encoding="utf-8") as f:
+                manifest = json.load(f)
+            self.assertEqual(manifest["gateKind"], "local")
+            self.assertEqual(manifest["gateCommit"], VALID_COMMIT)
+
+    def test_reusable_disposition_requires_meaningful_implementation_anchors(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            _write_valid_experience(cap)
+            path = os.path.join(cap, "experience.md")
+            text = _read(path)
+            text = re.sub(
+                r"(?s)(## 实现锚点与不变量 / Implementation anchors and invariants\n).*?(?=\n## 失效信号)",
+                r"\1- 不变量：只能写抽象原则，不含路径、入口或符号。\n",
+                text,
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            result = run_retire(
+                "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "local-only",
+                "--gate-status", "passed", "--strict",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("qualified experience", result.stderr.lower())
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+
+    def test_retire_recovery_metadata_must_be_bounded_regular_files(self):
+        for target in ("manifest.json", "retirement.json"):
+            for mode in ("symlink", "oversize"):
+                with self.subTest(target=target, mode=mode), tempfile.TemporaryDirectory() as cap, tempfile.TemporaryDirectory() as outside:
+                    _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
+                    with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                        f.write("stage: done\ntask-id: task_recovery\n")
+                    args = (
+                        "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                        "--task-id", "task_recovery", "--delivery-commit", VALID_COMMIT,
+                        "--knowledge-disposition", "no-reusable-experience",
+                        "--gate-status", "passed", "--strict",
+                    )
+                    interrupted = run_retire(*args, env={"CAP_RETIRE_FAIL_AFTER": "snapshot"})
+                    self.assertNotEqual(interrupted.returncode, 0)
+                    metadata = os.path.join(cap, "history", "task_recovery", target)
+                    original = _read(metadata)
+                    if mode == "symlink":
+                        external = os.path.join(outside, target)
+                        with open(external, "w", encoding="utf-8") as f:
+                            f.write(original)
+                        os.remove(metadata)
+                        os.symlink(external, metadata)
+                    else:
+                        with open(metadata, "w", encoding="utf-8") as f:
+                            f.write(original.rstrip() + " " * (intake.MAX_HISTORY_INDEX_BYTES + 1))
+                    resumed = run_retire(*args)
+                    self.assertNotEqual(resumed.returncode, 0)
+                    self.assertIn("recovery metadata", resumed.stderr.lower())
+                    self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+                    self.assertEqual(_read(os.path.join(cap, "spec.md")), "spec.md")
+
+    def test_evolution_entry_must_be_a_bounded_single_line(self):
+        for entry in ("- first line\ncontinuation", "- control\x01character", "- " + "x" * 501):
+            with self.subTest(entry=repr(entry)), tempfile.TemporaryDirectory() as cap:
+                _make_cap(cap, names=("spec.md",), dirs=())
+                result = run_retire(
+                    "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                    "--evolution-entry", entry,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("evolution entry", result.stderr.lower())
+                self.assertTrue(os.path.isfile(os.path.join(cap, "spec.md")))
+
+    def test_knowledge_audit_enforces_total_read_budget_and_reports_truncation(self):
+        with tempfile.TemporaryDirectory() as cap:
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root)
+            for number in range(intake.MAX_KNOWLEDGE_AUDIT_INDEXES + 2):
+                task_id = f"task_budget_{number:04d}"
+                with open(os.path.join(index_root, f"{task_id}.json"), "w", encoding="utf-8") as f:
+                    json.dump(_valid_history_index(task_id), f)
+            result = run_knowledge_audit(cap)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            indexes = json.loads(result.stdout)["indexes"]
+            self.assertLessEqual(indexes["scanned"], intake.MAX_KNOWLEDGE_AUDIT_INDEXES)
+            self.assertTrue(indexes["truncated"])
+            self.assertTrue(indexes["overBudget"])
+            self.assertEqual(indexes["limits"]["entries"], intake.MAX_KNOWLEDGE_AUDIT_INDEXES)
+            self.assertEqual(indexes["limits"]["bytes"], intake.MAX_KNOWLEDGE_AUDIT_BYTES)
+
     def test_retire_rejects_symlinked_active_artifacts_without_cleanup(self):
         cases = ("top-level-file", "top-level-directory", "nested")
         for case in cases:
@@ -642,20 +766,17 @@ class RetireTest(unittest.TestCase):
                 self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
                 self.assertFalse(os.path.exists(os.path.join(cap, "history", "index", "task_123.json")))
 
-    def test_history_index_bounds_oversized_manifest_metadata(self):
+    def test_retire_rejects_oversized_manifest_metadata_before_index_rebuild(self):
         with tempfile.TemporaryDirectory() as cap:
             _write_completed_archive(cap, title="x" * (300 * 1024), keywords=["k" * 4096] * 100)
             result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
                                 "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                                 "--knowledge-disposition", "no-reusable-experience",
                                 "--gate-status", "passed", "--strict")
-            self.assertEqual(result.returncode, 0, result.stderr)
-            index_path = os.path.join(cap, "history", "index", "task_123.json")
-            self.assertLessEqual(os.path.getsize(index_path), 256 * 1024)
-            with open(index_path, encoding="utf-8") as f:
-                index = json.load(f)
-            self.assertLessEqual(len(index["title"]), 500)
-            self.assertLessEqual(len(index["keywords"]), intake.MAX_EXPERIENCE_INDEX_ITEMS)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("bounded regular file", result.stderr)
+            self.assertEqual(_read(os.path.join(cap, "spec.md")), "active")
+            self.assertFalse(os.path.exists(os.path.join(cap, "history", "index", "task_123.json")))
 
     def test_legacy_manifest_path_traversal_is_rejected_without_deleting_repository(self):
         with tempfile.TemporaryDirectory() as repo:
