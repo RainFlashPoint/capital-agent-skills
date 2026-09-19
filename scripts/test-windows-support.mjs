@@ -243,6 +243,65 @@ test('Node runtime and POSIX guard share trimmed History usage semantics', async
   assert.match(result.stderr, /history_usage_without_candidate/)
 })
 
+test('Node runtime and POSIX guard both reject prefixed History usage headings', async () => {
+  const repo = await fixture()
+  await captureRuntimeRoot(repo)
+  const branch = git(repo, ['branch', '--show-current'])
+  const head = git(repo, ['rev-parse', 'HEAD'])
+  const fingerprints = await inspectContextFingerprint(repo)
+  const intent = 'history heading parity fixture'
+  await writeFile(join(repo, '.cap', 'task-context.md'), `# Task Context
+
+- intent: ${intent}
+- branch: ${branch}
+- head: ${head}
+- index-fingerprint: ${fingerprints.index}
+- worktree-fingerprint: ${fingerprints.worktree}
+- untracked-fingerprint: ${fingerprints.untracked}
+- inspected-at: 2026-09-19T00:00:00Z
+- profile-used-as: index-only
+
+## Entry points
+- \`app.txt\` — entry
+## Call chain and data flow
+- \`app.txt\` → \`app.txt\` — flow
+## Similar implementations
+- \`app.txt\` — similar
+prefix ## History usage
+- candidates: none
+- outcome: not_used
+- reason: no candidate
+- plan-impact: none
+- verification-impact: none
+## Tests and environment
+- \`app.txt\` — test
+## Evidence sources
+- \`app.txt\` — evidence
+## External operation boundary
+- environment: local
+- authorization: not-needed
+- minimum-impact: fixture
+- recovery: discard fixture
+- invalidates-on: scope change
+## Impact surface
+- modify: \`app.txt\` — fixture
+## Profile drift
+- none
+`)
+
+  const nodeResult = runRuntime(['context', repo, '--stage', 'plan', '--intent', intent])
+  assert.equal(nodeResult.status, 1)
+  assert.match(nodeResult.stderr, /required_section_missing/)
+
+  const posixEnvironment = runtimeEnvironment(repo)
+  const posixResult = spawnSync('bash', [
+    join(root, 'skills', 'cap-flow', 'scripts', 'cap-context-guard'),
+    '--stage', 'plan', '--intent', intent, repo,
+  ], { encoding: 'utf8', env: posixEnvironment })
+  assert.equal(posixResult.status, 1)
+  assert.match(posixResult.stderr, /History usage/)
+})
+
 test('Node runtime blocks a planned file that was already dirty before the Task', async () => {
   const repo = await fixture()
   await captureRuntimeRoot(repo)

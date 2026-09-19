@@ -508,6 +508,34 @@ class RetireTest(unittest.TestCase):
                 index = json.load(f)
             self.assertEqual(index["knowledgeDocumentId"], "kn_123")
 
+    def test_document_id_is_allowed_only_for_synced_disposition(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            _write_valid_experience(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            result = run_retire(
+                "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "local-only",
+                "--knowledge-document-id", "kn_must_not_persist",
+                "--gate-status", "passed", "--strict",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("only valid for synced", result.stderr)
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root, exist_ok=True)
+            contradictory = _valid_history_index("task_123")
+            contradictory["knowledgeDocumentId"] = "kn_must_not_persist"
+            with open(os.path.join(index_root, "task_123.json"), "w", encoding="utf-8") as f:
+                json.dump(contradictory, f)
+            self.assertIsNone(intake._read_valid_history_index(cap, "task_123"))
+            audit = run_knowledge_audit(cap)
+            self.assertEqual(audit.returncode, 0, audit.stderr)
+            self.assertEqual(json.loads(audit.stdout)["indexes"]["invalid"], 1)
+
     def test_retire_manifest_includes_execution_and_release_artifacts(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap, names=("STATE.md",))
@@ -571,6 +599,11 @@ class RetireTest(unittest.TestCase):
             "authorization": {"title": "Authorization: Bearer dummy-secret-value"},
             "internal-host": {"intentSummary": "connect to db.internal"},
             "account": {"title": "account: local-user"},
+            "raw-jwt": {"title": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJlMTIzNDU2"},
+            "github-token": {"title": "ghp_" + "0123456789abcdefghijklmnopqrstuvwxyz"},
+            "aws-access-key": {"title": "AKIA" + "0123456789ABCDEF"},
+            "api-token": {"title": "sk-proj-0123456789abcdefghijklmnop"},
+            "unc-path": {"intentSummary": r"read \\fileserver\private\config.json"},
         }
         for label, metadata in unsafe_cases.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as cap:
@@ -718,6 +751,34 @@ class RetireTest(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertTrue(json.loads(second.stdout)["idempotent"])
+
+    def test_completed_retire_repairs_missing_or_corrupt_durable_index(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            args = (
+                "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--strict",
+            )
+            first = run_retire(*args)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            index_path = os.path.join(cap, "history", "index", "task_123.json")
+
+            os.remove(index_path)
+            repaired_missing = run_retire(*args)
+            self.assertEqual(repaired_missing.returncode, 0, repaired_missing.stderr)
+            self.assertTrue(json.loads(repaired_missing.stdout)["idempotent"])
+            self.assertIsNotNone(intake._read_valid_history_index(cap, "task_123"))
+
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write('{"schemaVersion": 1, "taskId": "task_other"}\n')
+            repaired_corrupt = run_retire(*args)
+            self.assertEqual(repaired_corrupt.returncode, 0, repaired_corrupt.stderr)
+            self.assertTrue(json.loads(repaired_corrupt.stdout)["idempotent"])
+            self.assertIsNotNone(intake._read_valid_history_index(cap, "task_123"))
 
     def test_retire_recovers_every_transaction_phase_without_duplicate_backflow(self):
         for phase in ("snapshot", "cleanup", "index", "leaf", "backflow"):
@@ -944,6 +1005,23 @@ class RetireTest(unittest.TestCase):
                 json.dump(_valid_history_index("task_bad"), f)
             os.symlink(outside, path)
             self.assertFalse(intake._evolution_entry_is_durable(cap, "- [task:task_bad] symlink"))
+
+    def test_evolution_and_audit_reject_symlinked_history_index_parent(self):
+        with tempfile.TemporaryDirectory() as cap, tempfile.TemporaryDirectory() as outside:
+            outside_history = os.path.join(outside, "history")
+            outside_index = os.path.join(outside_history, "index")
+            os.makedirs(outside_index)
+            with open(os.path.join(outside_index, "task_external.json"), "w", encoding="utf-8") as f:
+                json.dump(_valid_history_index("task_external"), f)
+            os.symlink(outside_history, os.path.join(cap, "history"))
+
+            self.assertFalse(intake._evolution_entry_is_durable(
+                cap, "- [task:task_external] external index must not authorize pruning"))
+            audit = run_knowledge_audit(cap)
+            self.assertEqual(audit.returncode, 0, audit.stderr)
+            result = json.loads(audit.stdout)
+            self.assertEqual(result["indexes"]["count"], 0)
+            self.assertTrue(result["indexes"]["invalidRoot"])
 
     def test_evolution_durability_rejects_unknown_and_sensitive_index_fields(self):
         with tempfile.TemporaryDirectory() as cap:

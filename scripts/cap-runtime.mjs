@@ -64,11 +64,14 @@ export async function inspectBoundary(repoCandidate = '.') {
 }
 
 function section(markdown, heading) {
-  const start = markdown.indexOf(`${heading}\n`)
-  if (start < 0) return ''
-  const body = markdown.slice(start + heading.length + 1)
-  const next = body.search(/^## /m)
-  return next >= 0 ? body.slice(0, next) : body
+  const lines = String(markdown).split('\n')
+  const start = lines.findIndex(line => line === heading)
+  if (start < 0) return null
+  let end = lines.length
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (lines[index].startsWith('## ')) { end = index; break }
+  }
+  return lines.slice(start + 1, end).join('\n')
 }
 
 function hasPath(sectionText = '') {
@@ -83,7 +86,7 @@ export async function inspectTaskContext(repoCandidate = '.', { stage = '', inte
   if (!await exists(contextPath)) fail('cap-context', 'task_context_missing', '缺少 .cap/task-context.md')
   const context = (await readFile(contextPath, 'utf8')).replace(/\r\n/g, '\n')
   const headings = ['## Entry points', '## Call chain and data flow', '## Similar implementations', '## History usage', '## Tests and environment', '## Evidence sources', '## External operation boundary', '## Impact surface', '## Profile drift']
-  for (const heading of headings) if (!context.includes(heading)) fail('cap-context', 'required_section_missing', `缺少必填段：${heading}`)
+  for (const heading of headings) if (section(context, heading) === null) fail('cap-context', 'required_section_missing', `缺少必填段：${heading}`)
   const recorded = {
     intent: field(context, 'intent'), branch: field(context, 'branch'), head: field(context, 'head'),
     index: field(context, 'index-fingerprint'), worktree: field(context, 'worktree-fingerprint'), untracked: field(context, 'untracked-fingerprint'),

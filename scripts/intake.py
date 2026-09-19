@@ -70,6 +70,13 @@ EXPERIENCE_INDEX_FIELDS = {
     "invalidationSignals", "codePaths", "entryPoints", "symbols", "invariants",
     "codeAnchors", "path",
 }
+HISTORY_INDEX_SENSITIVE_PATTERNS = tuple(re.compile(pattern, re.I) for pattern in (
+    r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b",
+    r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b",
+    r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b",
+    r"\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{30,})\b",
+    r"(?:^|[\s(\"'=])\\\\[^\\\s]+\\[^\\\s]+",
+))
 
 
 def _sha256(path):
@@ -285,6 +292,7 @@ def _history_index_text(value, label, *, limit=MAX_HISTORY_INDEX_TEXT):
         or re.search(r"\b(?:account|merchant(?:\s*id)?|customer(?:\s*id)?)\s*[:#=]\s*[a-z0-9_-]{3,}\b", text, re.I)
         or re.search(r"(?:商户号|商户编号|商编|账户号|账号)\s*[:：=#]\s*[a-z0-9_-]{3,}", text, re.I)
         or re.search(r"\b(?:[a-z0-9-]+\.)+(?:internal|local|corp|lan)\b", text, re.I)
+        or any(pattern.search(text) for pattern in HISTORY_INDEX_SENSITIVE_PATTERNS)
     )
     if unsafe:
         raise ValueError(f"history index {label} 包含敏感值、本机绝对路径或内网地址")
@@ -356,6 +364,14 @@ def _validate_history_index_payload(item, task_id):
         bounded = _bounded_experience_index(item["experienceIndex"], task_id)
         if bounded != item["experienceIndex"]:
             raise ValueError("history index experienceIndex 未规范化或超过安全边界")
+    disposition = item.get("knowledgeDisposition")
+    document_id = item.get("knowledgeDocumentId")
+    if document_id and (not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id)):
+        raise ValueError("history index knowledgeDocumentId 非稳定格式")
+    if disposition == "synced" and not document_id:
+        raise ValueError("history index synced 缺少 knowledgeDocumentId")
+    if disposition != "synced" and document_id:
+        raise ValueError("history index knowledgeDocumentId only valid for synced disposition")
 
 
 def _build_history_index(manifest, archive_dir):
@@ -400,14 +416,7 @@ def _build_history_index(manifest, archive_dir):
 
 def _read_valid_history_index(cap_dir, task_id):
     try:
-        segment = _safe_archive_segment(task_id, "task-id")
-        if not STABLE_TASK_ID.fullmatch(segment):
-            return None
-        path = os.path.join(cap_dir, "history", "index", f"{segment}.json")
-        info = os.lstat(path)
-        if os.path.islink(path) or not os.path.isfile(path) or info.st_size <= 0 or info.st_size > MAX_HISTORY_INDEX_BYTES:
-            return None
-        item = _read_json(path)
+        item = _read_history_index_payload(cap_dir, task_id)
         if not isinstance(item, dict) or item.get("schemaVersion") != 1 or item.get("taskId") != task_id:
             return None
         disposition = item.get("knowledgeDisposition")
@@ -416,11 +425,6 @@ def _read_valid_history_index(cap_dir, task_id):
         if item.get("artifactRoot") != f".cap/history/{task_id}":
             return None
         _validate_history_index_payload(item, task_id)
-        document_id = item.get("knowledgeDocumentId")
-        if document_id and (not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id)):
-            return None
-        if disposition == "synced" and not document_id:
-            return None
         if disposition in EXPERIENCE_REQUIRED_DISPOSITIONS:
             experience = item.get("experienceIndex")
             if (not isinstance(experience, dict)
@@ -450,11 +454,8 @@ def _atomic_write_json(path, value):
     _atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
-def _prepare_history_index_path(cap, task_id):
-    """Create/validate the durable index destination without following links."""
-    segment = _safe_archive_segment(task_id, "task-id")
-    if not STABLE_TASK_ID.fullmatch(segment):
-        raise ValueError("history index taskId 非稳定格式")
+def _history_index_root(cap, *, create):
+    """Resolve the index root while rejecting every symlink/non-directory component."""
     cap_info = os.lstat(cap)
     if stat.S_ISLNK(cap_info.st_mode) or not stat.S_ISDIR(cap_info.st_mode):
         raise ValueError(f"history index .cap 必须为真实目录: {cap}")
@@ -465,6 +466,8 @@ def _prepare_history_index_path(cap, task_id):
         try:
             info = os.lstat(candidate)
         except FileNotFoundError:
+            if not create:
+                return None
             os.mkdir(candidate)
             info = os.lstat(candidate)
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
@@ -473,14 +476,40 @@ def _prepare_history_index_path(cap, task_id):
         if os.path.commonpath([canonical_cap, canonical_candidate]) != canonical_cap:
             raise ValueError(f"history index 路径必须位于 .cap 内: {candidate}")
         current = candidate
-    path = os.path.join(current, f"{segment}.json")
+    return current
+
+
+def _history_index_path(cap, task_id, *, create):
+    segment = _safe_archive_segment(task_id, "task-id")
+    if not STABLE_TASK_ID.fullmatch(segment):
+        raise ValueError("history index taskId 非稳定格式")
+    root = _history_index_root(cap, create=create)
+    if root is None:
+        return None
+    canonical_cap = os.path.realpath(cap)
+    path = os.path.join(root, f"{segment}.json")
     if os.path.lexists(path):
         info = os.lstat(path)
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
             raise ValueError(f"history index 目标必须为普通文件或不存在: {path}")
-    if os.path.commonpath([canonical_cap, os.path.realpath(current)]) != canonical_cap:
-        raise ValueError(f"history index 路径必须位于 .cap 内: {current}")
+    if os.path.commonpath([canonical_cap, os.path.realpath(root)]) != canonical_cap:
+        raise ValueError(f"history index 路径必须位于 .cap 内: {root}")
     return path
+
+
+def _prepare_history_index_path(cap, task_id):
+    """Create/validate the durable index destination without following links."""
+    return _history_index_path(cap, task_id, create=True)
+
+
+def _read_history_index_payload(cap, task_id):
+    path = _history_index_path(cap, task_id, create=False)
+    if path is None or not os.path.lexists(path):
+        return None
+    info = os.lstat(path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_HISTORY_INDEX_BYTES:
+        return None
+    return _read_json(path)
 
 
 def _atomic_write_history_index(cap, task_id, value):
@@ -727,6 +756,8 @@ def _has_pending_experience(cap, task_id, delivery_commit):
 
 
 def _validate_knowledge_disposition(cap, task_id, delivery_commit, disposition, document_id, experience_index, strict):
+    if document_id and disposition != "synced":
+        raise ValueError("knowledge document id is only valid for synced disposition")
     if not strict:
         return disposition or "legacy-local"
     if not disposition:
@@ -1041,10 +1072,15 @@ def _tracked_raw_history(cap):
 
 def cmd_knowledge_audit(args):
     """只读报告本地知识投影、同步处置和容量状态。"""
-    index_root = os.path.join(args.cap, "history", "index")
     rows = []
     total_bytes = 0
-    if os.path.isdir(index_root) and not os.path.islink(index_root):
+    invalid_index_root = False
+    try:
+        index_root = _history_index_root(args.cap, create=False)
+    except (OSError, ValueError):
+        index_root = None
+        invalid_index_root = True
+    if index_root is not None:
         for name in sorted(os.listdir(index_root)):
             path = os.path.join(index_root, name)
             if not name.endswith(".json") or os.path.islink(path) or not os.path.isfile(path):
@@ -1100,6 +1136,7 @@ def cmd_knowledge_audit(args):
             "legacyUnknown": dispositions.count("legacy-unknown"),
             "pendingSync": dispositions.count("pending-sync"),
             "invalid": sum(value.startswith("invalid-") for value in dispositions),
+            "invalidRoot": invalid_index_root,
         },
         "evolution": {"entries": len(evolution_entries),
                       "limit": EVOLUTION_WINDOW_LIMIT,
@@ -1344,6 +1381,18 @@ def cmd_retire(args):
             print(f"STATE 缺失但仍存在待清理工件,拒绝自动恢复: {', '.join(remaining)}", file=sys.stderr)
             return 2
     if transaction and transaction.get("phase") == "complete":
+        if history_mode:
+            try:
+                expected_index = _build_history_index(manifest, archive_dir)
+                current_index = _read_history_index_payload(args.cap, expected_task_id)
+                if current_index != expected_index:
+                    index_path = _atomic_write_history_index(args.cap, expected_task_id, expected_index)
+                verified_index = _read_history_index_payload(args.cap, expected_task_id)
+                if verified_index != expected_index:
+                    raise ValueError("completed retire durable history index verification failed")
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                print(f"completed retire history index invalid: {error}", file=sys.stderr)
+                return 2
         print(json.dumps({"archived": archive_dir, "idempotent": True, "recovered": False}, ensure_ascii=False))
         return 0
     recovered = archive_exists
