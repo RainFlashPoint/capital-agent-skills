@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.4
+
+- 经验索引新增受限 `codePaths`、`entryPoints`、`symbols`、`invariants` 投影；历史侦察支持 `--anchor`，并报告经验源 Commit 与当前 HEAD 的关系。
+- `task-context` 新增 History usage 采用证明，POSIX 与 Node/Windows 门禁都会要求候选、采用结果、原因以及对计划和验证的影响。
+- 增加 gu-bei 风格路径/符号召回与历史采用门禁回归，保持远程团队知识库为权威，不新增本地知识搜索系统。
+- 历史索引读取拒绝软链越界，兼容 SHA-256 Git 对象标识，并补齐 camelCase 符号的锚点投影。
+- 修复独立评审发现的退场安全缺口：strict 模式拒绝未迁移的旧 manifest，历史索引在清理活动态前按白名单、脱敏边界与 256 KiB 上限完成验证。
+- EVOLUTION 只把结构、Task、处置与经验 Schema 均有效的索引视为耐久证明；Task 切换以 Git index lock + 内容 CAS 防止并发暂存被覆盖。
+- 历史侦察在真实 SHA-256 仓库中保留 Commit 路径锚点，并拒绝 archive 根软链/普通文件、限制单次目录枚举规模。
+
+## 0.12.3
+
+- 修复 `.cap` 知识生命周期：严格 Retire 必须记录可验证的同步处置，只有脱敏历史索引进入 Git，避免本地经验长期不可见或被误报为已同步。
+- Evolution 改为有耐久索引证明保护的 50 条活动窗口，新增只读 `knowledge-audit` 与 pending/local/needs-harvest 历史侦察。
+- Task 切换阻止未 Retire 的完成态；tracked 活动态迁移改为显式、ignore 覆盖校验和临时 Git index 原子替换。
+
 ## 0.12.2
 
 - Codex 的 Capital Agent MCP 从强制启动迁移为可选启动，平台暂时不可达时不再阻止整个会话和普通对话；安装与升级幂等迁移历史 `required=true`。

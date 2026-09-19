@@ -162,6 +162,12 @@ test('Node runtime verifies task context fingerprints and detects drift', async 
 - \`app.txt\` → \`app.txt\` — flow
 ## Similar implementations
 - \`app.txt\` — similar
+## History usage
+- candidates: none
+- outcome: not_used
+- reason: no matching historical candidate
+- plan-impact: none
+- verification-impact: none
 ## Tests and environment
 - \`app.txt\` — test
 ## Evidence sources
@@ -213,6 +219,12 @@ test('Node runtime blocks a planned file that was already dirty before the Task'
 - \`app.txt\` → \`app.txt\` — flow
 ## Similar implementations
 - \`app.txt\` — similar
+## History usage
+- candidates: none
+- outcome: not_used
+- reason: no matching historical candidate
+- plan-impact: none
+- verification-impact: none
 ## Tests and environment
 - \`app.txt\` — test
 ## Evidence sources

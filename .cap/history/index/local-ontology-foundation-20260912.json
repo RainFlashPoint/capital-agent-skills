@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "taskId": "local-ontology-foundation-20260912",
+  "parentTaskId": "",
+  "title": "Ontology 本地语义底座",
+  "intentSummary": "完成多机构知识隔离、来源绑定、冲突裁决、证据权限分离、版本迁移和 Agent 上下文投影；本地 Gate 通过，不代表 Server Gate。",
+  "keywords": [
+    "ontology",
+    "scope",
+    "receipt",
+    "constraint",
+    "agent-context"
+  ],
+  "branch": "codex/ontology-foundation",
+  "baseCommit": "c747288de0166e6da254d8042628ae68ef499700",
+  "deliveryCommit": "df46f05873212f6a6b939122f8bcd24629b81281",
+  "completedAt": "2026-09-12",
+  "status": "completed",
+  "artifactRoot": ".cap/history/local-ontology-foundation-20260912",
+  "experienceIndex": {
+    "schema": "cap-experience-index/v1",
+    "title": "多作用域知识必须与权限证据分离并以缺证据阻断",
+    "sourceCommit": "df46f05873212f6a6b939122f8bcd24629b81281",
+    "retrievalCues": [
+      "当多个渠道/机构的同名业务经验进入同一 Agent 上下文时。",
+      "Ontology、tenant、provider、作用域、冲突、receipt、版本漂移、硬约束。",
+      "更具体的知识被默认优先采用，或开发完成声明被当作验证完成。"
+    ],
+    "problemPatterns": [
+      "原型只返回硬编码阶段与样本字符串，无法证明隔离、当前版本和证据真实性。",
+      "把方法说明、业务知识、实例游标和授权证明混成同一种文本事实。"
+    ],
+    "decisionRules": [
+      "当导入业务知识时，必须先绑定 tenant/project/provider/product/contractVersion/environment，因为业务渠道不等于数据所有者。",
+      "当知识被标记为约束时，必须要求当前完整身份及记录 hash 对应的独立符合性 receipt，禁止把没有冲突解释为已满足约束。"
+    ],
+    "invalidationSignals": [
+      "Schema、阶段路径、权限来源、receipt 身份维度或知识适用范围改变。"
+    ],
+    "path": ".cap/history/local-ontology-foundation-20260912/experience.md"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "taskId": "task_fc4d835d-81aa-44dd-a2e7-ffc219b3e31c",
+  "parentTaskId": "",
+  "title": "锁定 Skills 会话根目录",
+  "intentSummary": "阻止 sibling worktree 遗留 .cap 将 Agent 导向错误目录",
+  "keywords": [
+    "worktree",
+    "session-root",
+    "repository-boundary"
+  ],
+  "branch": "main",
+  "baseCommit": "1eff1300672007d57be7f96afefbc38298af0f0b",
+  "deliveryCommit": "df78183b0d6059fbfe3c276787fce337f9d3d144",
+  "completedAt": "2026-08-25T02:55:28Z",
+  "status": "completed",
+  "artifactRoot": ".cap/history/task_fc4d835d-81aa-44dd-a2e7-ffc219b3e31c",
+  "experienceIndex": {
+    "schema": "cap-experience-index/v1",
+    "title": "用宿主会话根阻止自洽遗留状态把 Agent 导向 sibling worktree",
+    "sourceCommit": "df78183b0d6059fbfe3c276787fce337f9d3d144",
+    "retrievalCues": [
+      "当一个 Agent 会话可访问同一项目的多个目录或 sibling worktree，且历史 `.cap` 可能留有绝对 worktree 路径时。",
+      "sibling worktree、遗留 STATE、错误目录提交、session root、canonical Git root。",
+      "用户打开 A 目录，但 Agent 被 B 目录自洽的 `.cap/STATE.md` 引导到 B 读取、修改或提交。"
+    ],
+    "problemPatterns": [
+      "仓库内 branch/worktree 守卫只能证明当前目标与当前 STATE 自洽，无法证明当前目标就是用户为本会话打开的仓库。",
+      "目标仓身份在读取 `.cap` 之前没有独立于仓库元数据的更高优先级事实源。"
+    ],
+    "decisionRules": [
+      "当宿主提供稳定会话 ID 时，必须在第一次 `cap-status` 读取目标仓状态前锁定 canonical Git root，并禁止任何 `.cap` 绝对路径反向选择仓库，因为仓库内证据不能自证它是会话启动根。"
+    ],
+    "invalidationSignals": [
+      "宿主更改会话 ID 环境变量语义、Git Hook 不再继承宿主环境，或客户端引入原生可信 workspace identity。"
+    ],
+    "path": ".cap/history/task_fc4d835d-81aa-44dd-a2e7-ffc219b3e31c/experience.md"
+  }
+}

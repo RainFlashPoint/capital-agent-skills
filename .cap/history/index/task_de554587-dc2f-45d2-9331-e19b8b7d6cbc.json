@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "taskId": "task_de554587-dc2f-45d2-9331-e19b8b7d6cbc",
+  "parentTaskId": "",
+  "title": "收紧经验复用证明链与本地历史侦察",
+  "intentSummary": "建立知识快照、真实注入、精确采用与最终 Gate 的可核验经验闭环，并补齐安全的本地历史侦察",
+  "keywords": [
+    "经验闭环",
+    "知识注入",
+    "历史侦察",
+    "归因"
+  ],
+  "branch": "codex/experience-proof-chain",
+  "baseCommit": "bf724b2af053bafd3680438d1646249df99e1632",
+  "deliveryCommit": "422b3c18def0f86d343f3d243b38ef6b7d30c983",
+  "completedAt": "2026-08-19T13:08:51Z",
+  "status": "completed",
+  "artifactRoot": ".cap/history/task_de554587-dc2f-45d2-9331-e19b8b7d6cbc"
+}

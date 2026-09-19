@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "taskId": "local-trusted-execution-20260912",
+  "parentTaskId": "",
+  "title": "Trusted Execution Protocol",
+  "intentSummary": "建立 ActionEnvelope、Trusted Executor、EvidenceBundle 与 Server Gate 的本地可验证协议；229 项回归和独立复核通过。",
+  "keywords": [
+    "ActionEnvelope",
+    "TrustedExecutor",
+    "EvidenceBundle",
+    "ServerGate",
+    "CI/CD"
+  ],
+  "branch": "codex/ontology-foundation",
+  "baseCommit": "df46f05873212f6a6b939122f8bcd24629b81281",
+  "deliveryCommit": "60c30f5787adf260c74f4aff4adfa44e95f3b11e",
+  "completedAt": "2026-09-12",
+  "status": "completed",
+  "artifactRoot": ".cap/history/local-trusted-execution-20260912"
+}

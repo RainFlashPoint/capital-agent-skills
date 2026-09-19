@@ -39,7 +39,7 @@ L1/L2 且无风险触发时，只加载上述必要 reference 与当前阶段 Sk
 ## 3. 状态分流
 
 - `mode=session_root_blocked`：停止读取错误仓并回到锁定仓；跨项目按 `cross-project-handoff.md` 审阅 handoff 后运行 `cap-session-root.mjs switch`，同项目 worktree 使用新会话。
-- `mode=boundary_blocked`：停止需求、计划、编码和测试；只用 `scripts/cap-task-state-switch.mjs` 保存旧活动态并建立本次 Task，然后重跑状态。
+- `mode=boundary_blocked`：停止研发；`done` 先严格 Retire，未完成态才可切换。tracked `.cap` 默认阻断，用户授权后方可用 `cap-task-state-switch.mjs --migrate-tracked-active` 原子迁移。
 - `mode=restart_required`：团队配置存在但会话无 MCP。可选启动只保证能聊天；每个新研发任务仍检查 MCP 并尝试团队握手。让用户选择重启，或明确“本次本地继续”后以 `--allow-local-once` 重跑；禁止静默降级。
 - `mode=local_explicit` / `mode=local_fallback_explicit`：只做本地证据，不写平台 Task/Experience/Delivery/Gate/Outbox，只能称本地 PASS。后者绑定运行会话 + 分支 + Task，新会话或 MCP 加载后失效。
 - 平台已连接或待 MCP 确认：以 Server canonical Task 为权威；直接 HTTP 探测失败但 MCP 已加载时继续用 MCP 确认，不能直接宣称平台断网。
@@ -78,6 +78,6 @@ MCP 已加载但远端暂时失败时，明确说明离线原因、影响与恢�
 
 提交前至少执行：目标测试、`bash scripts/validate-skills`（若本仓适用）、`git diff --check`，并核对改动文件未越过 task-context 范围。行为变更同步 CHANGELOG 与版本元数据。
 
-团队模式的真实改动按 `../harvest-experience/SKILL.md` 只回写意图、文件路径、仓库与验证摘要，不传代码和秘密；本地模式生成并校验 `.cap/experience.md`。发布、归档与 Retire 细节按当前阶段 Skill 执行。
+团队改动按 `../harvest-experience/SKILL.md` 只回写结构化摘要与路径，不传代码和秘密；本地模式生成并校验 `.cap/experience.md`。严格 Retire 必须记录可验证知识处置，完成态不得直接移入 stale；细节按当前阶段 Skill 执行。
 
 向用户只声称证据实际证明的结果：本地证据不等于 Server Gate，提交不等于已推送，分支推送不等于已合并或已发布。

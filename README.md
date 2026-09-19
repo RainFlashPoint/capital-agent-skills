@@ -4,7 +4,19 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.12.2，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.12.4，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.12.4 更新
+
+- 经验索引保留代码路径、入口、符号和不变量的受限投影；下一次任务可按当前代码锚点召回历史经验，不再只能按泛标题关键词匹配。
+- `task-context` 强制记录历史候选是否采用、为什么采用或拒绝，以及它如何改变计划和验证；POSIX 与 Node/Windows 入口保持一致。
+- 远程平台仍是团队知识权威，本地只维护脱敏历史投影，不新增传统知识搜索系统。
+
+## v0.12.3 更新
+
+- 严格 Retire 增加可验证的知识处置：中心同步、待补报、本地保留或明确无可复用经验；脱敏历史索引进 Git，原始快照保持本地忽略。
+- Evolution 改为有耐久证明保护的 50 条活动窗口，新增只读 `knowledge-audit`，历史侦察会暴露 pending/local/needs-harvest 状态。
+- Task 切换阻止未退场的完成态；tracked `.cap` 活动态迁移必须显式确认并通过临时 Git index 原子完成。
 
 ## v0.12.2 更新
 

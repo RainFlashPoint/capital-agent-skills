@@ -5,7 +5,7 @@
         `<target-repo>/.cap/STATE.md`，不在 skill 里。
   生命周期：短命。每个 feature/topic 一份；feature 完成（stage=done）后由 cap-flow 的退场流程
         （intake.md 的 Retire op）退场——归档到 .cap/archive/<date>-<feature>/、耐久决策回流
-        PROFILE.md ## Evolution log（无 PROFILE 兜底 .cap/EVOLUTION.md）、（若源自需求树）标源叶
+        PROFILE.md 的指针与 `.cap/EVOLUTION.md` 50 条活动窗口、（若源自需求树）标源叶
         shipped、清空本文件。由 cap-flow 在下次 /cap 检测到 stage==done 时触发（见 cap-flow §2 退场前置 / §4 路由）。
   与 PROFILE.md 的区别：
     - PROFILE.md = 项目级、长命、所有 feature 共享（cap-understand 建一次）。

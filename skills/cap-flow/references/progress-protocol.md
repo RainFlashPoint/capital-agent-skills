@@ -18,7 +18,7 @@ Codex 的 Capital Agent MCP 使用可选启动配置：平台暂时不可达时�
 
 权限与风险拒绝必须使用真实错误归因。`create_or_attach_task` 因 `rejected due to unacceptable risk` 或敏感元数据策略被拒时属于特殊的可恢复入口：用 `scripts/cap-task-request.mjs` 将具体商户、公司、账号和凭据值替换为“仅本地配置”，保留业务意图与验证命令，串行重试一次；成功后继续，第二次失败则 `task_creation_blocked`，禁止降级后编码。其它 `approval required`、`not authorized` 或外部动作风险拒绝仍报告“需要用户授权该数据发送/外部动作”，不得猜测成工具超时、宿主卡顿或网络异常。多个外部写操作必须串行；首条被拒后立即停止同批无关调用。
 
-`cap-status.mode=boundary_blocked` 是高于阶段路由的硬门禁。STATE 的 branch/worktree 与当前 Git 边界不一致时，不读取旧 Task 推断下一动作、不补报旧 Delivery、不进入任何研发阶段；先用 `scripts/cap-task-state-switch.mjs` 原子移动旧活动态到 `.cap/local-state/stale/<old-task>/...`，再为已经创建成功的新 Task 初始化 STATE。同一分支上显式开始新 Task 时，切换调用还必须传 STATE 中的精确旧 Task ID，禁止无条件覆盖。移动或初始化任一步失败必须回滚并保持阻断，业务源码、暂存区和现有 Commit 不得被修改。
+`cap-status.mode=boundary_blocked` 是高于阶段路由的硬门禁。STATE 的 branch/worktree 与当前 Git 边界不一致时，不读取旧 Task 推断下一动作、不补报旧 Delivery、不进入任何研发阶段；先用 `scripts/cap-task-state-switch.mjs` 原子移动旧活动态到 `.cap/local-state/stale/<old-task>/...`，再为已经创建成功的新 Task 初始化 STATE。同一分支上显式开始新 Task 时，切换调用还必须传 STATE 中的精确旧 Task ID，禁止无条件覆盖。`stage=done` 必须先完成严格 Retire，切换脚本直接返回 `completed_task_requires_retire`。若活动 `.cap` 已被 Git 跟踪，默认拒绝；只有显式 `--migrate-tracked-active` 且所有路径已被 ignore 覆盖时，才用临时 Git index 缓存移除；替换真实 index 前必须持有 index lock 并以内容 CAS 检查期间漂移，失败保持真实索引、文件和现有 Commit 不变。移动或初始化任一步失败必须回滚并保持阻断，业务源码、暂存区和现有 Commit 不得被修改。
 
 下一动作不是提示语。若 `status=in-progress` 且没有人工门禁，当前会话必须立即路由并执行该动作；只有 `gated/blocked`、不可逆操作或用户明确要求暂停时才能停下。Artifact 登记和 STATE 更新只是证据，不构成阶段完成。
 

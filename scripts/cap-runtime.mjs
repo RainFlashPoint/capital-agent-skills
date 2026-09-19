@@ -82,7 +82,7 @@ export async function inspectTaskContext(repoCandidate = '.', { stage = '', inte
   const contextPath = join(repo, '.cap', 'task-context.md')
   if (!await exists(contextPath)) fail('cap-context', 'task_context_missing', '缺少 .cap/task-context.md')
   const context = (await readFile(contextPath, 'utf8')).replace(/\r\n/g, '\n')
-  const headings = ['## Entry points', '## Call chain and data flow', '## Similar implementations', '## Tests and environment', '## Evidence sources', '## External operation boundary', '## Impact surface', '## Profile drift']
+  const headings = ['## Entry points', '## Call chain and data flow', '## Similar implementations', '## History usage', '## Tests and environment', '## Evidence sources', '## External operation boundary', '## Impact surface', '## Profile drift']
   for (const heading of headings) if (!context.includes(heading)) fail('cap-context', 'required_section_missing', `缺少必填段：${heading}`)
   const recorded = {
     intent: field(context, 'intent'), branch: field(context, 'branch'), head: field(context, 'head'),
@@ -102,6 +102,21 @@ export async function inspectTaskContext(repoCandidate = '.', { stage = '', inte
   if (intent && recorded.intent !== intent) fail('cap-context', 'intent_changed', `记录=${recorded.intent}`)
   for (const heading of ['## Entry points', '## Tests and environment', '## Evidence sources']) {
     if (!hasPath(section(context, heading))) fail('cap-context', 'path_evidence_missing', `${heading} 没有真实路径`)
+  }
+  const history = section(context, '## History usage')
+  const historyCandidates = field(history, 'candidates')
+  const historyOutcome = field(history, 'outcome')
+  const historyReason = field(history, 'reason')
+  const historyPlan = field(history, 'plan-impact')
+  const historyVerify = field(history, 'verification-impact')
+  if (!historyCandidates || !historyOutcome || !historyReason || !historyPlan || !historyVerify) {
+    fail('cap-context', 'history_usage_incomplete', 'History usage 缺少 candidates/outcome/reason/plan-impact/verification-impact')
+  }
+  if (!['direct_adopted', 'modified_adopted', 'not_used', 'rejected'].includes(historyOutcome)) {
+    fail('cap-context', 'history_usage_outcome_invalid', `History usage outcome 非法：${historyOutcome}`)
+  }
+  if (historyCandidates === 'none' && historyOutcome !== 'not_used') {
+    fail('cap-context', 'history_usage_without_candidate', 'History usage candidates=none 时 outcome 必须为 not_used')
   }
   for (const key of ['environment', 'authorization', 'minimum-impact', 'recovery', 'invalidates-on']) {
     if (!field(context, key)) fail('cap-context', 'external_boundary_incomplete', `External operation boundary 缺少 ${key}`)

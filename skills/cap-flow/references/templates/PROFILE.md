@@ -130,7 +130,7 @@ test-commands: { unit: "<例如 pytest>", coverage: "<例如 pytest --cov=<pkg> 
 
 ## Evolution log
 
-> 演进史（append-only，每特性退场由 cap-flow 的退场流程（intake.md Retire op）追加）见**同目录 `EVOLUTION.md`**。
-> 本文件只留此指针——Evolution log 是无界流水，独立成文件，避免撑爆每会话整篇加载的 PROFILE
-> （PROFILE 六节是有界快照、EVOLUTION.md 是无界流水，本性不同故分文件）。
+> 近期演进史（每特性退场由 cap-flow 的退场流程追加）见**同目录 `EVOLUTION.md`**。
+> 本文件只留此指针——Evolution log 是最多 50 条的活动窗口；旧条目只有在 Task 索引或中心知识 ID
+> 提供耐久证明后才出窗，避免撑爆每会话整篇加载的 PROFILE，也避免经验静默丢失。
 > 与 `Known risks` 区别：Known risks = onboard 测绘的静态风险快照；EVOLUTION.md = 已完成特性沉淀的动态决策/教训。

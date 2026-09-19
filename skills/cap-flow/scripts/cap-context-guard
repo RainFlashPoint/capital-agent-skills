@@ -32,10 +32,21 @@ section_has_path() {
     END { exit found ? 0 : 1 }
   ' "$context"
 }
+history_field() {
+  awk -v key="$1" '
+    $0 == "## History usage" { active=1; next }
+    active && /^## / { exit }
+    active && $0 ~ "^- " key ":[[:space:]]*" {
+      sub("^- " key ":[[:space:]]*", "", $0)
+      print $0
+      exit
+    }
+  ' "$context"
+}
 
 [ -f "$context" ] || fail "缺少 .cap/task-context.md；先按 task-reconnaissance.md 调查当前代码"
 
-for heading in "## Entry points" "## Call chain and data flow" "## Similar implementations" "## Tests and environment" "## Evidence sources" "## External operation boundary" "## Impact surface" "## Profile drift"; do
+for heading in "## Entry points" "## Call chain and data flow" "## Similar implementations" "## History usage" "## Tests and environment" "## Evidence sources" "## External operation boundary" "## Impact surface" "## Profile drift"; do
   grep -qF "$heading" "$context" || fail "task-context 缺少必填段：$heading"
 done
 
@@ -68,6 +79,23 @@ fi
 section_has_path "## Entry points" || fail "Entry points 没有真实代码路径"
 section_has_path "## Tests and environment" || fail "Tests and environment 没有测试或配置路径"
 section_has_path "## Evidence sources" || fail "Evidence sources 没有仓库路径或知识引用"
+history_candidates="$(history_field candidates)"
+history_outcome="$(history_field outcome)"
+history_reason="$(history_field reason)"
+history_plan="$(history_field plan-impact)"
+history_verify="$(history_field verification-impact)"
+[ -n "$history_candidates" ] || fail "History usage 缺少 candidates"
+[ -n "$history_outcome" ] || fail "History usage 缺少 outcome"
+[ -n "$history_reason" ] || fail "History usage 缺少 reason"
+[ -n "$history_plan" ] || fail "History usage 缺少 plan-impact"
+[ -n "$history_verify" ] || fail "History usage 缺少 verification-impact"
+case "$history_outcome" in
+  direct_adopted|modified_adopted|not_used|rejected) ;;
+  *) fail "History usage outcome 非法：$history_outcome" ;;
+esac
+if [ "$history_candidates" = "none" ] && [ "$history_outcome" != "not_used" ]; then
+  fail "History usage candidates=none 时 outcome 必须为 not_used"
+fi
 for key in environment authorization minimum-impact recovery invalidates-on; do
   grep -qE "^- ${key}:[[:space:]]*[^[:space:]]" "$context" || fail "External operation boundary 缺少 ${key}"
 done

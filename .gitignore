@@ -1,6 +1,10 @@
 # .cap/ 二分:在飞工作态本地忽略;已完成/已蒸馏产物纳入 git 跨机器持久
 .cap/*
 !.cap/archive/
+!.cap/history/
+.cap/history/*
+!.cap/history/index/
+!.cap/history/index/*.json
 !.cap/EVOLUTION.md
 !.cap/PROFILE.md
 .DS_Store

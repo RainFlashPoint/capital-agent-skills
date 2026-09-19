@@ -56,9 +56,9 @@ Server 的 canonical projection 是状态单一事实源：Task 只由当前候�
 
 只传 `task_id`、`kind`、仓库相对 `path`、文件 SHA-256 `hash`、当前 `git_ref`、`stage`、`status` 和一句 `summary`。禁止上传正文、本机绝对路径、平台地址或凭据。同一路径同一 hash 不重复上报；工具不存在、无 task-id 或调用失败时静默降级。
 
-Task 严格退场生成 `.cap/history/<task-id>/manifest.json` 后，再登记一条历史 Artifact 元数据：
+Task 严格退场生成 `.cap/history/<task-id>/manifest.json` 与脱敏 `.cap/history/index/<task-id>.json` 后，再登记一条历史 Artifact 元数据：
 `lifecycle=history`、`artifact_root=.cap/history/<task-id>`、`parent_task_id`、`snapshot_hash`、`completed_at`。
-历史 Artifact 只登记路径、快照哈希与谱系，不上传 manifest 或 Markdown 正文。活动阶段继续省略这些字段，Server
+历史 Artifact 只登记路径、快照哈希与谱系，不上传 manifest 或 Markdown 正文；只有 index JSON 可跨机器纳入 Git。活动阶段继续省略这些字段，Server
 按 `lifecycle=active` 兼容处理。平台不可用时写入 `artifact.record` Outbox，不能把本地快照误报成平台已登记。
 
 ## 交付

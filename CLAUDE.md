@@ -43,7 +43,7 @@
 ## `.cap/` track 策略(二分)
 `.cap/` 按生命周期二分,gitignore 用 `.cap/*` + `!` 反忽略实现(见 `.gitignore`):
 - **在飞工作态**(顶层 `spec.md`/`plan.md`/`experience.md`/`STATE.md`/`verify/`/`review/`)→ **本地忽略**(churn 不污染 git 历史)。
-- **已完成 / 已蒸馏**(`archive/<date>-<feat>/` 退场归档 + `EVOLUTION.md` 演进流水 + `PROFILE.md` 项目记忆)→ **纳入 git** 跨机器/团队持久。退场(Retire op)是把前者转后者的那道闸。
-- **Evolution log 独立成 `EVOLUTION.md`**(唯一正屋),PROFILE 仅留指针——无界流水不塞进每会话整篇加载的有界 PROFILE。
+- **已完成 / 已蒸馏**(`archive/<date>-<feat>/` 兼容归档 + `history/index/*.json` 脱敏 Task 索引 + `EVOLUTION.md` 活动窗口 + `PROFILE.md` 项目记忆)→ **纳入 git** 跨机器/团队持久；`history/<task-id>/` 原始快照继续忽略。退场(Retire op)是把前者转后者的那道闸。
+- **Evolution log 独立成 `EVOLUTION.md`**(唯一正屋),PROFILE 仅留指针；它是 50 条活动窗口，旧条目只有在 Task 索引或中心知识 ID 提供耐久证明后才出窗。
 - ⚠ **隐私**:track 前确认 archive/EVOLUTION 无密钥——Decisions log 可能含敏感配置位置 / 内网地址 / token。有则先脱敏再入仓。
 - 这是本技能族自身采用的**推荐约定**,各项目可自选 track 粒度。

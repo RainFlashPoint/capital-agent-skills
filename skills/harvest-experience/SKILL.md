@@ -36,7 +36,7 @@ allowed-tools:
 
 当本次编码任务完成验证并形成最终 Commit 后，先按 [`references/experience-contract.md`](references/experience-contract.md) 编写 `.cap/experience.md`。不要只摘录调用链或 diff 摘要；主动从 `spec / task-context / diff / verify / review` 中提炼：召回线索、问题根因、失败做法、条件化决策、可执行行动、实现锚点、不变量、验证配方、禁用场景和失效信号。原始材料只帮助写作，`experience.md` 才是唯一经验真值。
 
-这一步不是要求越写越长，而是要求**每一段都能改变下一次 Agent 的定位、决策或验收动作**。完整调用链继续留在 `task-context.md`；`experience.md` 只保留最小实现入口、关键文件/符号和不可破坏的不变量。
+这一步不是要求越写越长，而是要求**每一段都能改变下一次 Agent 的定位、决策或验收动作**。完整调用链继续留在 `task-context.md`；`experience.md` 只保留最小实现入口、关键文件/符号和不可破坏的不变量。Retire 生成的脱敏索引会把“改动点”投影为 `codePaths`，把入口和符号投影为 `entryPoints` / `symbols`，把不变量投影为 `invariants`；这些是代码面召回字段，不是新的知识正文。
 
 随后收集改动文件并生成沉淀载荷：
 
@@ -51,7 +51,7 @@ git diff --name-only HEAD    # 未提交改动
 - 返回 `ready=true`：把 `payload` 原样作为 MCP `record_experience` 的权威输入；Server 仍按同 Task、同 Commit 的可信 Gate 决定 candidate 或 validated，客户端不得自行发布。
 - 返回 `ready=false`：报告 `missing` 所列的原稿或证据缺口并补齐真实 `.cap` 产物。无法补齐时不调用旧式 LLM fallback，不得宣称已经形成可复用知识；纯问答或没有真实代码改动仍直接跳过沉淀。
 
-显式本地模式到此为止：保留通过质量门的 `.cap/experience.md`，供 Retire 归档和后续本地 Agent 读取，但不调用 MCP、不写 Outbox。团队模式才继续执行下方 `record_experience`。
+显式本地模式到此为止：保留通过质量门的 `.cap/experience.md`，供 Retire 归档和后续本地 Agent 读取，但不调用 MCP、不写 Outbox。严格 Retire 仍必须选择 `local-only`（本地索引）或 `pending-sync`（同 Task Outbox 事件），不能因离线而静默丢掉处置结果。团队模式才继续执行下方 `record_experience`。
 
 只有生成器 `ready=true` 后才调用 MCP 工具 `record_experience`：
 
@@ -105,7 +105,7 @@ git diff --name-only HEAD    # 未提交改动
 - 记录 `session_finished`，data 放 verify/review 的结构化结论，不放代码正文。
 
 若 MCP 提供 `record_task_artifact`，按 `references/platform-task-loop.md` 补登记本轮 `.cap` 产物元数据。只传相对路径、hash、Git ref 和结构化摘要；不传文件正文。已经通过入口握手后，无 task-id、旧 MCP 缺少该单个接口或调用失败时按离线规则降级；完整 MCP 工具集未加载时必须先完成 `restart_required` 选择，本次本地模式不会走到这里。
-Task 完成并严格退场后，额外登记 `.cap/history/<task-id>` 的历史快照元数据与父 Task 引用；历史正文仍只留在 Git 仓库，不上传平台。
+Task 完成并严格退场后，额外登记 `.cap/history/index/<task-id>.json` 的脱敏历史索引与父 Task 引用；原始历史正文留在本地忽略快照，不上传平台。索引中的 `knowledgeDisposition` 必须诚实反映 `synced`、`pending-sync`、`local-only`、`no-reusable-experience` 或旧数据的 `legacy-unknown`。经验索引至少保留 `codePaths`、`entryPoints`、`symbols` 和 `invariants` 的限长投影；缺少这些字段的旧索引仍可兼容读取，但不能声称已经完成代码锚点复用。
 
 若已有有效 Git Commit 且 MCP 提供 `record_task_delivery`，按 `references/platform-task-loop.md` 自动回写 Commit、改动文件路径、verify/review。HEAD 已推送且门禁满足时，再调用 `request_docker_verification`；不得上传未提交工作区或代码正文。
 

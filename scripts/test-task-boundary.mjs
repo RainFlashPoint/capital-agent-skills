@@ -96,10 +96,107 @@ test('tracked active cap state blocks before any file is moved into ignored loca
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), '')
 })
 
+test('explicit tracked active migration preserves unrelated staged entries and records harvest debt', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/verify'), { recursive: true })
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/verify/old.md'), 'tracked evidence\n')
+  execFileSync('git', ['add', '-f', '.cap/STATE.md', '.cap/verify/old.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-qm', 'track legacy cap state'], { cwd: repo })
+  await writeFile(join(repo, 'README.md'), 'fixture\nstaged unrelated change\n')
+  execFileSync('git', ['add', 'README.md'], { cwd: repo })
+  const stagedBefore = execFileSync('git', ['diff', '--cached', '--', 'README.md'], { cwd: repo, encoding: 'utf8' })
+
+  const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new', migrateTrackedActive: true })
+  const stagedAfter = execFileSync('git', ['diff', '--cached', '--', 'README.md'], { cwd: repo, encoding: 'utf8' })
+  const trackedAfter = execFileSync('git', ['ls-files', '--', '.cap/STATE.md', '.cap/verify/old.md'], { cwd: repo, encoding: 'utf8' })
+  const manifest = JSON.parse(await readFile(join(result.snapshotRoot, 'manifest.json'), 'utf8'))
+  assert.equal(stagedAfter, stagedBefore)
+  assert.equal(trackedAfter, '')
+  assert.equal(manifest.knowledgeDisposition, 'needs-harvest')
+  assert.deepEqual(result.migratedTrackedActive, ['.cap/STATE.md', '.cap/verify/old.md'])
+})
+
+test('tracked active migration requires ignore coverage and leaves index and files unchanged on rejection', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  execFileSync('git', ['add', '.cap/STATE.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-qm', 'track legacy cap state'], { cwd: repo })
+  const indexBefore = execFileSync('git', ['ls-files', '-s'], { cwd: repo, encoding: 'utf8' })
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new', migrateTrackedActive: true }),
+    /tracked_cap_ignore_policy_missing/,
+  )
+  assert.equal(execFileSync('git', ['ls-files', '-s'], { cwd: repo, encoding: 'utf8' }), indexBefore)
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+})
+
+test('tracked active migration detects concurrent Git index changes and preserves both states', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  execFileSync('git', ['add', '-f', '.cap/STATE.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-qm', 'track legacy cap state'], { cwd: repo })
+  await writeFile(join(repo, 'CONCURRENT.md'), 'concurrent staged change\n')
+
+  await assert.rejects(
+    switchTaskState({
+      repoRoot: repo,
+      taskId: 'task_new',
+      sessionId: 'session_new',
+      migrateTrackedActive: true,
+      beforeTrackedIndexReplace: async () => execFileSync('git', ['add', 'CONCURRENT.md'], { cwd: repo }),
+    }),
+    /tracked_cap_index_changed/,
+  )
+
+  assert.match(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: repo, encoding: 'utf8' }), /CONCURRENT\.md/)
+  assert.match(execFileSync('git', ['ls-files', '--', '.cap/STATE.md'], { cwd: repo, encoding: 'utf8' }), /.cap\/STATE\.md/)
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+})
+
+test('tracked active migration rolls files back when index replacement fails', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  execFileSync('git', ['add', '-f', '.cap/STATE.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-qm', 'track legacy cap state'], { cwd: repo })
+  const indexBefore = execFileSync('git', ['ls-files', '-s'], { cwd: repo, encoding: 'utf8' })
+
+  await assert.rejects(
+    switchTaskState({
+      repoRoot: repo,
+      taskId: 'task_new',
+      sessionId: 'session_new',
+      migrateTrackedActive: true,
+      replaceTrackedIndex: async () => { throw new Error('injected index replacement failure') },
+    }),
+    /injected index replacement failure/,
+  )
+
+  assert.equal(execFileSync('git', ['ls-files', '-s'], { cwd: repo, encoding: 'utf8' }), indexBefore)
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+})
+
+test('completed Task requires strict Retire before switch', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_old\nbranch: feature/new-task\nworktree: ${repo}\nstage: done\n`)
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new', expectedOldTaskId: 'task_old' }),
+    /completed_task_requires_retire/,
+  )
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+})
+
 test('Task switch archives old Outbox metadata and leaves only the new Task active', async () => {
   const repo = await fixture()
   await mkdir(join(repo, '.cap'), { recursive: true })
-  await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_old\nsession-id: session_old\nbranch: feature/new-task\nworktree: ${repo}\nstage: done\nstatus: in-progress\n`)
+  await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_old\nsession-id: session_old\nbranch: feature/new-task\nworktree: ${repo}\nstage: test\nstatus: in-progress\n`)
   await writeFile(join(repo, '.cap/outbox.jsonl'), [
     JSON.stringify({ id: 'evt_old', idempotencyKey: 'old:1', type: 'skill.event', localTaskRef: 'task_old', dependsOn: [], payload: {}, createdAt: '2026-08-18T00:00:00.000Z' }),
     JSON.stringify({ id: 'evt_new', idempotencyKey: 'new:1', type: 'skill.event', localTaskRef: 'task_new', dependsOn: [], payload: {}, createdAt: '2026-08-18T00:00:01.000Z' }),

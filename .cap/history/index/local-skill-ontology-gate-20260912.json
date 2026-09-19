@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "taskId": "local-skill-ontology-gate-20260912",
+  "parentTaskId": "",
+  "title": "Connect Skill Ontology Contracts and Local Gates",
+  "intentSummary": "为核心 Skills 建立 Ontology 动作契约，并让本地 cap-status 消费当前 Commit 的 Gate 证据推进阶段。",
+  "keywords": [
+    "skills",
+    "ontology",
+    "execution-required",
+    "cap-status",
+    "gate"
+  ],
+  "branch": "codex/ontology-foundation",
+  "baseCommit": "89c285fc009610b6ae5007342b0ef7331e8357ec",
+  "deliveryCommit": "df477b69a3c6ea06054ec4e0a9c472a07fbccb23",
+  "completedAt": "2026-09-12",
+  "status": "completed",
+  "artifactRoot": ".cap/history/local-skill-ontology-gate-20260912"
+}

@@ -120,6 +120,12 @@ for fingerprint in index-fingerprint worktree-fingerprint untracked-fingerprint;
 done
 grep -q 'canonical Git root' "$REF/task-reconnaissance.md" || err "Context Guard 未声明从 canonical Git root 执行"
 grep -q 'retirement.json' "$REF/intake.md" || err "Retire 未声明可恢复 phase 事务"
+grep -q 'knowledge-disposition' "$REF/intake.md" || err "Retire 未声明知识处置门禁"
+grep -q 'knowledge-audit' "$REF/intake.md" || err "Retire 未提供知识只读审计"
+grep -q '50 条' "$REF/intake.md" || err "Evolution 未声明有界活动窗口"
+grep -q 'completed_task_requires_retire' scripts/cap-task-state-switch.mjs || err "Task 切换未阻止未退场完成态"
+grep -q 'migrate-tracked-active' scripts/cap-task-state-switch.mjs || err "tracked 活动态迁移未要求显式入口"
+grep -q 'pending-sync' scripts/cap-history-recon.mjs || err "历史侦察未暴露待同步知识"
 grep -q 'install-manifest.json' README.md || err "README 未说明安装源码漂移诊断"
 grep -q 'External operation authorization' "$REF/templates/STATE.md" || err "STATE 未跨会话保存授权边界"
 grep -q 'cross-project-handoff.md' "$ROOT/cap/SKILL.md" || err "cap 未声明跨项目交接协议"

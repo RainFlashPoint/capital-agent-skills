@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +30,7 @@ function fixture() {
   mkdirSync(join(repo, '.cap/history/task-secret'), { recursive: true })
   writeFileSync(join(repo, '.cap/history/index/task_1147.json'), JSON.stringify({
     task_id: 'task_1147', title: '快乐通宝 1147 协议', branch: 'history/huiyuan-1147-contract',
+    knowledgeDisposition: 'local-only',
     experienceIndex: {
       schema: 'cap-experience-index/v1',
       retrievalCues: ['当再次处理电子协议签署顺序时', '签署传递节点、异步协议回执'],
@@ -65,6 +66,43 @@ test('local experience retrieval cues make an archived task discoverable without
   assert.equal(match.inspect.value, '.cap/history/index/task_1147.json')
 })
 
+test('code anchors discover an archived experience without title or intent keyword overlap', () => {
+  const repo = fixture()
+  writeFileSync(join(repo, '.cap/history/index/task_anchor.json'), JSON.stringify({
+    taskId: 'task_anchor', title: '无关的历史标题', intentSummary: '无关的历史意图', keywords: ['legacy-only'],
+    experienceIndex: {
+      schema: 'cap-experience-index/v1',
+      sourceCommit: git(repo, ['rev-parse', 'HEAD']),
+      codePaths: ['src/payment/callback.ts'],
+      symbols: ['PaymentStatus_PROCESSING'],
+      entryPoints: ['支付回调入口'],
+      invariants: ['PaymentStatus_PROCESSING 不能直接写入成功'],
+      retrievalCues: ['完全不相关的召回词'], decisionRules: ['完全不相关的规则'],
+    },
+  }))
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', '继续处理一个无关需求',
+    '--anchor', 'src/payment/callback.ts', '--anchor', 'PaymentStatus_PROCESSING',
+    '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  const match = result.matches.find(item => item.source_type === 'cap_index' && /task_anchor/.test(item.file))
+  assert.ok(match)
+  assert.deepEqual(match.matchedAnchors.sort(), ['PaymentStatus_PROCESSING', 'src/payment/callback.ts'].sort())
+  assert.match(match.reason, /代码锚点命中/)
+  assert.equal(match.sourceCommitRelation, 'current')
+  assert.equal(result.scanned.code_anchors, true)
+})
+
+test('git commit paths also participate in code-anchor matching', () => {
+  const repo = fixture()
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', '完全不相关的任务', '--anchor', 'protocol.md', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  const match = result.matches.find(item => item.source_type === 'commit' && /1147协议/.test(item.subject))
+  assert.ok(match)
+  assert.deepEqual(match.matchedAnchors, ['protocol.md'])
+})
+
 test('history reconnaissance does not recursively read cap history snapshots', () => {
   const repo = fixture()
   const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'NEVER_RECURSIVELY_LOAD_ME', '--json'], {
@@ -82,4 +120,142 @@ test('cap memory symlinks cannot make reconnaissance read files outside the repo
     encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
   }))
   assert.equal(result.matches.some(item => item.source_type === 'cap_memory'), false)
+})
+
+test('pending sync and stale harvest debt are visible and prioritized without reading snapshot bodies', () => {
+  const repo = fixture()
+  writeFileSync(join(repo, '.cap/history/index/task_pending.json'), JSON.stringify({
+    taskId: 'task_pending', title: '1147 协议待补报', knowledgeDisposition: 'pending-sync',
+    experienceIndex: { retrievalCues: ['1147 协议签署'], decisionRules: ['先补报知识'] },
+  }))
+  const snapshot = join(repo, '.cap/local-state/stale/task_stale/snapshot_a')
+  mkdirSync(snapshot, { recursive: true })
+  writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify({
+    oldTaskId: 'task_stale', oldBranch: 'history/huiyuan-1147-contract', knowledgeDisposition: 'needs-harvest',
+  }))
+  writeFileSync(join(snapshot, 'experience.md'), 'STALE_BODY_MUST_NOT_BE_READ\n')
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', '1147 协议签署', '--limit', '20', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  const pending = result.matches.find(item => item.file === '.cap/history/index/task_pending.json')
+  const stale = result.matches.find(item => item.source_type === 'cap_stale')
+  const local = result.matches.find(item => item.file === '.cap/history/index/task_1147.json')
+  assert.equal(pending.knowledgeDisposition, 'pending-sync')
+  assert.equal(stale.knowledgeDisposition, 'needs-harvest')
+  assert.equal(local.knowledgeDisposition, 'local-only')
+  assert.ok(result.matches.indexOf(pending) < result.matches.indexOf(stale))
+  assert.ok(result.matches.indexOf(stale) < result.matches.indexOf(local))
+  assert.equal(result.matches.some(item => JSON.stringify(item).includes('STALE_BODY_MUST_NOT_BE_READ')), false)
+})
+
+test('stale reconnaissance rejects symlinked and oversized manifests', () => {
+  const repo = fixture()
+  const taskRoot = join(repo, '.cap/local-state/stale/task_unsafe')
+  mkdirSync(join(taskRoot, 'oversized'), { recursive: true })
+  writeFileSync(join(taskRoot, 'oversized/manifest.json'), JSON.stringify({ oldTaskId: 'OVERSIZED_STALE_MARKER', padding: 'x'.repeat(300 * 1024) }))
+  const outside = join(tmpdir(), `cap-stale-manifest-${process.pid}.json`)
+  writeFileSync(outside, JSON.stringify({ oldTaskId: 'SYMLINK_STALE_MARKER' }))
+  mkdirSync(join(taskRoot, 'linked'), { recursive: true })
+  symlinkSync(outside, join(taskRoot, 'linked/manifest.json'))
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'OVERSIZED_STALE_MARKER SYMLINK_STALE_MARKER', '--limit', '20', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  assert.equal(result.matches.some(item => item.source_type === 'cap_stale' && item.taskId === 'OVERSIZED_STALE_MARKER'), false)
+  assert.equal(result.matches.some(item => item.source_type === 'cap_stale' && item.taskId === 'SYMLINK_STALE_MARKER'), false)
+})
+
+test('malformed index field shapes are treated as untrusted metadata instead of crashing reconnaissance', () => {
+  const repo = fixture()
+  writeFileSync(join(repo, '.cap/history/index/malformed.json'), JSON.stringify({
+    title: { injected: true }, keywords: 'not-an-array', knowledgeDisposition: { forged: 'synced' },
+    experienceIndex: { retrievalCues: 'not-an-array', decisionRules: [null, { bad: true }] },
+  }))
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'malformed', '--limit', '20', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  const match = result.matches.find(item => item.file === '.cap/history/index/malformed.json')
+  assert.equal(match.knowledgeDisposition, 'legacy-unknown')
+})
+
+test('history index symlinks cannot make reconnaissance read outside the repository', () => {
+  const repo = fixture()
+  const outside = join(tmpdir(), `cap-history-index-${process.pid}`)
+  mkdirSync(outside, { recursive: true })
+  writeFileSync(join(outside, 'outside.json'), JSON.stringify({ title: 'INDEX_SYMLINK_ESCAPE_MARKER', experienceIndex: { retrievalCues: ['INDEX_SYMLINK_ESCAPE_MARKER'] } }))
+  const indexRoot = join(repo, '.cap/history/index')
+  rmSync(indexRoot, { recursive: true, force: true })
+  symlinkSync(outside, indexRoot)
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'INDEX_SYMLINK_ESCAPE_MARKER', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  assert.equal(result.matches.some(item => item.source_type === 'cap_index' && String(item.file).includes('outside.json')), false)
+})
+
+test('SHA-256 commit-shaped source identifiers are not rejected as invalid', () => {
+  const repo = fixture()
+  writeFileSync(join(repo, '.cap/history/index/task_sha256.json'), JSON.stringify({
+    taskId: 'task_sha256', title: 'SHA256 source marker',
+    experienceIndex: { sourceCommit: 'a'.repeat(64), retrievalCues: ['SHA256_SOURCE_MARKER'] },
+  }))
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'SHA256_SOURCE_MARKER', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  const match = result.matches.find(item => item.file === '.cap/history/index/task_sha256.json')
+  assert.ok(match)
+  assert.equal(match.sourceCommitRelation, 'unknown')
+})
+
+test('real SHA-256 repositories retain commit path anchors during reconnaissance', t => {
+  const repo = mkdtempSync(join(tmpdir(), 'cap-history-sha256-'))
+  try {
+    git(repo, ['init', '--object-format=sha256', '-q', '-b', 'main'])
+  } catch {
+    t.skip('installed Git does not support SHA-256 repositories')
+    return
+  }
+  git(repo, ['config', 'user.email', 'fixture@example.com'])
+  git(repo, ['config', 'user.name', 'Fixture'])
+  writeFileSync(join(repo, 'sha256-anchor.txt'), 'anchor\n')
+  git(repo, ['add', 'sha256-anchor.txt'])
+  git(repo, ['commit', '-qm', 'feat: SHA-256 anchor history'])
+
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'unrelated intent', '--anchor', 'sha256-anchor.txt', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  const match = result.matches.find(item => item.source_type === 'commit' && /SHA-256 anchor/.test(item.subject))
+  assert.ok(match)
+  assert.equal(match.commit.length, 64)
+  assert.deepEqual(match.matchedAnchors, ['sha256-anchor.txt'])
+})
+
+test('archive root symlinks and plain files are ignored without escaping or crashing', () => {
+  for (const kind of ['symlink', 'file']) {
+    const repo = fixture()
+    const archiveRoot = join(repo, '.cap/archive')
+    if (kind === 'symlink') {
+      const outside = mkdtempSync(join(tmpdir(), 'cap-archive-outside-'))
+      mkdirSync(outside, { recursive: true })
+      mkdirSync(join(outside, 'ARCHIVE_ESCAPE_MARKER'))
+      symlinkSync(outside, archiveRoot)
+    } else {
+      writeFileSync(archiveRoot, 'ARCHIVE_PLAIN_FILE_MARKER\n')
+    }
+    const result = JSON.parse(execFileSync(process.execPath, [
+      script, repo, '--intent', kind === 'symlink' ? 'ARCHIVE_ESCAPE_MARKER' : 'ARCHIVE_PLAIN_FILE_MARKER', '--json',
+    ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+    assert.equal(result.matches.some(item => item.source_type === 'cap_archive'), false)
+  }
+})
+
+test('archive enumeration is bounded before candidate scoring', () => {
+  const repo = fixture()
+  const archiveRoot = join(repo, '.cap/archive')
+  mkdirSync(archiveRoot, { recursive: true })
+  for (let index = 0; index < 1000; index += 1) mkdirSync(join(archiveRoot, `a-${String(index).padStart(4, '0')}`))
+  mkdirSync(join(archiveRoot, 'zzzz-ARCHIVE_OVERFLOW_MARKER'))
+
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'ARCHIVE_OVERFLOW_MARKER', '--limit', '20', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  assert.equal(result.matches.some(item => item.source_type === 'cap_archive'), false)
 })

@@ -251,7 +251,7 @@ python3 scripts/intake.py move --root <root> --leaf <leaf-id> --to <domain>/<sub
 
 | 步 | 动作 | 谁做 | 适用 |
 |---|---|---|---|
-| ① 历史快照 | `.cap/{task-context.md,spec.md,plan.md,experience.md,verify,review,STATE.md}` → `.cap/history/<task-id>/`，生成 manifest/hash；把经验标题、召回线索、问题模式、决策摘要和精确原稿路径写入单 Task 索引 | 脚本 | 全部特性 |
+| ① 历史快照 | `.cap/{task-context.md,spec.md,plan.md,experience.md,verify,review,STATE.md}` → `.cap/history/<task-id>/`，生成 manifest/hash；把经验标题、召回线索、问题模式、决策摘要和精确原稿路径写入单 Task 索引。原始快照保持本地忽略，只有脱敏 `history/index/<task-id>.json` 进 Git | 脚本 | 全部特性 |
 | ② 回流 | 从 `STATE.Decisions log` 蒸馏耐久决策 / 教训 / 新风险成一行,append `.cap/EVOLUTION.md` | 模型蒸馏 + 脚本追加 | 全部特性 |
 | ③ 标 shipped + 写叶记录 | 源叶 `status=shipped` → ready-queue 自动解锁下游;若传了 `--evolution-entry`,同条也 append 进该源叶的 `## cap 记录` 段 | 脚本 | 仅源自需求树的特性 |
 | ④ 清栈 | STATE.md 随①移走 → 顶层留空,交还给下个特性 | 脚本 | 全部特性 |
@@ -263,6 +263,8 @@ python3 scripts/intake.py retire --cap <target>/.cap --slug <feat> --date <YYYY-
   [--parent-task-id <parent-task-id>] [--title "<title>"] [--intent-summary "<summary>"] \
   [--keywords "<keyword1>,<keyword2>"] [--branch <branch>] [--base-commit <commit>] \
   [--completed-at <UTC timestamp>] \
+  --knowledge-disposition <synced|pending-sync|local-only|no-reusable-experience> \
+  [--knowledge-document-id <document-id>] \
   [--leaf <leaf-id> --req-root <target>/.cap/requirements] \
   [--evolution-entry "<蒸馏出的一行>"]
 ```
@@ -278,6 +280,12 @@ python3 scripts/intake.py prepare-next --cap <target>/.cap
 SHA-256，原子落下快照、`manifest.json` 与 `retirement.json` 后，再按 cleanup → index → leaf → backflow 的耐久
 phase 推进。任一步中断后重跑同一 Retire 会从已提交 phase 继续；清理、索引、叶状态和同一条 Evolution/叶记录均幂等，
 不会因为“快照已经存在”而跳过剩余收尾，也不会重复追加经验。快照尚未提交前失败时，根 `.cap` 保持不变。
+
+严格退场必须显式声明知识处置：`synced` 必须带中心知识文档 ID，`pending-sync` 必须有同 Task 的
+`experience.record` Outbox 事件，`local-only` 必须有合格 `experience.md` 的本地索引，
+`no-reusable-experience` 只能用于明确没有合格经验的任务。处置值同时写入 manifest、事务请求和脱敏历史索引；缺失或互相矛盾时在清理前拒绝。旧归档没有该字段时只显示为 `legacy-unknown`，不会被猜测补齐；strict Retire 必须先显式迁移/补录旧 manifest，不能借兼容读取继续清理活动态。
+
+历史索引必须在清理活动态之前完成白名单投影、敏感值/本机路径/内网地址拒绝、字段限长限项与最终 256 KiB 校验。EVOLUTION 的超窗淘汰只接受普通非软链索引文件，并核对 Schema、Task、耐久处置、稳定知识 ID 与所需 experienceIndex；文件名或空 JSON 本身不构成耐久证明。
 
 **确定性 vs 判断性**:文件移动 / 标 shipped / 追加 = 脚本。**"哪些决策值得回流" = 模型判断**——判据:跨特性
 仍成立的架构 / 契约决策、踩过的坑、新发现的风险才回流;一次性实现细节不回流。
@@ -307,9 +315,10 @@ session_id      # 会话标识
 - **原稿判断 + 确定性转换**：模型负责从 plan / task-context / diff / verify / review 提炼原稿；脚本只解析 `experience.md` 并用 Git、verify、review 核对，不从其他文件猜经验。字段**前向兼容**——server 现在忽略它不认识的字段不报错(见 `harvest-experience`)。
 - **显式本地或已加载 MCP 的单次调用失败 → 本地保留/离线补报**：`local_explicit` / `local_fallback_explicit` 仍生成、校验并归档 `experience.md`，但不调用 MCP、不写 Outbox；MCP 已加载但 `record_experience` 调用失败时按 Outbox 规则补报。团队模式完整 MCP 工具集未加载时，入口先完成 `restart_required` 选择。
 
-**回流去向**:`<cap>/EVOLUTION.md`(脚本统一 append,缺则建头)。PROFILE.md 不承载流水,仅留一行指针——
-Evolution log 是无界流水、PROFILE 是有界快照,本性不同故分文件。这是长寿、可跨会话复用的演进记忆,区别于
-history(本地 Task 事实快照)。旧 `.cap/archive` 继续作为兼容历史读取，但新 Task 一律写 `.cap/history/<task-id>`。
+**回流去向**:`<cap>/EVOLUTION.md`(脚本统一 append,缺则建头)。它是最多 50 条的活动窗口；只有带
+`[task:<id>]` 且已有历史索引证明，或带中心 `[knowledge:<id>]` 的最老条目才允许出窗。超窗但缺证明时保留并由
+`python3 scripts/intake.py knowledge-audit --cap <target>/.cap` 报告，避免经验静默丢失。PROFILE.md 不承载流水,
+仅留一行指针。旧 `.cap/archive` 继续作为兼容历史读取，但新 Task 一律写 `.cap/history/<task-id>`。
 
 > **与中心知识库的关系(两条出口,别混)**:①**教训**——EVOLUTION.md 是**本仓本地**的演进记忆;要让耐久教训
 > **跨人复用**,退场后跑 `/cap evolve`(见 `evolve-loop.md`)经 `record_experience` 推进中心 KB。②**数据点**——

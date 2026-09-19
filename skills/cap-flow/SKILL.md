@@ -208,7 +208,7 @@ sh <cap-flow 目录>/scripts/cap-guard    # 脚本自包含;确定性比对 STAT
 `python3 scripts/intake.py prepare-next --cap <target>/.cap`，原生 Windows 使用 `node scripts/cap-runtime.mjs prepare-next <target>/.cap`。根 `.cap` 只允许一个活动 Task；存在进行中 Task
 必须续接或换 branch/worktree，禁止覆盖。入口读到 `stage==done`(特性到终点但工件还没收尾)→ **先触发退场仪式**
 (在 Server 确认同一 Commit 的 Gate PASS 后，将活动工件快照到 `.cap/history/<task-id>/`、把耐久决策从
-`STATE.Decisions log` 蒸馏回 `PROFILE.md ## Evolution log`、若特性源自需求树叶则标该叶 `shipped`、清空
+`STATE.Decisions log` 蒸馏回 `.cap/EVOLUTION.md` 的 50 条活动窗口、若特性源自需求树叶则标该叶 `shipped`、清空
 STATE),再按上面三条主分支处理新特性。退场的机械部分走 `references/intake.md` 的 Retire 操作;编排器
 只**触发**,不亲自归档。用户也可显式 `/cap retire`。
 
@@ -497,7 +497,8 @@ Review 通过且已有有效 Commit 时，若 MCP 提供 `split_deferred_accepta
 
 **特性退场(stage→done)**:某阶段把特性推到 `done` 后,STATE 不就地清理;退场仪式(历史快照 / 回流 /
 标 shipped / 清栈)由 intake 的 Retire 操作执行(见「入口判定」的优先分支),编排器只触发。退场把决策从
-短命 STATE 蒸馏进长命 `PROFILE.md ## Evolution log`,让完成的工作持续指导后续演进。
+短命 STATE 蒸馏进有索引证明保护的 `.cap/EVOLUTION.md` 活动窗口，让完成的工作持续指导后续演进；原始快照
+保持本地忽略，脱敏 `history/index/*.json` 才是跨机器的可追踪投影。
 
 ## 跨会话流
 

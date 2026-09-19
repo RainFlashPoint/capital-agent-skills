@@ -67,6 +67,13 @@ function writeContext(repo, { includeTests = true } = {}) {
 ## Similar implementations
 - \`src/payment-service.js\` — 现有支付模式
 
+## History usage
+- candidates: none
+- outcome: not_used
+- reason: 没有匹配的历史经验候选
+- plan-impact: none
+- verification-impact: none
+
 ## Tests and environment
 ${includeTests ? '- `test/payment.test.js` — 支付测试入口' : '- 尚未定位测试'}
 
@@ -112,6 +119,13 @@ function writeWorkingTreeContext(repo) {
 
 ## Similar implementations
 - \`src/payment-service.js\` — 当前工作区模式
+
+## History usage
+- candidates: none
+- outcome: not_used
+- reason: 没有匹配的历史经验候选
+- plan-impact: none
+- verification-impact: none
 
 ## Tests and environment
 - \`test/payment.test.js\` — 初始测试入口
@@ -280,4 +294,14 @@ test('missing external operation boundary blocks handoff', () => {
   const result = run(repo, '--stage', 'test')
   assert.equal(result.status, 1)
   assert.match(result.stderr, /缺少 recovery/)
+})
+
+test('history usage must explain candidate adoption and plan/verification impact', () => {
+  const repo = fixture(); writeContext(repo)
+  const context = join(repo, '.cap/task-context.md')
+  const content = readFileSync(context, 'utf8').replace(/## History usage[\s\S]*?\n## Tests and environment/, '## Tests and environment')
+  writeFileSync(context, content)
+  const result = run(repo, '--stage', 'plan')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /History usage/)
 })

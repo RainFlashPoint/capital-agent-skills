@@ -16,6 +16,8 @@ description: >
 
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
+若 `task-context.md` 的 `History usage` 有候选，plan 必须保留其采用/拒绝结果，并把 `plan-impact` 转成至少一条具体任务或明确记录 `none`；不能只在 `Similar implementations` 中列出历史路径。
+
 你的唯一职责:读**已批准的 `spec.md`**,产出一份 **`<target-repo>/.cap/plan.md`**,把需求**两级贯通**:
 
 ```

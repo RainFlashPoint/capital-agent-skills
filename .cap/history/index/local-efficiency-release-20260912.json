@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "taskId": "local-efficiency-release-20260912",
+  "parentTaskId": "",
+  "title": "Local efficiency 0.11.0",
+  "intentSummary": "Zero-key local execution evidence, workflow status integration, lifecycle compatibility and readonly history audit",
+  "keywords": [
+    "local-execution",
+    "ontology",
+    "evidence",
+    "upgrade"
+  ],
+  "branch": "codex/ontology-foundation",
+  "baseCommit": "df477b69a3c6ea06054ec4e0a9c472a07fbccb23",
+  "deliveryCommit": "82475c99ed9cd68e1851800a5776eab5eb78c8ee",
+  "completedAt": "2026-09-12",
+  "status": "completed",
+  "artifactRoot": ".cap/history/local-efficiency-release-20260912",
+  "experienceIndex": {
+    "schema": "cap-experience-index/v1",
+    "title": "本地执行证据必须重验当前源码快照和最新动作",
+    "sourceCommit": "82475c99ed9cd68e1851800a5776eab5eb78c8ee",
+    "retrievalCues": [
+      "当本地研发流程需要复用测试结果，或状态页面把旧 PASS 当成当前任务进度时。",
+      "local-observed、执行证据、源码快照、latest pointer、任务归档。"
+    ],
+    "problemPatterns": [
+      "只读取可编辑 gate.json 的 PASS 会让失败、错任务和后续源码变化被历史成功覆盖。",
+      "状态入口没有重新核对请求、结果和当前工作区，平台候选分支也可能误处理无远端的本地状态。"
+    ],
+    "decisionRules": [
+      "当执行证据用于本地阶段推进时，必须按同 Task、Session、分支、HEAD 和源码快照重验最近动作；因为旧摘要无法证明当前代码实际执行过。"
+    ],
+    "invalidationSignals": [
+      "阶段契约、执行记录 Schema、源码指纹算法或归档 manifest 格式改变。"
+    ],
+    "path": ".cap/history/local-efficiency-release-20260912/experience.md"
+  }
+}

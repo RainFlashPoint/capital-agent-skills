@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const MAX_TEXT_BYTES = 256 * 1024
+const MAX_DIRECTORY_ENTRIES = 1000
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'into', 'this', 'that', 'fix', 'feat', 'chore',
   '修复', '实现', '新增', '更新', '修改', '问题', '功能', '一个', '这个', '进行', '相关',
@@ -30,16 +31,19 @@ function parseArgs(argv) {
   let intent = ''
   let limit = 8
   let json = false
+  const anchors = []
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     if (arg === '--intent') intent = argv[++index] || ''
     else if (arg === '--limit') limit = Math.max(1, Math.min(20, Number(argv[++index]) || 8))
+    else if (arg === '--anchor' || arg === '--changed-file' || arg === '--symbol') anchors.push(argv[++index] || '')
+    else if (arg === '--anchors') anchors.push(...String(argv[++index] || '').split(/[\n,]/))
     else if (arg === '--json') json = true
     else if (arg.startsWith('-')) fail(`未知参数：${arg}`)
     else repo = arg
   }
   if (!intent.trim()) fail('缺少 --intent')
-  return { repo, intent: intent.trim(), limit, json }
+  return { repo, intent: intent.trim(), anchors: anchors.map(value => value.trim()).filter(Boolean), limit, json }
 }
 
 function normalized(value = '') {
@@ -67,9 +71,54 @@ function terms(value = '') {
   return result
 }
 
-function scoreCandidate(candidate, intentTerms) {
+function listValues(...values) {
+  return values.flatMap(value => Array.isArray(value) ? value.map(scalar).filter(Boolean) : [])
+}
+
+function sourceCommitRelation(repo, sourceCommit, head = '', cache = new Map()) {
+  const value = String(sourceCommit || '').trim()
+  if (!value) return 'missing'
+  // SHA-1 repositories use 40 hex digits; SHA-256 repositories use 64.
+  // Abbreviated object names are accepted in either format.
+  if (!/^[0-9a-f]{7,64}$/i.test(value)) return 'invalid'
+  const cacheKey = `${head}\0${value.toLowerCase()}`
+  if (cache.has(cacheKey)) return cache.get(cacheKey)
+  let relation = 'unknown'
+  try {
+    const resolved = git(repo, ['rev-parse', `${value}^{commit}`])
+    const currentHead = head || git(repo, ['rev-parse', 'HEAD'])
+    if (resolved === currentHead) relation = 'current'
+    try {
+      if (relation !== 'current') {
+        git(repo, ['merge-base', '--is-ancestor', resolved, currentHead])
+        relation = 'ancestor'
+      }
+    } catch {
+      return 'diverged'
+    }
+  } catch {
+    relation = 'unknown'
+  }
+  cache.set(cacheKey, relation)
+  return relation
+}
+
+function normalizedAnchor(value) {
+  return normalized(value).replace(/\s+/g, ' ')
+}
+
+function anchorMatches(candidate, anchors) {
+  const available = listValues(candidate.anchorValues).map(normalizedAnchor).filter(Boolean)
+  return anchors.filter(anchor => {
+    const wanted = normalizedAnchor(anchor)
+    return wanted && available.some(value => value === wanted || value.includes(wanted) || wanted.includes(value))
+  })
+}
+
+function scoreCandidate(candidate, intentTerms, anchors = []) {
   const candidateTerms = terms(candidate.searchText)
   const matched = [...intentTerms].filter(term => candidateTerms.has(term))
+  const matchedAnchors = anchorMatches(candidate, anchors)
   let score = matched.reduce((sum, term) => {
     if (/^\d+$/.test(term)) return sum + 14
     if (/^[a-z0-9]+$/.test(term)) return sum + Math.min(8, Math.max(3, term.length))
@@ -78,10 +127,18 @@ function scoreCandidate(candidate, intentTerms) {
   if (candidate.source_type === 'cap_index') score += matched.length > 0 ? 5 : 0
   if (candidate.source_type === 'branch') score += matched.length > 0 ? 3 : 0
   if (candidate.source_type === 'cap_memory') score = Math.min(12, score + (matched.length > 0 ? 2 : 0))
+  if (matchedAnchors.length) {
+    score += matchedAnchors.reduce((sum, anchor) => sum + (anchor.includes('/') ? 24 : 30), 0)
+    if (candidate.source_type === 'cap_index') score += 10
+  }
   return {
     ...candidate,
     score: Math.min(100, score),
-    reason: matched.length > 0 ? `命中：${matched.sort((a, b) => b.length - a.length).slice(0, 6).join('、')}` : '',
+    matchedAnchors,
+    reason: [
+      matchedAnchors.length ? `代码锚点命中：${matchedAnchors.slice(0, 6).join('、')}` : '',
+      matched.length > 0 ? `命中：${matched.sort((a, b) => b.length - a.length).slice(0, 6).join('、')}` : '',
+    ].filter(Boolean).join('；'),
   }
 }
 
@@ -94,28 +151,73 @@ function safeRead(path) {
     return ''
   }
 }
+function safeJson(path) {
+  const text = safeRead(path)
+  if (!text) return null
+  try {
+    const value = JSON.parse(text)
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null
+  } catch {
+    return null
+  }
+}
+function safeDirectoryEntries(path, limit = MAX_DIRECTORY_ENTRIES) {
+  try {
+    const info = lstatSync(path)
+    if (info.isSymbolicLink() || !info.isDirectory()) return []
+    return readdirSync(path, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, limit)
+  } catch {
+    return []
+  }
+}
+function scalar(value) {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+}
+function listText(value) {
+  return Array.isArray(value) ? value.map(scalar).filter(Boolean).join(' ') : ''
+}
 
 function gitCandidates(repo) {
   const candidates = []
+  const filesByCommit = new Map()
+  const log = git(repo, ['log', '--all', '-n', '300', '--name-only', '--format=%H%x09%D%x09%s'])
+  let current = null
+  const flush = () => {
+    if (current) filesByCommit.set(current.commit, current)
+    current = null
+  }
+  for (const line of log.split('\n')) {
+    if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})\t/.test(line)) {
+      flush()
+      const [commit, refsForCommit, ...subjectParts] = line.split('\t')
+      current = { commit, refs: refsForCommit, subject: subjectParts.join('\t'), files: [] }
+      continue
+    }
+    if (current && line.trim()) current.files.push(line.trim())
+  }
+  flush()
+
   const refs = git(repo, ['for-each-ref', '--format=%(refname:short)%09%(objectname)%09%(subject)', 'refs/heads', 'refs/remotes'])
   for (const line of refs.split('\n').filter(Boolean)) {
     const [ref, commit, ...subjectParts] = line.split('\t')
     if (!ref || ref.endsWith('/HEAD')) continue
     const subject = subjectParts.join('\t')
+    const changedFiles = filesByCommit.get(commit)?.files || []
     candidates.push({
       source_type: 'branch', branch: ref, commit, subject,
-      searchText: `${ref} ${subject}`,
+      anchorValues: changedFiles,
+      searchText: `${ref} ${subject} ${changedFiles.join(' ')}`,
       inspect: { kind: 'git_ref', value: ref },
     })
   }
-  const log = git(repo, ['log', '--all', '-n', '300', '--format=%H%x09%D%x09%s'])
-  for (const line of log.split('\n').filter(Boolean)) {
-    const [commit, refsForCommit, ...subjectParts] = line.split('\t')
-    const subject = subjectParts.join('\t')
+  for (const record of filesByCommit.values()) {
     candidates.push({
-      source_type: 'commit', commit, refs: refsForCommit, subject,
-      searchText: `${refsForCommit} ${subject}`,
-      inspect: { kind: 'git_commit', value: commit },
+      source_type: 'commit', commit: record.commit, refs: record.refs, subject: record.subject,
+      anchorValues: record.files,
+      searchText: `${record.refs} ${record.subject} ${record.files.join(' ')}`,
+      inspect: { kind: 'git_commit', value: record.commit },
     })
   }
   return candidates
@@ -124,6 +226,9 @@ function gitCandidates(repo) {
 function capCandidates(repo) {
   const capRoot = join(repo, '.cap')
   const candidates = []
+  let head = ''
+  try { head = git(repo, ['rev-parse', 'HEAD']) } catch {}
+  const sourceCommitCache = new Map()
   for (const name of ['PROFILE.md', 'EVOLUTION.md']) {
     const path = join(capRoot, name)
     if (!existsSync(path)) continue
@@ -136,7 +241,8 @@ function capCandidates(repo) {
 
   const archiveRoot = join(capRoot, 'archive')
   if (existsSync(archiveRoot)) {
-    for (const entry of readdirSync(archiveRoot, { withFileTypes: true })) {
+    for (const entry of safeDirectoryEntries(archiveRoot)) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue
       candidates.push({
         source_type: 'cap_archive', file: `.cap/archive/${entry.name}`,
         searchText: entry.name,
@@ -147,32 +253,75 @@ function capCandidates(repo) {
 
   // 历史正文可能很大且可能含不可信仓库内容；正常侦察只读显式索引，不递归读取快照。
   const indexRoot = join(capRoot, 'history', 'index')
-  if (existsSync(indexRoot)) {
+  if (existsSync(indexRoot) && !lstatSync(indexRoot).isSymbolicLink() && lstatSync(indexRoot).isDirectory()) {
     for (const entry of readdirSync(indexRoot, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) continue
       const file = `.cap/history/index/${entry.name}`
+      const item = safeJson(join(indexRoot, entry.name))
+      const rawDisposition = item?.knowledgeDisposition || item?.knowledge_disposition
+      const knowledgeDisposition = typeof rawDisposition === 'string' ? rawDisposition : 'legacy-unknown'
+      const experienceIndex = item?.experienceIndex && typeof item.experienceIndex === 'object' && !Array.isArray(item.experienceIndex) ? item.experienceIndex : {}
+      const sourceCommit = scalar(experienceIndex.sourceCommit)
+      const anchorValues = listValues(
+        experienceIndex.codePaths,
+        experienceIndex.entryPoints,
+        experienceIndex.symbols,
+        experienceIndex.invariants,
+        experienceIndex.codeAnchors,
+        item?.changedFiles,
+      )
       candidates.push({
         source_type: 'cap_index', file,
-        searchText: `${entry.name} ${safeRead(join(indexRoot, entry.name))}`,
+        knowledgeDisposition,
+        sourceCommit,
+        sourceCommitRelation: sourceCommitRelation(repo, sourceCommit, head, sourceCommitCache),
+        anchorValues,
+        searchText: `${entry.name} ${scalar(item?.title)} ${scalar(item?.intentSummary)} ${listText(item?.keywords)} ${listText(experienceIndex.retrievalCues)} ${listText(experienceIndex.decisionRules)} ${listText(experienceIndex.invalidationSignals)} ${anchorValues.join(' ')} ${knowledgeDisposition}`,
         inspect: { kind: 'repo_file', value: file },
       })
+    }
+  }
+  const staleRoot = join(capRoot, 'local-state', 'stale')
+  if (existsSync(staleRoot) && !lstatSync(staleRoot).isSymbolicLink()) {
+    for (const taskEntry of readdirSync(staleRoot, { withFileTypes: true })) {
+      if (!taskEntry.isDirectory() || taskEntry.isSymbolicLink()) continue
+      const taskRoot = join(staleRoot, taskEntry.name)
+      for (const snapshotEntry of readdirSync(taskRoot, { withFileTypes: true })) {
+        if (!snapshotEntry.isDirectory() || snapshotEntry.isSymbolicLink()) continue
+        const manifestPath = join(taskRoot, snapshotEntry.name, 'manifest.json')
+        const item = safeJson(manifestPath)
+        if (!item) continue
+        const knowledgeDisposition = typeof item.knowledgeDisposition === 'string' ? item.knowledgeDisposition : 'needs-harvest'
+        const file = `.cap/local-state/stale/${taskEntry.name}/${snapshotEntry.name}/manifest.json`
+        candidates.push({
+          source_type: 'cap_stale', file, taskId: scalar(item.oldTaskId) || taskEntry.name,
+          knowledgeDisposition,
+          searchText: `${taskEntry.name} ${scalar(item.oldBranch)} ${scalar(item.currentBranch)} ${knowledgeDisposition}`,
+          inspect: { kind: 'repo_file', value: file },
+        })
+      }
     }
   }
   return candidates
 }
 
 function publicCandidate(candidate) {
-  const { searchText, ...result } = candidate
+  const { searchText, anchorValues, ...result } = candidate
   return result
 }
 
-export function inspectHistory({ repo = '.', intent = '', limit = 8 } = {}) {
+export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 8 } = {}) {
   const root = resolve(git(repo, ['rev-parse', '--show-toplevel']))
   const intentTerms = terms(intent)
   const candidates = [...gitCandidates(root), ...capCandidates(root)]
-    .map(candidate => scoreCandidate(candidate, intentTerms))
+    .map(candidate => scoreCandidate(candidate, intentTerms, anchors))
     .filter(candidate => candidate.score > 0)
-    .sort((left, right) => right.score - left.score || left.source_type.localeCompare(right.source_type) || String(left.inspect?.value).localeCompare(String(right.inspect?.value)))
+    .sort((left, right) => {
+      const priority = { 'pending-sync': 0, 'needs-harvest': 1, 'local-only': 2, synced: 3, 'no-reusable-experience': 4, 'legacy-unknown': 5 }
+      const leftPriority = priority[left.knowledgeDisposition] ?? 6
+      const rightPriority = priority[right.knowledgeDisposition] ?? 6
+      return leftPriority - rightPriority || right.score - left.score || left.source_type.localeCompare(right.source_type) || String(left.inspect?.value).localeCompare(String(right.inspect?.value))
+    })
   const seen = new Set()
   const matches = []
   for (const candidate of candidates) {
@@ -185,7 +334,7 @@ export function inspectHistory({ repo = '.', intent = '', limit = 8 } = {}) {
     matches.push(publicCandidate(candidate))
     if (matches.length >= limit) break
   }
-  return { repo: root, intent, scanned: { branches_and_tips: true, recent_commits: true, cap_memory: true, cap_history_index_only: true }, matches }
+  return { repo: root, intent, anchors, scanned: { branches_and_tips: true, recent_commits: true, cap_memory: true, cap_history_index_only: true, code_anchors: anchors.length > 0 }, matches }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

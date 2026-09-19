@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "taskId": "local-token-compact-context-20260917",
+  "parentTaskId": "",
+  "title": "Token Compact Context",
+  "intentSummary": "为 Capital Agent 增加轻量入口、compact 状态投影及风险态完整回退，并通过 A/B 与全量回归验证。",
+  "keywords": [
+    "compact status",
+    "token",
+    "full-fallback",
+    "decision signature"
+  ],
+  "branch": "main",
+  "baseCommit": "d68c7aab077c5334b8eb34673203d69bb876a8c9",
+  "deliveryCommit": "30cfa6642d97b10c32ffe15948421018c4fe9ecb",
+  "completedAt": "2026-09-17",
+  "status": "completed",
+  "artifactRoot": ".cap/history/local-token-compact-context-20260917",
+  "experienceIndex": {
+    "schema": "cap-experience-index/v1",
+    "title": "决策上下文压缩必须有保守回退和独立字段预言机",
+    "sourceCommit": "30cfa6642d97b10c32ffe15948421018c4fe9ecb",
+    "retrievalCues": [
+      "当状态对象或入口 Skill 过大，希望降低每轮 Agent 启动 Token，同时不能削弱安全门禁。",
+      "compact status、Token、full-fallback、decision signature、Server Action alias、Provider preflight。"
+    ],
+    "problemPatterns": [
+      "直接裁剪完整状态容易漏掉 Action 身份、Provider 分类、Outbox 归属或 Task 模式边界，使模型得到更短但错误的下一动作。",
+      "状态 Schema 会演进，且 A/B 比较器若与投影共用同一归一化 helper，二者可同时漏字段并产生假绿。"
+    ],
+    "decisionRules": [
+      "当出现阻断、纠偏、未知 blocker 或异常 Outbox 时必须 full-fallback；compact 只优化正常已知路径，因为未知协议的完整证据比固定压缩率更重要。"
+    ],
+    "invalidationSignals": [
+      "当 Server Action/Task/Outbox Schema、模式枚举、Push 门禁或 Provider preflight 契约变化时重新审计投影。"
+    ],
+    "path": ".cap/history/local-token-compact-context-20260917/experience.md"
+  }
+}

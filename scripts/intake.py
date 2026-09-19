@@ -18,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -48,6 +49,15 @@ def normalize_stage(stage):
 RETIRE_ARTIFACTS = ["task-context.md", "spec.md", "plan.md", "experience.md", "verify", "review", "execution", "release", "STATE.md"]
 RETIRE_PHASES = {"snapshot": 0, "cleanup": 1, "index": 2, "leaf": 3, "backflow": 4, "complete": 5}
 MAX_EXPERIENCE_INDEX_ITEMS = 8
+MAX_HISTORY_INDEX_BYTES = 256 * 1024
+MAX_HISTORY_INDEX_TEXT = 500
+EVOLUTION_WINDOW_LIMIT = 50
+KNOWLEDGE_DISPOSITIONS = {
+    "synced", "pending-sync", "local-only", "no-reusable-experience",
+}
+EXPERIENCE_REQUIRED_DISPOSITIONS = {"synced", "pending-sync", "local-only"}
+STABLE_KNOWLEDGE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+STABLE_TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$")
 
 
 def _sha256(path):
@@ -114,6 +124,49 @@ def _safe_experience_index_text(value):
     return text[:500]
 
 
+def _dedupe_experience_values(values):
+    result = []
+    seen = set()
+    for value in values:
+        clean = _safe_experience_index_text(value)
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        result.append(clean)
+    return result[:MAX_EXPERIENCE_INDEX_ITEMS]
+
+
+def _experience_anchor_projection(anchor):
+    """Keep a bounded, searchable projection of implementation anchors.
+
+    The full experience remains the source of truth.  These fields are only
+    enough for the next task to match a code surface without recursively
+    loading historical task bodies.
+    """
+    entry_points = _experience_labeled(anchor, ["入口", "entry", "entrypoint"])
+    change_points = _experience_labeled(anchor, ["改动点", "change point", "change points", "anchor"])
+    invariants = _experience_labeled(anchor, ["不变量", "invariant", "invariants"])
+    anchor_values = entry_points + change_points + invariants
+    path_pattern = re.compile(
+        r"(?<![A-Za-z0-9_])(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.*${}-]+"
+        r"(?:\.[A-Za-z0-9_.*${}-]+)?"
+    )
+    symbol_pattern = re.compile(
+        r"(?<![A-Za-z0-9_])(?:[A-Z][A-Za-z0-9_]*|[a-z][A-Za-z0-9_]*[A-Z][A-Za-z0-9_]*|[a-z][A-Za-z0-9_]*_[A-Za-z0-9_]+|#[A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])"
+    )
+    code_paths = []
+    symbols = []
+    for value in anchor_values:
+        code_paths.extend(path_pattern.findall(value))
+        symbols.extend(symbol_pattern.findall(value))
+    return {
+        "codePaths": _dedupe_experience_values(code_paths),
+        "entryPoints": _dedupe_experience_values(entry_points),
+        "symbols": _dedupe_experience_values(symbols),
+        "invariants": _dedupe_experience_values(invariants),
+    }
+
+
 def _experience_index(path):
     if not os.path.isfile(path) or os.path.islink(path) or os.path.getsize(path) > 256 * 1024:
         return None
@@ -123,6 +176,7 @@ def _experience_index(path):
     if frontmatter.get("schema") != "cap-experience/v1":
         return None
     retrieval = _experience_section(text, ["复用触发与检索线索", "reuse triggers and retrieval cues", "复用触发", "reuse triggers"])
+    anchor = _experience_section(text, ["实现锚点与不变量", "implementation anchors and invariants"])
     problem = _experience_section(text, ["问题与根因", "problem and cause"])
     decision = _experience_section(text, ["决策与行动", "decision and actions"])
     invalidation = _experience_section(text, ["失效信号", "invalidation signals"])
@@ -133,6 +187,7 @@ def _experience_index(path):
     if not frontmatter.get("title") or not cues or not problems or not decisions or not invalidations:
         return None
     clean = lambda values: [item for item in (_safe_experience_index_text(value) for value in values) if item][:MAX_EXPERIENCE_INDEX_ITEMS]
+    anchors = _experience_anchor_projection(anchor)
     return {
         "schema": "cap-experience-index/v1",
         "title": _safe_experience_index_text(frontmatter.get("title", "")),
@@ -141,8 +196,127 @@ def _experience_index(path):
         "problemPatterns": clean(problems),
         "decisionRules": clean(decisions),
         "invalidationSignals": clean(invalidations),
+        "codePaths": anchors["codePaths"],
+        "entryPoints": anchors["entryPoints"],
+        "symbols": anchors["symbols"],
+        "invariants": anchors["invariants"],
         "path": "experience.md",
     }
+
+
+def _history_index_text(value, label, *, limit=MAX_HISTORY_INDEX_TEXT):
+    if not isinstance(value, str):
+        raise ValueError(f"history index {label} 必须为字符串")
+    text = re.sub(r"\s+", " ", value).strip()
+    unsafe = (
+        re.search(r"https?://[^\s/@]+:[^\s/@]+@", text, re.I)
+        or re.search(r"(?:^|[\s(\"'=])(?:/Users/|/home/|/private/|/tmp/|/var/folders/|[A-Za-z]:\\)", text)
+        or re.search(r"\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b", text)
+        or re.search(r"\b(?:secret|token|password|passwd|api[_-]?key)\s*[:#=]\s*[^\s,，;；]+", text, re.I)
+    )
+    if unsafe:
+        raise ValueError(f"history index {label} 包含敏感值、本机绝对路径或内网地址")
+    return text[:limit]
+
+
+def _history_index_list(value, label):
+    if not isinstance(value, list):
+        raise ValueError(f"history index {label} 必须为数组")
+    result = []
+    seen = set()
+    for index, item in enumerate(value[:MAX_EXPERIENCE_INDEX_ITEMS]):
+        clean = _history_index_text(item, f"{label}[{index}]")
+        if clean and clean not in seen:
+            result.append(clean)
+            seen.add(clean)
+    return result
+
+
+def _bounded_experience_index(value, task_id):
+    if not isinstance(value, dict) or value.get("schema") != "cap-experience-index/v1":
+        raise ValueError("history index experienceIndex schema 非法")
+    result = {"schema": "cap-experience-index/v1"}
+    for key in ("title", "sourceCommit"):
+        if key in value:
+            result[key] = _history_index_text(value[key], f"experienceIndex.{key}")
+    for key in ("retrievalCues", "problemPatterns", "decisionRules", "invalidationSignals",
+                "codePaths", "entryPoints", "symbols", "invariants", "codeAnchors"):
+        if key in value:
+            result[key] = _history_index_list(value[key], f"experienceIndex.{key}")
+    result["path"] = f".cap/history/{task_id}/experience.md"
+    return result
+
+
+def _build_history_index(manifest, archive_dir):
+    task_id = manifest.get("taskId")
+    if (not isinstance(task_id, str) or _safe_archive_segment(task_id, "task-id") != task_id
+            or not STABLE_TASK_ID.fullmatch(task_id)):
+        raise ValueError("history index taskId 非稳定格式")
+    disposition = manifest.get("knowledgeDisposition") or "legacy-unknown"
+    if disposition not in KNOWLEDGE_DISPOSITIONS | {"legacy-unknown", "legacy-local"}:
+        raise ValueError(f"history index knowledgeDisposition 非法: {disposition}")
+    item = {
+        "schemaVersion": 1,
+        "taskId": task_id,
+        "parentTaskId": _history_index_text(manifest.get("parentTaskId", ""), "parentTaskId", limit=128),
+        "title": _history_index_text(manifest.get("title", ""), "title"),
+        "intentSummary": _history_index_text(manifest.get("intentSummary", ""), "intentSummary"),
+        "keywords": _history_index_list(manifest.get("keywords", []), "keywords"),
+        "branch": _history_index_text(manifest.get("branch", ""), "branch", limit=256),
+        "baseCommit": _history_index_text(manifest.get("baseCommit", ""), "baseCommit", limit=128),
+        "deliveryCommit": _history_index_text(manifest.get("deliveryCommit", ""), "deliveryCommit", limit=128),
+        "completedAt": _history_index_text(manifest.get("completedAt", ""), "completedAt", limit=128),
+        "status": _history_index_text(manifest.get("status", ""), "status", limit=32),
+        "knowledgeDisposition": disposition,
+        "artifactRoot": f".cap/history/{task_id}",
+    }
+    document_id = manifest.get("knowledgeDocumentId")
+    if document_id:
+        if not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id):
+            raise ValueError("history index knowledgeDocumentId 非稳定格式")
+        item["knowledgeDocumentId"] = document_id
+    experience_index = _experience_index(os.path.join(archive_dir, "experience.md"))
+    if experience_index:
+        item["experienceIndex"] = _bounded_experience_index(experience_index, task_id)
+    if disposition in EXPERIENCE_REQUIRED_DISPOSITIONS and "experienceIndex" not in item:
+        raise ValueError(f"history index {disposition} 缺少合格 experienceIndex")
+    encoded = (json.dumps(item, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    if len(encoded) > MAX_HISTORY_INDEX_BYTES:
+        raise ValueError("history index 超过 256 KiB 上限")
+    return item
+
+
+def _read_valid_history_index(cap_dir, task_id):
+    try:
+        segment = _safe_archive_segment(task_id, "task-id")
+        if not STABLE_TASK_ID.fullmatch(segment):
+            return None
+        path = os.path.join(cap_dir, "history", "index", f"{segment}.json")
+        info = os.lstat(path)
+        if os.path.islink(path) or not os.path.isfile(path) or info.st_size <= 0 or info.st_size > MAX_HISTORY_INDEX_BYTES:
+            return None
+        item = _read_json(path)
+        if not isinstance(item, dict) or item.get("schemaVersion") != 1 or item.get("taskId") != task_id:
+            return None
+        disposition = item.get("knowledgeDisposition")
+        if disposition not in KNOWLEDGE_DISPOSITIONS:
+            return None
+        if item.get("artifactRoot") != f".cap/history/{task_id}":
+            return None
+        document_id = item.get("knowledgeDocumentId")
+        if document_id and (not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id)):
+            return None
+        if disposition == "synced" and not document_id:
+            return None
+        if disposition in EXPERIENCE_REQUIRED_DISPOSITIONS:
+            experience = item.get("experienceIndex")
+            if (not isinstance(experience, dict)
+                    or experience.get("schema") != "cap-experience-index/v1"
+                    or experience.get("path") != f".cap/history/{task_id}/experience.md"):
+                return None
+        return item
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
 
 
 def _atomic_write_text(path, text):
@@ -190,7 +364,8 @@ def _safe_archive_segment(value, label):
     return text
 
 
-def _validate_retire_manifest(archive_dir, manifest, expected_task_id="", expected_delivery_commit=""):
+def _validate_retire_manifest(archive_dir, manifest, expected_task_id="", expected_delivery_commit="",
+                              expected_knowledge_disposition="", expected_knowledge_document_id=""):
     if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 1:
         raise ValueError("retire manifest schemaVersion 非法")
     if manifest.get("status") != "completed":
@@ -202,6 +377,10 @@ def _validate_retire_manifest(archive_dir, manifest, expected_task_id="", expect
         raise ValueError(f"retire manifest taskId 不匹配: {manifest.get('taskId')} != {expected_task_id}")
     if expected_delivery_commit and manifest.get("deliveryCommit") != expected_delivery_commit:
         raise ValueError("retire manifest deliveryCommit 与本次请求不匹配")
+    if expected_knowledge_disposition and manifest.get("knowledgeDisposition") != expected_knowledge_disposition:
+        raise ValueError("retire manifest knowledgeDisposition 与本次请求不匹配")
+    if expected_knowledge_document_id and manifest.get("knowledgeDocumentId") != expected_knowledge_document_id:
+        raise ValueError("retire manifest knowledgeDocumentId 与本次请求不匹配")
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list):
         raise ValueError("retire manifest artifacts 非数组")
@@ -237,7 +416,8 @@ def _validate_retire_manifest(archive_dir, manifest, expected_task_id="", expect
     return sorted(copied)
 
 
-def _validate_retire_transaction(cap, transaction, history_mode, expected_task_id=""):
+def _validate_retire_transaction(cap, transaction, history_mode, expected_task_id="",
+                                 expected_knowledge_disposition="", expected_knowledge_document_id=""):
     if not isinstance(transaction, dict) or transaction.get("schemaVersion") != 1:
         raise ValueError("retirement transaction schemaVersion 非法")
     if transaction.get("phase") not in RETIRE_PHASES:
@@ -252,6 +432,10 @@ def _validate_retire_transaction(cap, transaction, history_mode, expected_task_i
         raise ValueError("retirement transaction request 非对象")
     if expected_task_id and request.get("taskId") != expected_task_id:
         raise ValueError(f"retirement transaction taskId 不匹配: {request.get('taskId')} != {expected_task_id}")
+    if expected_knowledge_disposition and request.get("knowledgeDisposition") != expected_knowledge_disposition:
+        raise ValueError("retirement transaction knowledgeDisposition 与本次请求不匹配")
+    if expected_knowledge_document_id and request.get("knowledgeDocumentId") != expected_knowledge_document_id:
+        raise ValueError("retirement transaction knowledgeDocumentId 与本次请求不匹配")
     req_root_relative = request.get("reqRootRelative", "")
     if req_root_relative:
         if not isinstance(req_root_relative, str) or "\\" in req_root_relative or os.path.isabs(req_root_relative):
@@ -282,6 +466,49 @@ def _state_value(path, key):
             if match:
                 return match.group(1).strip()
     return ""
+
+
+def _outbox_event_task_ref(event):
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    nested = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    return str(event.get("localTaskRef") or event.get("local_task_ref") or
+               payload.get("task_id") or payload.get("taskId") or
+               nested.get("task_id") or nested.get("taskId") or "").strip()
+
+
+def _has_pending_experience(cap, task_id):
+    path = os.path.join(cap, "outbox.jsonl")
+    if not os.path.isfile(path) or os.path.islink(path):
+        return False
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "experience.record" and _outbox_event_task_ref(event) == task_id:
+                return True
+    return False
+
+
+def _validate_knowledge_disposition(cap, task_id, disposition, document_id, experience_index, strict):
+    if not strict:
+        return disposition or "legacy-local"
+    if not disposition:
+        raise ValueError("strict retire requires explicit knowledge disposition")
+    if disposition not in KNOWLEDGE_DISPOSITIONS:
+        raise ValueError(f"非法 knowledge disposition: {disposition}")
+    if disposition == "no-reusable-experience":
+        if experience_index:
+            raise ValueError("no-reusable-experience 与合格 experience.md 冲突")
+        return disposition
+    if not experience_index:
+        raise ValueError(f"{disposition} requires a qualified experience.md")
+    if disposition == "synced" and not document_id:
+        raise ValueError("synced knowledge disposition requires --knowledge-document-id")
+    if disposition == "pending-sync" and not _has_pending_experience(cap, task_id):
+        raise ValueError("pending-sync requires same-task experience.record in Outbox")
+    return disposition
 
 
 def parse_frontmatter(text):
@@ -517,8 +744,7 @@ def _append_leaf_cap_log(leaf_path, entry):
 
 
 def _append_evolution(cap_dir, entry):
-    """耐久教训回流:统一 append `<cap>/EVOLUTION.md`(唯一正屋;缺则建 `# Evolution log` 头)。
-    PROFILE 不承载流水(仅留指针)——见 templates/PROFILE.md。"""
+    """追加近期决策，并只移出已有耐久索引证明的超窗条目。"""
     target = os.path.join(cap_dir, "EVOLUTION.md")
     text = ""
     if os.path.isfile(target):
@@ -528,8 +754,103 @@ def _append_evolution(cap_dir, entry):
         if not text:
             text = "# Evolution log\n\n"
         text = text.rstrip("\n") + "\n" + entry + "\n"
+        lines = text.splitlines()
+        entries = [index for index, line in enumerate(lines)
+                   if line.strip() and not line.startswith("# Evolution log")]
+        while len(entries) > EVOLUTION_WINDOW_LIMIT:
+            removable = entries[0]
+            if not _evolution_entry_is_durable(cap_dir, lines[removable]):
+                break
+            del lines[removable]
+            entries = [index for index, line in enumerate(lines)
+                       if line.strip() and not line.startswith("# Evolution log")]
+        text = "\n".join(lines).rstrip("\n") + "\n"
         _atomic_write_text(target, text)
     return target
+
+
+def _evolution_entry_is_durable(cap_dir, entry):
+    task = re.search(r"\[task:([^\]]+)\]", entry)
+    if task:
+        try:
+            segment = _safe_archive_segment(task.group(1), "task-id")
+        except ValueError:
+            return False
+        return _read_valid_history_index(cap_dir, segment) is not None
+    knowledge = re.search(r"\[knowledge:([^\]]+)\]", entry)
+    return bool(knowledge and STABLE_KNOWLEDGE_ID.fullmatch(knowledge.group(1)))
+
+
+def _bind_evolution_entry(entry, task_id):
+    if not entry or not task_id or "[task:" in entry or "[knowledge:" in entry:
+        return entry
+    prefix = "- " if entry.startswith("- ") else ""
+    body = entry[2:] if prefix else entry
+    return f"{prefix}[task:{task_id}] · {body}"
+
+
+def _tracked_raw_history(cap):
+    repo = os.path.dirname(os.path.realpath(cap))
+    try:
+        root = subprocess.run(["git", "-C", repo, "rev-parse", "--show-toplevel"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        if os.path.realpath(os.path.join(root, ".cap")) != os.path.realpath(cap):
+            return []
+        output = subprocess.run(["git", "-C", root, "ls-files", "--", ".cap/history"],
+                                capture_output=True, text=True, check=True).stdout
+        return sorted(path for path in output.splitlines()
+                      if path and not path.startswith(".cap/history/index/"))
+    except (OSError, subprocess.CalledProcessError):
+        return []
+
+
+def cmd_knowledge_audit(args):
+    """只读报告本地知识投影、同步处置和容量状态。"""
+    index_root = os.path.join(args.cap, "history", "index")
+    rows = []
+    total_bytes = 0
+    if os.path.isdir(index_root) and not os.path.islink(index_root):
+        for name in sorted(os.listdir(index_root)):
+            path = os.path.join(index_root, name)
+            if not name.endswith(".json") or os.path.islink(path) or not os.path.isfile(path):
+                continue
+            size = os.path.getsize(path)
+            total_bytes += size
+            if size > 256 * 1024:
+                rows.append({"file": name, "knowledgeDisposition": "invalid-oversize"})
+                continue
+            try:
+                item = _read_json(path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                rows.append({"file": name, "knowledgeDisposition": "invalid-json"})
+                continue
+            if not isinstance(item, dict):
+                rows.append({"file": name, "knowledgeDisposition": "invalid-schema"})
+                continue
+            rows.append({"file": name, "taskId": item.get("taskId", ""),
+                         "knowledgeDisposition": item.get("knowledgeDisposition") or "legacy-unknown"})
+    evolution_path = os.path.join(args.cap, "EVOLUTION.md")
+    evolution_entries = []
+    if os.path.isfile(evolution_path) and not os.path.islink(evolution_path):
+        with open(evolution_path, encoding="utf-8") as f:
+            evolution_entries = [line for line in f.read().splitlines()
+                                 if line.strip() and not line.startswith("# Evolution log")]
+    dispositions = [item["knowledgeDisposition"] for item in rows]
+    result = {
+        "schemaVersion": 1,
+        "indexes": {
+            "count": len(rows), "bytes": total_bytes,
+            "legacyUnknown": dispositions.count("legacy-unknown"),
+            "pendingSync": dispositions.count("pending-sync"),
+            "invalid": sum(value.startswith("invalid-") for value in dispositions),
+        },
+        "evolution": {"entries": len(evolution_entries),
+                      "limit": EVOLUTION_WINDOW_LIMIT,
+                      "overBudget": len(evolution_entries) > EVOLUTION_WINDOW_LIMIT},
+        "git": {"trackedRawHistory": _tracked_raw_history(args.cap)},
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
 
 
 def cmd_move(args):
@@ -670,13 +991,33 @@ def cmd_retire(args):
         return 1
     expected_task_id = args.task_id or state_task_id
     manifest = _read_json(manifest_path) if archive_exists else None
+    archived_experience = os.path.join(archive_dir, "experience.md")
+    active_experience = os.path.join(args.cap, "experience.md")
+    experience_source = archived_experience if os.path.isfile(archived_experience) else active_experience
+    experience_index = _experience_index(experience_source)
+    requested_disposition = args.knowledge_disposition or ""
+    requested_document_id = args.knowledge_document_id or ""
+    legacy_archive = bool(manifest and "knowledgeDisposition" not in manifest)
+    if args.strict and legacy_archive:
+        print("strict retire refuses legacy manifest without explicit knowledge disposition; migrate the manifest first", file=sys.stderr)
+        return 2
+    if legacy_archive:
+        expected_disposition = ""
+        expected_document_id = ""
+    else:
+        expected_disposition = requested_disposition
+        expected_document_id = requested_document_id
     try:
         manifest_copied = _validate_retire_manifest(
             archive_dir, manifest, expected_task_id,
             args.delivery_commit if args.strict else "",
+            expected_disposition, expected_document_id,
         ) if manifest else []
         if transaction:
-            transaction_copied = _validate_retire_transaction(args.cap, transaction, history_mode, expected_task_id)
+            transaction_copied = _validate_retire_transaction(
+                args.cap, transaction, history_mode, expected_task_id,
+                expected_disposition, expected_document_id,
+            )
             if transaction_copied != manifest_copied:
                 raise ValueError("retirement transaction copied 与 manifest 工件不一致")
             copied = transaction_copied
@@ -707,6 +1048,19 @@ def cmd_retire(args):
             return 2
     elif archive_exists and not transaction and state_stage and state_stage != "done":
         print(f"当前仍有活动 Task,拒绝从旧 manifest 恢复退场: stage={state_stage}", file=sys.stderr)
+        return 2
+    try:
+        if legacy_archive:
+            knowledge_disposition = "legacy-unknown"
+            knowledge_document_id = str(manifest.get("knowledgeDocumentId") or "")
+        else:
+            knowledge_disposition = _validate_knowledge_disposition(
+                args.cap, expected_task_id, requested_disposition,
+                requested_document_id, experience_index, args.strict,
+            )
+            knowledge_document_id = requested_document_id
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
         return 2
     if not os.path.isfile(state_path) and transaction:
         remaining = [name for name in copied if os.path.lexists(_retire_cleanup_path(args.cap, name))]
@@ -747,13 +1101,15 @@ def cmd_retire(args):
                     "deliveryCommit": args.delivery_commit or "",
                     "completedAt": args.completed_at or args.date,
                     "status": "completed",
+                    "knowledgeDisposition": knowledge_disposition,
+                    "knowledgeDocumentId": knowledge_document_id,
                     "artifacts": _artifact_manifest(temp_dir),
                 }
                 _atomic_write_json(os.path.join(temp_dir, "manifest.json"), manifest)
                 transaction = {
                     "schemaVersion": 1, "phase": "snapshot", "copied": copied,
                     "historyMode": history_mode,
-                    "request": {"taskId": args.task_id or state_task_id, "leaf": args.leaf or "", "reqRootRelative": req_root_relative, "evolutionEntry": args.evolution_entry or ""},
+                    "request": {"taskId": args.task_id or state_task_id, "leaf": args.leaf or "", "reqRootRelative": req_root_relative, "evolutionEntry": args.evolution_entry or "", "knowledgeDisposition": knowledge_disposition, "knowledgeDocumentId": knowledge_document_id},
                 }
                 _atomic_write_json(os.path.join(temp_dir, "retirement.json"), transaction)
                 os.rename(temp_dir, archive_dir)
@@ -766,18 +1122,25 @@ def cmd_retire(args):
             transaction = {
                 "schemaVersion": 1, "phase": "snapshot", "copied": copied,
                 "historyMode": history_mode,
-                "request": {"taskId": args.task_id or state_task_id, "leaf": args.leaf or "", "reqRootRelative": req_root_relative, "evolutionEntry": args.evolution_entry or ""},
+                "request": {"taskId": args.task_id or state_task_id, "leaf": args.leaf or "", "reqRootRelative": req_root_relative, "evolutionEntry": args.evolution_entry or "", "knowledgeDisposition": knowledge_disposition, "knowledgeDocumentId": knowledge_document_id},
             }
             _atomic_write_json(transaction_path, transaction)
     else:
-        copied = _validate_retire_transaction(args.cap, transaction, history_mode, expected_task_id)
+        copied = _validate_retire_transaction(
+            args.cap, transaction, history_mode, expected_task_id,
+            expected_disposition, expected_document_id,
+        )
 
     try:
         manifest_copied = _validate_retire_manifest(
             archive_dir, manifest, expected_task_id,
             args.delivery_commit if args.strict else "",
+            expected_disposition, expected_document_id,
         )
-        transaction_copied = _validate_retire_transaction(args.cap, transaction, history_mode, expected_task_id)
+        transaction_copied = _validate_retire_transaction(
+            args.cap, transaction, history_mode, expected_task_id,
+            expected_disposition, expected_document_id,
+        )
         if manifest_copied != transaction_copied:
             raise ValueError("retirement transaction copied 与 manifest 工件不一致")
         copied = transaction_copied
@@ -790,6 +1153,17 @@ def cmd_retire(args):
         _atomic_write_json(transaction_path, transaction)
 
     current_phase = lambda: RETIRE_PHASES[transaction.get("phase", "snapshot")]
+    index_path = None
+    prepared_index_item = None
+    if transaction.get("historyMode"):
+        task_id = transaction.get("request", {}).get("taskId") or manifest.get("taskId")
+        index_path = os.path.join(args.cap, "history", "index", f"{task_id}.json")
+        if current_phase() < RETIRE_PHASES["index"]:
+            try:
+                prepared_index_item = _build_history_index(manifest, archive_dir)
+            except (TypeError, ValueError) as error:
+                print(f"history index metadata invalid: {error}", file=sys.stderr)
+                return 2
 
     if current_phase() < RETIRE_PHASES["cleanup"]:
         for name in copied:
@@ -803,18 +1177,9 @@ def cmd_retire(args):
         _fail_retire_after("cleanup")
         advance("cleanup")
 
-    index_path = None
     if transaction.get("historyMode"):
-        task_id = transaction.get("request", {}).get("taskId") or manifest.get("taskId")
-        index_path = os.path.join(args.cap, "history", "index", f"{task_id}.json")
         if current_phase() < RETIRE_PHASES["index"]:
-            index_item = {key: manifest[key] for key in ("schemaVersion", "taskId", "parentTaskId", "title", "intentSummary", "keywords", "branch", "baseCommit", "deliveryCommit", "completedAt", "status")}
-            index_item["artifactRoot"] = f".cap/history/{task_id}"
-            experience_index = _experience_index(os.path.join(archive_dir, "experience.md"))
-            if experience_index:
-                index_item["experienceIndex"] = experience_index
-                index_item["experienceIndex"]["path"] = f".cap/history/{task_id}/experience.md"
-            _atomic_write_json(index_path, index_item)
+            _atomic_write_json(index_path, prepared_index_item)
             _fail_retire_after("index")
             advance("index")
     elif current_phase() < RETIRE_PHASES["index"]:
@@ -840,9 +1205,11 @@ def cmd_retire(args):
     leaf_evolution = None
     if current_phase() < RETIRE_PHASES["backflow"]:
         if request.get("evolutionEntry"):
-            backflow = _append_evolution(args.cap, request["evolutionEntry"])
+            evolution_entry = (_bind_evolution_entry(request["evolutionEntry"], request.get("taskId", ""))
+                               if transaction.get("historyMode") else request["evolutionEntry"])
+            backflow = _append_evolution(args.cap, evolution_entry)
             if leaf_path:
-                leaf_evolution = _append_leaf_cap_log(leaf_path, request["evolutionEntry"])
+                leaf_evolution = _append_leaf_cap_log(leaf_path, evolution_entry)
         _fail_retire_after("backflow")
         advance("backflow")
     elif request.get("evolutionEntry"):
@@ -898,12 +1265,17 @@ def main(argv=None):
     pr.add_argument("--completed-at", default="")
     pr.add_argument("--gate-status", choices=("passed", "pending", "blocked"), default="pending")
     pr.add_argument("--strict", action="store_true", help="要求 Task/Commit/Server Gate 完整后才允许退场")
+    pr.add_argument("--knowledge-disposition", choices=tuple(sorted(KNOWLEDGE_DISPOSITIONS)), default="",
+                    help="知识处置:synced/pending-sync/local-only/no-reusable-experience")
+    pr.add_argument("--knowledge-document-id", default="", help="synced 对应的中心知识文档 ID")
     pr.add_argument("--leaf", help="源叶 id(给则标 shipped)")
     pr.add_argument("--req-root", dest="req_root", help="requirements 树根(配合 --leaf)")
     pr.add_argument("--evolution-entry", dest="evolution_entry",
                     help="回流到 Evolution log 的一行(由调用方蒸馏)")
     pn = sub.add_parser("prepare-next", help="新需求前检查是否仍有活动 Task 或待退场 Task")
     pn.add_argument("--cap", required=True, help=".cap 目录")
+    pka = sub.add_parser("knowledge-audit", help="只读审计本地知识索引、处置和容量")
+    pka.add_argument("--cap", required=True, help=".cap 目录")
     pm = sub.add_parser("move", help="叶迁域:mv 文件 + 改 id/domain_path + 改写依赖")
     pm.add_argument("--root", required=True, help=".cap/requirements 目录")
     pm.add_argument("--leaf", required=True, help="要迁移的叶 id")
@@ -923,6 +1295,8 @@ def main(argv=None):
         return cmd_retire(args)
     if args.cmd == "prepare-next":
         return cmd_prepare_next(args)
+    if args.cmd == "knowledge-audit":
+        return cmd_knowledge_audit(args)
     if not os.path.isdir(args.root):
         print(f"root 不存在: {args.root}", file=sys.stderr)
         return 2

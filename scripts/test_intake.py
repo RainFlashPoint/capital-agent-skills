@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 INTAKE = os.path.join(HERE, "intake.py")
 sys.path.insert(0, HERE)
 import intake  # noqa: E402  (直接引用常量/函数;CLI 行为仍走 subprocess run())
@@ -133,6 +134,11 @@ def run_prepare_next(cap):
                           capture_output=True, text=True)
 
 
+def run_knowledge_audit(cap):
+    return subprocess.run([sys.executable, INTAKE, "knowledge-audit", "--cap", cap],
+                          capture_output=True, text=True)
+
+
 def _read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
@@ -147,6 +153,72 @@ def _make_cap(cap, names=("spec.md", "plan.md", "experience.md", "STATE.md"),
         os.makedirs(os.path.join(cap, d), exist_ok=True)
         with open(os.path.join(cap, d, "r.md"), "w", encoding="utf-8") as f:
             f.write(d)
+
+
+def _write_valid_experience(cap, task_id="task_123", commit="def"):
+    with open(os.path.join(cap, "experience.md"), "w", encoding="utf-8") as f:
+        f.write(f"""---
+schema: cap-experience/v1
+title: 支付异步状态查询收敛
+task-id: {task_id}
+source-commit: {commit}
+---
+
+## 复用触发与检索线索 / Reuse triggers and retrieval cues
+- 触发：当支付同步返回处理中且存在官方查询接口时。
+- 关键词：PROCESSING、查询收敛、幂等终态。
+
+## 问题与根因 / Problem and cause
+- 问题：同步处理中被误写为成功。
+- 根因：把接口受理等同于支付终态。
+
+## 决策与行动 / Decision and actions
+- 决策：当同步状态为处理中时，必须通过官方查询收敛终态。
+
+## 实现锚点与不变量 / Implementation anchors and invariants
+- 入口：src/payment/callback.ts 的 getPaymentStatus
+- 改动点：src/payment/callback.ts；src/payment/status.ts
+- 不变量：PaymentStatus_PROCESSING 不能直接写入成功。
+
+## 失效信号 / Invalidation signals
+- 失效信号：厂商状态枚举或查询协议发生变化。
+""")
+
+
+def _write_completed_archive(cap, task_id="task_123", **metadata):
+    archive = os.path.join(cap, "history", task_id)
+    os.makedirs(archive, exist_ok=True)
+    archived_spec = os.path.join(archive, "spec.md")
+    with open(archived_spec, "w", encoding="utf-8") as f:
+        f.write("archived")
+    with open(os.path.join(cap, "spec.md"), "w", encoding="utf-8") as f:
+        f.write("active")
+    with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+        f.write(f"stage: done\ntask-id: {task_id}\n")
+    manifest = {
+        "schemaVersion": 1, "taskId": task_id, "parentTaskId": "", "title": "test",
+        "intentSummary": "test intent", "keywords": ["test"], "branch": "main",
+        "baseCommit": "abc", "deliveryCommit": "def", "completedAt": "2026-09-19",
+        "status": "completed", "knowledgeDisposition": "no-reusable-experience",
+        "artifacts": [{"path": "spec.md", "sha256": intake._sha256(archived_spec), "size": 8}],
+    }
+    manifest.update(metadata)
+    with open(os.path.join(archive, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump(manifest, f)
+    return archive
+
+
+def _valid_history_index(task_id):
+    return {
+        "schemaVersion": 1,
+        "taskId": task_id,
+        "knowledgeDisposition": "local-only",
+        "artifactRoot": f".cap/history/{task_id}",
+        "experienceIndex": {
+            "schema": "cap-experience-index/v1",
+            "path": f".cap/history/{task_id}/experience.md",
+        },
+    }
 
 
 class RetireTest(unittest.TestCase):
@@ -175,27 +247,7 @@ class RetireTest(unittest.TestCase):
     def test_task_history_snapshot_is_indexed_and_clears_after_validation(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap)
-            with open(os.path.join(cap, "experience.md"), "w", encoding="utf-8") as f:
-                f.write("""---
-schema: cap-experience/v1
-title: 支付异步状态查询收敛
-source-commit: def
----
-
-## 复用触发与检索线索 / Reuse triggers and retrieval cues
-- 触发：当支付同步返回处理中且存在官方查询接口时。
-- 关键词：PROCESSING、查询收敛、幂等终态。
-
-## 问题与根因 / Problem and cause
-- 问题：同步处理中被误写为成功。
-- 根因：把接口受理等同于支付终态。
-
-## 决策与行动 / Decision and actions
-- 决策：当同步状态为处理中时，必须通过官方查询收敛终态。
-
-## 失效信号 / Invalidation signals
-- 失效信号：厂商状态枚举或查询协议发生变化。
-""")
+            _write_valid_experience(cap)
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: done\ntask-id: task_123\n")
             r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
@@ -203,6 +255,7 @@ source-commit: def
                            "--title", "支付 DTO 续作", "--keywords", "支付,DTO",
                            "--branch", "dev", "--base-commit", "abc",
                            "--delivery-commit", "def", "--completed-at", "2026-07-29T01:00:00Z",
+                           "--knowledge-disposition", "local-only",
                            "--gate-status", "passed", "--strict")
             self.assertEqual(r.returncode, 0, r.stderr)
             history = os.path.join(cap, "history", "task_123")
@@ -217,11 +270,73 @@ source-commit: def
             self.assertEqual(index["experienceIndex"]["path"], ".cap/history/task_123/experience.md")
             self.assertIn("查询收敛", " ".join(index["experienceIndex"]["retrievalCues"]))
             self.assertIn("必须通过官方查询", " ".join(index["experienceIndex"]["decisionRules"]))
+            self.assertIn("src/payment/callback.ts", index["experienceIndex"]["codePaths"])
+            self.assertIn("PaymentStatus_PROCESSING", index["experienceIndex"]["symbols"])
+            self.assertIn("getPaymentStatus", index["experienceIndex"]["symbols"])
+            self.assertIn("PaymentStatus_PROCESSING 不能直接写入成功。", index["experienceIndex"]["invariants"])
             self.assertTrue(any(item["path"] == "plan.md" and item["sha256"] for item in manifest["artifacts"]))
             self.assertTrue(any(item["path"] == "experience.md" and item["sha256"] for item in manifest["artifacts"]))
             self.assertTrue(os.path.isfile(os.path.join(history, "experience.md")))
             self.assertFalse(os.path.exists(os.path.join(cap, "experience.md")))
             self.assertFalse(os.path.exists(os.path.join(cap, "STATE.md")))
+            self.assertEqual(index["knowledgeDisposition"], "local-only")
+
+    def test_strict_retire_requires_explicit_knowledge_disposition_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
+                           "--task-id", "task_123", "--delivery-commit", "def",
+                           "--gate-status", "passed", "--strict")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("knowledge disposition", (r.stdout + r.stderr).lower())
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+            self.assertFalse(os.path.exists(os.path.join(cap, "history", "task_123")))
+
+    def test_pending_sync_requires_same_task_experience_outbox_event(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            _write_valid_experience(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            args = ("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
+                    "--task-id", "task_123", "--delivery-commit", "def",
+                    "--knowledge-disposition", "pending-sync",
+                    "--gate-status", "passed", "--strict")
+            rejected = run_retire(*args)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("experience.record", rejected.stderr)
+            with open(os.path.join(cap, "outbox.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "experience.record", "localTaskRef": "task_other", "payload": {}}) + "\n")
+                f.write(json.dumps({"type": "experience.record", "localTaskRef": "task_123", "payload": {"task_id": "task_123"}}) + "\n")
+            accepted = run_retire(*args)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            path = os.path.join(cap, "history", "index", "task_123.json")
+            with open(path, encoding="utf-8") as f:
+                index = json.load(f)
+            self.assertEqual(index["knowledgeDisposition"], "pending-sync")
+
+    def test_synced_requires_document_id_and_no_reusable_rejects_valid_experience(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            _write_valid_experience(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            common = ("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
+                      "--task-id", "task_123", "--delivery-commit", "def",
+                      "--gate-status", "passed", "--strict")
+            no_doc = run_retire(*common, "--knowledge-disposition", "synced")
+            self.assertNotEqual(no_doc.returncode, 0)
+            contradicted = run_retire(*common, "--knowledge-disposition", "no-reusable-experience")
+            self.assertNotEqual(contradicted.returncode, 0)
+            accepted = run_retire(*common, "--knowledge-disposition", "synced",
+                                  "--knowledge-document-id", "kn_123")
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            path = os.path.join(cap, "history", "index", "task_123.json")
+            with open(path, encoding="utf-8") as f:
+                index = json.load(f)
+            self.assertEqual(index["knowledgeDocumentId"], "kn_123")
 
     def test_retire_manifest_includes_execution_and_release_artifacts(self):
         with tempfile.TemporaryDirectory() as cap:
@@ -234,6 +349,7 @@ source-commit: def
                 f.write("stage: done\ntask-id: task_exec\n")
             r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
                            "--task-id", "task_exec", "--delivery-commit", "def",
+                           "--knowledge-disposition", "no-reusable-experience",
                            "--gate-status", "passed", "--strict")
             self.assertEqual(r.returncode, 0, r.stderr)
             archive = os.path.join(cap, "history", "task_exec")
@@ -256,6 +372,57 @@ source-commit: def
             self.assertNotEqual(r.returncode, 0)
             self.assertTrue(os.path.exists(os.path.join(cap, "STATE.md")))
             self.assertFalse(os.path.exists(os.path.join(cap, "history", "task_123")))
+
+    def test_strict_retire_refuses_legacy_manifest_without_disposition_and_preserves_active_files(self):
+        with tempfile.TemporaryDirectory() as cap:
+            archive = _write_completed_archive(cap)
+            manifest_path = os.path.join(archive, "manifest.json")
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            manifest.pop("knowledgeDisposition")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+
+            result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                                "--task-id", "task_123", "--delivery-commit", "def",
+                                "--gate-status", "passed", "--strict")
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("legacy", result.stderr.lower())
+            self.assertEqual(_read(os.path.join(cap, "spec.md")), "active")
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+
+    def test_history_index_rejects_unsafe_top_level_metadata_before_cleanup(self):
+        unsafe_cases = {
+            "secret": {"title": "token=super-secret-value"},
+            "absolute-path": {"intentSummary": "read /Users/alice/private.txt"},
+            "private-address": {"branch": "deploy-" + ".".join(("10", "2", "7", "214"))},
+        }
+        for label, metadata in unsafe_cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as cap:
+                _write_completed_archive(cap, **metadata)
+                result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                                    "--task-id", "task_123", "--delivery-commit", "def",
+                                    "--knowledge-disposition", "no-reusable-experience",
+                                    "--gate-status", "passed", "--strict")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(_read(os.path.join(cap, "spec.md")), "active")
+                self.assertFalse(os.path.exists(os.path.join(cap, "history", "index", "task_123.json")))
+
+    def test_history_index_bounds_oversized_manifest_metadata(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _write_completed_archive(cap, title="x" * (300 * 1024), keywords=["k" * 4096] * 100)
+            result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                                "--task-id", "task_123", "--delivery-commit", "def",
+                                "--knowledge-disposition", "no-reusable-experience",
+                                "--gate-status", "passed", "--strict")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            index_path = os.path.join(cap, "history", "index", "task_123.json")
+            self.assertLessEqual(os.path.getsize(index_path), 256 * 1024)
+            with open(index_path, encoding="utf-8") as f:
+                index = json.load(f)
+            self.assertLessEqual(len(index["title"]), 500)
+            self.assertLessEqual(len(index["keywords"]), intake.MAX_EXPERIENCE_INDEX_ITEMS)
 
     def test_legacy_manifest_path_traversal_is_rejected_without_deleting_repository(self):
         with tempfile.TemporaryDirectory() as repo:
@@ -344,6 +511,7 @@ source-commit: def
                 f.write("stage: done\ntask-id: task_123\n")
             args = ("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
                     "--task-id", "task_123", "--delivery-commit", "def",
+                    "--knowledge-disposition", "no-reusable-experience",
                     "--gate-status", "passed", "--strict")
             first = run_retire(*args)
             second = run_retire(*args)
@@ -363,6 +531,7 @@ source-commit: def
                 entry = "- 2026-08-17 · feat · 可恢复退场"
                 args = ("--cap", cap, "--slug", "feat", "--date", "2026-08-17",
                         "--task-id", "task_123", "--delivery-commit", "deadbeef",
+                        "--knowledge-disposition", "no-reusable-experience",
                         "--gate-status", "passed", "--strict",
                         "--leaf", "order.checkout.a", "--req-root", req,
                         "--evolution-entry", entry)
@@ -529,6 +698,99 @@ source-commit: def
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIsNone(json.loads(r.stdout)["leaf_evolution"])
             self.assertIn("无叶entry", _read(os.path.join(cap, "EVOLUTION.md")))
+
+    def test_evolution_window_only_prunes_entries_with_durable_task_indexes(self):
+        with tempfile.TemporaryDirectory() as cap:
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root)
+            for number in range(51):
+                task_id = f"task_{number:02d}"
+                with open(os.path.join(index_root, f"{task_id}.json"), "w", encoding="utf-8") as f:
+                    json.dump(_valid_history_index(task_id), f)
+                intake._append_evolution(cap, f"- 2026-09-18 · [task:{task_id}] · lesson {number}")
+            lines = [line for line in _read(os.path.join(cap, "EVOLUTION.md")).splitlines()
+                     if line.startswith("-")]
+            self.assertEqual(len(lines), 50)
+            self.assertNotIn("task_00", "\n".join(lines))
+
+            os.remove(os.path.join(index_root, "task_01.json"))
+            intake._append_evolution(cap, "- 2026-09-18 · [task:task_51] · lesson 51")
+            lines = [line for line in _read(os.path.join(cap, "EVOLUTION.md")).splitlines()
+                     if line.startswith("-")]
+            self.assertGreaterEqual(len(lines), 51)
+            self.assertIn("task_01", "\n".join(lines))
+
+    def test_evolution_durability_rejects_empty_malformed_symlink_and_task_mismatch_indexes(self):
+        with tempfile.TemporaryDirectory() as cap:
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root)
+            path = os.path.join(index_root, "task_bad.json")
+
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+            self.assertFalse(intake._evolution_entry_is_durable(cap, "- [task:task_bad] empty"))
+
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("{bad json")
+            self.assertFalse(intake._evolution_entry_is_durable(cap, "- [task:task_bad] malformed"))
+
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(_valid_history_index("task_other"), f)
+            self.assertFalse(intake._evolution_entry_is_durable(cap, "- [task:task_bad] mismatch"))
+
+            os.remove(path)
+            outside = os.path.join(cap, "outside.json")
+            with open(outside, "w", encoding="utf-8") as f:
+                json.dump(_valid_history_index("task_bad"), f)
+            os.symlink(outside, path)
+            self.assertFalse(intake._evolution_entry_is_durable(cap, "- [task:task_bad] symlink"))
+
+    def test_knowledge_audit_is_read_only_and_reports_legacy_pending_and_capacity(self):
+        with tempfile.TemporaryDirectory() as repo:
+            cap = os.path.join(repo, ".cap")
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root)
+            with open(os.path.join(index_root, "legacy.json"), "w", encoding="utf-8") as f:
+                json.dump({"schemaVersion": 1, "taskId": "legacy"}, f)
+            with open(os.path.join(index_root, "pending.json"), "w", encoding="utf-8") as f:
+                json.dump({"schemaVersion": 1, "taskId": "pending",
+                           "knowledgeDisposition": "pending-sync"}, f)
+            with open(os.path.join(index_root, "invalid-shape.json"), "w", encoding="utf-8") as f:
+                json.dump([], f)
+            with open(os.path.join(cap, "EVOLUTION.md"), "w", encoding="utf-8") as f:
+                f.write("# Evolution log\n\n" + "\n".join(f"- line {n}" for n in range(51)) + "\n")
+            before = {path: _read(os.path.join(index_root, path)) for path in os.listdir(index_root)}
+            result = run_knowledge_audit(cap)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            audit = json.loads(result.stdout)
+            self.assertEqual(audit["indexes"]["count"], 3)
+            self.assertEqual(audit["indexes"]["legacyUnknown"], 1)
+            self.assertEqual(audit["indexes"]["pendingSync"], 1)
+            self.assertEqual(audit["indexes"]["invalid"], 1)
+            self.assertEqual(audit["evolution"]["entries"], 51)
+            self.assertTrue(audit["evolution"]["overBudget"])
+            after = {path: _read(os.path.join(index_root, path)) for path in os.listdir(index_root)}
+            self.assertEqual(before, after)
+
+    def test_gitignore_tracks_only_history_indexes(self):
+        with tempfile.TemporaryDirectory() as repo:
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            with open(os.path.join(ROOT, ".gitignore"), encoding="utf-8") as source:
+                rules = source.read()
+            with open(os.path.join(repo, ".gitignore"), "w", encoding="utf-8") as target:
+                target.write(rules)
+            os.makedirs(os.path.join(repo, ".cap", "history", "index"), exist_ok=True)
+            os.makedirs(os.path.join(repo, ".cap", "history", "task_1"), exist_ok=True)
+            index_path = os.path.join(repo, ".cap", "history", "index", "task_1.json")
+            raw_path = os.path.join(repo, ".cap", "history", "task_1", "experience.md")
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write("{}\n")
+            with open(raw_path, "w", encoding="utf-8") as f:
+                f.write("raw\n")
+            index_check = subprocess.run(["git", "check-ignore", "-q", index_path], cwd=repo)
+            raw_check = subprocess.run(["git", "check-ignore", "-q", raw_path], cwd=repo)
+            self.assertNotEqual(index_check.returncode, 0)
+            self.assertEqual(raw_check.returncode, 0)
 
 
 class TreeTest(unittest.TestCase):

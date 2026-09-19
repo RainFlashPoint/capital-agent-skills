@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "taskId": "local-cap-flow-execution-20260912",
+  "parentTaskId": "",
+  "title": "Integrate local execution into cap-flow",
+  "intentSummary": "将 ActionEnvelope、Trusted Executor、EvidenceBundle 与 Gate 接入本地 cap-flow，阶段动作形成可追踪的本地证据。",
+  "keywords": [
+    "cap-flow",
+    "local-execution",
+    "evidence",
+    "gate"
+  ],
+  "branch": "codex/ontology-foundation",
+  "baseCommit": "60c30f5787adf260c74f4aff4adfa44e95f3b11e",
+  "deliveryCommit": "89c285fc009610b6ae5007342b0ef7331e8357ec",
+  "completedAt": "2026-09-12",
+  "status": "completed",
+  "artifactRoot": ".cap/history/local-cap-flow-execution-20260912"
+}
