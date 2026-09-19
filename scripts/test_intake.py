@@ -2,6 +2,7 @@
 """Tests for scripts/intake.py — stdlib unittest, no third-party deps."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -253,6 +254,46 @@ def _valid_history_index(task_id):
 
 
 class RetireTest(unittest.TestCase):
+    def test_retire_rejects_symlinked_active_artifacts_without_cleanup(self):
+        cases = ("top-level-file", "top-level-directory", "nested")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as cap, tempfile.TemporaryDirectory() as outside:
+                _make_cap(cap)
+                with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                    f.write("stage: done\ntask-id: task_symlink\n")
+                outside_file = os.path.join(outside, "outside.md")
+                with open(outside_file, "w", encoding="utf-8") as f:
+                    f.write("OUTSIDE_RETIRE_MARKER")
+
+                if case == "top-level-file":
+                    link_path = os.path.join(cap, "spec.md")
+                    os.remove(link_path)
+                    os.symlink(outside_file, link_path)
+                elif case == "top-level-directory":
+                    outside_dir = os.path.join(outside, "verify")
+                    os.makedirs(outside_dir)
+                    with open(os.path.join(outside_dir, "outside.md"), "w", encoding="utf-8") as f:
+                        f.write("OUTSIDE_RETIRE_MARKER")
+                    link_path = os.path.join(cap, "verify")
+                    shutil.rmtree(link_path)
+                    os.symlink(outside_dir, link_path)
+                else:
+                    link_path = os.path.join(cap, "verify", "outside.md")
+                    os.symlink(outside_file, link_path)
+
+                result = run_retire(
+                    "--cap", cap, "--slug", "symlink", "--date", "2026-09-19",
+                    "--task-id", "task_symlink", "--delivery-commit", VALID_COMMIT,
+                    "--knowledge-disposition", "no-reusable-experience",
+                    "--gate-status", "passed", "--strict",
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("软链接", result.stderr)
+                self.assertTrue(os.path.lexists(link_path))
+                self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+                self.assertFalse(os.path.exists(os.path.join(cap, "history", "task_symlink")))
+
     def test_prepare_next_allows_empty_activity_area(self):
         with tempfile.TemporaryDirectory() as cap:
             r = run_prepare_next(cap)

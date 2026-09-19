@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, opendirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { lstatSync, opendirSync, readFileSync, realpathSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const MAX_TEXT_BYTES = 256 * 1024
@@ -161,17 +161,45 @@ function scoreCandidate(candidate, intentTerms, anchors = []) {
   }
 }
 
-function safeRead(path) {
+function safeCapPath(capRoot, path, expectedType = '') {
   try {
-    const info = lstatSync(path)
-    if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_TEXT_BYTES) return ''
-    return readFileSync(path, 'utf8')
+    const lexicalRoot = resolve(capRoot)
+    const lexicalPath = resolve(path)
+    const relativePath = relative(lexicalRoot, lexicalPath)
+    if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return ''
+    let current = lexicalRoot
+    const parts = relativePath ? relativePath.split(sep) : []
+    for (const part of ['', ...parts]) {
+      if (part) current = join(current, part)
+      const info = lstatSync(current)
+      if (info.isSymbolicLink()) return ''
+    }
+    const canonicalRoot = realpathSync.native(lexicalRoot)
+    const canonicalPath = realpathSync.native(lexicalPath)
+    const canonicalRelative = relative(canonicalRoot, canonicalPath)
+    if (canonicalRelative === '..' || canonicalRelative.startsWith(`..${sep}`) || isAbsolute(canonicalRelative)) return ''
+    const info = lstatSync(canonicalPath)
+    if (expectedType === 'file' && !info.isFile()) return ''
+    if (expectedType === 'directory' && !info.isDirectory()) return ''
+    return canonicalPath
   } catch {
     return ''
   }
 }
-function safeJson(path) {
-  const text = safeRead(path)
+
+function safeRead(capRoot, path) {
+  try {
+    const safePath = safeCapPath(capRoot, path, 'file')
+    if (!safePath) return ''
+    const info = lstatSync(safePath)
+    if (info.size > MAX_TEXT_BYTES) return ''
+    return readFileSync(safePath, 'utf8')
+  } catch {
+    return ''
+  }
+}
+function safeJson(capRoot, path) {
+  const text = safeRead(capRoot, path)
   if (!text) return null
   try {
     const value = JSON.parse(text)
@@ -180,11 +208,11 @@ function safeJson(path) {
     return null
   }
 }
-function boundedDirectoryEntries(path, limit = MAX_DIRECTORY_ENTRIES, report = null) {
+function boundedDirectoryEntries(capRoot, path, limit = MAX_DIRECTORY_ENTRIES, report = null) {
   try {
-    const info = lstatSync(path)
-    if (info.isSymbolicLink() || !info.isDirectory()) return []
-    const directory = opendirSync(path)
+    const safePath = safeCapPath(capRoot, path, 'directory')
+    if (!safePath) return []
+    const directory = opendirSync(safePath)
     const entries = []
     try {
       while (entries.length <= limit) {
@@ -359,23 +387,24 @@ function gitCandidates(repo) {
 function capCandidates(repo, scan = {}) {
   const capRoot = join(repo, '.cap')
   const candidates = []
+  if (!safeCapPath(capRoot, capRoot, 'directory')) return candidates
   let head = ''
   try { head = git(repo, ['rev-parse', 'HEAD']) } catch {}
   const sourceCommitCache = new Map()
   for (const name of ['PROFILE.md', 'EVOLUTION.md']) {
     const path = join(capRoot, name)
-    if (!existsSync(path)) continue
+    if (!safeCapPath(capRoot, path, 'file')) continue
     candidates.push({
       source_type: 'cap_memory', file: `.cap/${name}`,
-      searchText: `${name} ${safeRead(path)}`,
+      searchText: `${name} ${safeRead(capRoot, path)}`,
       inspect: { kind: 'repo_file', value: `.cap/${name}` },
     })
   }
 
   const archiveRoot = join(capRoot, 'archive')
-  if (existsSync(archiveRoot)) {
+  if (safeCapPath(capRoot, archiveRoot, 'directory')) {
     const archiveReport = { entries: 0, truncated: false }
-    for (const entry of boundedDirectoryEntries(archiveRoot, MAX_DIRECTORY_ENTRIES, archiveReport)) {
+    for (const entry of boundedDirectoryEntries(capRoot, archiveRoot, MAX_DIRECTORY_ENTRIES, archiveReport)) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue
       candidates.push({
         source_type: 'cap_archive', file: `.cap/archive/${entry.name}`,
@@ -389,12 +418,12 @@ function capCandidates(repo, scan = {}) {
 
   // 历史正文可能很大且可能含不可信仓库内容；正常侦察只读显式索引，不递归读取快照。
   const indexRoot = join(capRoot, 'history', 'index')
-  if (existsSync(indexRoot) && !lstatSync(indexRoot).isSymbolicLink() && lstatSync(indexRoot).isDirectory()) {
+  if (safeCapPath(capRoot, indexRoot, 'directory')) {
     const indexReport = { entries: 0, truncated: false }
-    for (const entry of boundedDirectoryEntries(indexRoot, MAX_DIRECTORY_ENTRIES, indexReport)) {
+    for (const entry of boundedDirectoryEntries(capRoot, indexRoot, MAX_DIRECTORY_ENTRIES, indexReport)) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) continue
       const file = `.cap/history/index/${entry.name}`
-      const item = validHistoryIndex(safeJson(join(indexRoot, entry.name)), entry.name)
+      const item = validHistoryIndex(safeJson(capRoot, join(indexRoot, entry.name)), entry.name)
       if (!item) continue
       const knowledgeDisposition = item.knowledgeDisposition
       const experienceIndex = item.experienceIndex || {}
@@ -421,11 +450,11 @@ function capCandidates(repo, scan = {}) {
     scan.cap_history_index_truncated = indexReport.truncated
   }
   const staleRoot = join(capRoot, 'local-state', 'stale')
-  if (existsSync(staleRoot)) {
+  if (safeCapPath(capRoot, staleRoot, 'directory')) {
     const taskReport = { entries: 0, truncated: false }
     let snapshotEntries = 0
     let snapshotTruncated = false
-    const taskEntries = boundedDirectoryEntries(staleRoot, MAX_DIRECTORY_ENTRIES, taskReport)
+    const taskEntries = boundedDirectoryEntries(capRoot, staleRoot, MAX_DIRECTORY_ENTRIES, taskReport)
     for (let taskIndex = 0; taskIndex < taskEntries.length; taskIndex += 1) {
       const taskEntry = taskEntries[taskIndex]
       if (!taskEntry.isDirectory() || taskEntry.isSymbolicLink()) continue
@@ -436,10 +465,10 @@ function capCandidates(repo, scan = {}) {
       }
       const taskRoot = join(staleRoot, taskEntry.name)
       const snapshotReport = { entries: 0, truncated: false }
-      for (const snapshotEntry of boundedDirectoryEntries(taskRoot, remainingSnapshots, snapshotReport)) {
+      for (const snapshotEntry of boundedDirectoryEntries(capRoot, taskRoot, remainingSnapshots, snapshotReport)) {
         if (!snapshotEntry.isDirectory() || snapshotEntry.isSymbolicLink()) continue
         const manifestPath = join(taskRoot, snapshotEntry.name, 'manifest.json')
-        const item = validStaleManifest(safeJson(manifestPath), taskEntry.name, snapshotEntry.name)
+        const item = validStaleManifest(safeJson(capRoot, manifestPath), taskEntry.name, snapshotEntry.name)
         if (!item) continue
         const knowledgeDisposition = item.knowledgeDisposition
         const file = `.cap/local-state/stale/${taskEntry.name}/${snapshotEntry.name}/manifest.json`
@@ -468,7 +497,7 @@ function publicCandidate(candidate) {
 }
 
 export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 8 } = {}) {
-  const root = resolve(git(repo, ['rev-parse', '--show-toplevel']))
+  const root = realpathSync.native(resolve(git(repo, ['rev-parse', '--show-toplevel'])))
   const intentTerms = terms(intent)
   const scan = { cap_history_index_entries: 0, cap_history_index_truncated: false }
   const candidates = [...gitCandidates(root), ...capCandidates(root, scan)]

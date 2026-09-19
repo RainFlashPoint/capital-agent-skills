@@ -338,6 +338,46 @@ test('history index symlinks cannot make reconnaissance read outside the reposit
   assert.equal(result.matches.some(item => item.source_type === 'cap_index' && String(item.file).includes('outside.json')), false)
 })
 
+test('parent symlinks cannot make history reconnaissance read external indexes, archives or stale manifests', () => {
+  for (const kind of ['history', 'archive', 'local-state']) {
+    const repo = fixture()
+    const outside = mkdtempSync(join(tmpdir(), `cap-parent-symlink-${kind}-`))
+    let marker
+    if (kind === 'history') {
+      marker = 'PARENT_HISTORY_ESCAPE_MARKER'
+      mkdirSync(join(outside, 'index'), { recursive: true })
+      writeFileSync(join(outside, 'index/task_escape.json'), JSON.stringify(historyIndex('task_escape', {
+        title: marker,
+        experienceIndex: { retrievalCues: [marker] },
+      })))
+      rmSync(join(repo, '.cap/history'), { recursive: true, force: true })
+      symlinkSync(outside, join(repo, '.cap/history'))
+    } else if (kind === 'archive') {
+      marker = 'PARENT_ARCHIVE_ESCAPE_MARKER'
+      mkdirSync(join(outside, marker), { recursive: true })
+      symlinkSync(outside, join(repo, '.cap/archive'))
+    } else {
+      marker = 'PARENT_STALE_ESCAPE_MARKER'
+      const snapshot = join(outside, 'stale/task_escape/eeeeeeeeeeee')
+      mkdirSync(snapshot, { recursive: true })
+      writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify(staleManifest('task_escape', 'eeeeeeeeeeee', {
+        oldBranch: marker,
+      })))
+      symlinkSync(outside, join(repo, '.cap/local-state'))
+    }
+
+    const result = JSON.parse(execFileSync(process.execPath, [
+      script, repo, '--intent', marker, '--limit', '20', '--json',
+    ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+    const escaped = kind === 'history'
+      ? result.matches.some(item => item.file === '.cap/history/index/task_escape.json')
+      : kind === 'archive'
+        ? result.matches.some(item => item.source_type === 'cap_archive' && item.file === `.cap/archive/${marker}`)
+        : result.matches.some(item => item.source_type === 'cap_stale' && item.taskId === 'task_escape')
+    assert.equal(escaped, false, kind)
+  }
+})
+
 test('history index enumeration is bounded and reports truncation', () => {
   const repo = fixture()
   const indexRoot = join(repo, '.cap/history/index')

@@ -18,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -88,6 +89,31 @@ def _artifact_manifest(root):
             rows.append({"path": os.path.relpath(path, root).replace(os.sep, "/"),
                          "sha256": _sha256(path), "size": os.path.getsize(path)})
     return rows
+
+
+def _validate_retire_artifact_tree(path, relative_path):
+    """Reject links and special nodes before a retirement snapshot copies them."""
+    info = os.lstat(path)
+    if stat.S_ISLNK(info.st_mode):
+        raise ValueError(f"retire 活动工件不允许软链接: {relative_path}")
+    if stat.S_ISREG(info.st_mode):
+        return
+    if not stat.S_ISDIR(info.st_mode):
+        raise ValueError(f"retire 活动工件类型不受支持: {relative_path}")
+    with os.scandir(path) as entries:
+        for entry in entries:
+            child_relative = f"{relative_path}/{entry.name}"
+            _validate_retire_artifact_tree(entry.path, child_relative)
+
+
+def _validate_retire_artifacts(cap):
+    cap_info = os.lstat(cap)
+    if stat.S_ISLNK(cap_info.st_mode) or not stat.S_ISDIR(cap_info.st_mode):
+        raise ValueError(f"retire .cap 必须为真实目录: {cap}")
+    for name in RETIRE_ARTIFACTS:
+        path = os.path.join(cap, name)
+        if os.path.lexists(path):
+            _validate_retire_artifact_tree(path, name)
 
 
 def _experience_section(text, aliases):
@@ -1104,6 +1130,11 @@ def cmd_write_tree(args):
 
 def cmd_retire(args):
     """特性退场:快照提交后按耐久 phase 推进；中断时从 retirement.json 幂等恢复。"""
+    try:
+        _validate_retire_artifacts(args.cap)
+    except (OSError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 2
     state_path = os.path.join(args.cap, "STATE.md")
     state_task_id = _state_value(state_path, "task-id")
     state_stage = normalize_stage(_state_value(state_path, "stage"))
@@ -1237,11 +1268,12 @@ def cmd_retire(args):
                     src = os.path.join(args.cap, name)
                     dst = os.path.join(temp_dir, name)
                     if os.path.isdir(src):
-                        shutil.copytree(src, dst)
+                        shutil.copytree(src, dst, symlinks=True)
                         copied.append(name)
                     elif os.path.isfile(src):
-                        shutil.copy2(src, dst)
+                        shutil.copy2(src, dst, follow_symlinks=False)
                         copied.append(name)
+                _validate_retire_artifacts(temp_dir)
                 manifest = {
                     "schemaVersion": 1,
                     "taskId": args.task_id or state_task_id,
