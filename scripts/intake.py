@@ -450,6 +450,91 @@ def _atomic_write_json(path, value):
     _atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
+def _prepare_history_index_path(cap, task_id):
+    """Create/validate the durable index destination without following links."""
+    segment = _safe_archive_segment(task_id, "task-id")
+    if not STABLE_TASK_ID.fullmatch(segment):
+        raise ValueError("history index taskId 非稳定格式")
+    cap_info = os.lstat(cap)
+    if stat.S_ISLNK(cap_info.st_mode) or not stat.S_ISDIR(cap_info.st_mode):
+        raise ValueError(f"history index .cap 必须为真实目录: {cap}")
+    canonical_cap = os.path.realpath(cap)
+    current = canonical_cap
+    for name in ("history", "index"):
+        candidate = os.path.join(current, name)
+        try:
+            info = os.lstat(candidate)
+        except FileNotFoundError:
+            os.mkdir(candidate)
+            info = os.lstat(candidate)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise ValueError(f"history index 路径必须为真实目录: {candidate}")
+        canonical_candidate = os.path.realpath(candidate)
+        if os.path.commonpath([canonical_cap, canonical_candidate]) != canonical_cap:
+            raise ValueError(f"history index 路径必须位于 .cap 内: {candidate}")
+        current = candidate
+    path = os.path.join(current, f"{segment}.json")
+    if os.path.lexists(path):
+        info = os.lstat(path)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"history index 目标必须为普通文件或不存在: {path}")
+    if os.path.commonpath([canonical_cap, os.path.realpath(current)]) != canonical_cap:
+        raise ValueError(f"history index 路径必须位于 .cap 内: {current}")
+    return path
+
+
+def _atomic_write_history_index(cap, task_id, value):
+    """Atomically replace one history index without following its parent path."""
+    path = _prepare_history_index_path(cap, task_id)
+    directory = os.path.dirname(path)
+    filename = os.path.basename(path)
+    if os.name == "nt" or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+        _atomic_write_json(path, value)
+        _prepare_history_index_path(cap, task_id)
+        return path
+
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = ""
+    try:
+        opened = os.fstat(directory_fd)
+        current = os.stat(directory, follow_symlinks=False)
+        if not stat.S_ISDIR(current.st_mode) or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            raise ValueError("history index 目录在写入前发生变化")
+        encoded = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        for attempt in range(100):
+            temporary = f".{filename}.{os.getpid()}.{attempt}"
+            try:
+                fd = os.open(
+                    temporary,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=directory_fd,
+                )
+                break
+            except FileExistsError:
+                temporary = ""
+        else:
+            raise OSError("history index 无法分配临时文件")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        temporary = ""
+        os.fsync(directory_fd)
+        current = os.stat(directory, follow_symlinks=False)
+        if not stat.S_ISDIR(current.st_mode) or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            raise ValueError("history index 目录在写入期间发生变化")
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        os.close(directory_fd)
+    return path
+
+
 def _read_json(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
@@ -1246,6 +1331,13 @@ def cmd_retire(args):
     except ValueError as error:
         print(str(error), file=sys.stderr)
         return 2
+    index_path = None
+    if history_mode:
+        try:
+            index_path = _prepare_history_index_path(args.cap, expected_task_id)
+        except (OSError, ValueError) as error:
+            print(str(error), file=sys.stderr)
+            return 2
     if not os.path.isfile(state_path) and transaction:
         remaining = [name for name in copied if os.path.lexists(_retire_cleanup_path(args.cap, name))]
         if remaining:
@@ -1338,11 +1430,9 @@ def cmd_retire(args):
         _atomic_write_json(transaction_path, transaction)
 
     current_phase = lambda: RETIRE_PHASES[transaction.get("phase", "snapshot")]
-    index_path = None
     prepared_index_item = None
     if transaction.get("historyMode"):
         task_id = transaction.get("request", {}).get("taskId") or manifest.get("taskId")
-        index_path = os.path.join(args.cap, "history", "index", f"{task_id}.json")
         if current_phase() < RETIRE_PHASES["index"]:
             try:
                 prepared_index_item = _build_history_index(manifest, archive_dir)
@@ -1364,7 +1454,11 @@ def cmd_retire(args):
 
     if transaction.get("historyMode"):
         if current_phase() < RETIRE_PHASES["index"]:
-            _atomic_write_json(index_path, prepared_index_item)
+            try:
+                index_path = _atomic_write_history_index(args.cap, task_id, prepared_index_item)
+            except (OSError, ValueError) as error:
+                print(str(error), file=sys.stderr)
+                return 2
             _fail_retire_after("index")
             advance("index")
     elif current_phase() < RETIRE_PHASES["index"]:

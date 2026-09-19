@@ -294,6 +294,30 @@ class RetireTest(unittest.TestCase):
                 self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
                 self.assertFalse(os.path.exists(os.path.join(cap, "history", "task_symlink")))
 
+    def test_retire_rejects_symlinked_history_index_parent_before_snapshot_or_cleanup(self):
+        with tempfile.TemporaryDirectory() as cap, tempfile.TemporaryDirectory() as outside:
+            _make_cap(cap)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_index_link\n")
+            history = os.path.join(cap, "history")
+            os.makedirs(history)
+            os.symlink(outside, os.path.join(history, "index"))
+            outside_before = sorted(os.listdir(outside))
+
+            result = run_retire(
+                "--cap", cap, "--slug", "index-link", "--date", "2026-09-19",
+                "--task-id", "task_index_link", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--strict",
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("history index", result.stderr.lower())
+            self.assertEqual(sorted(os.listdir(outside)), outside_before)
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+            self.assertTrue(os.path.isfile(os.path.join(cap, "spec.md")))
+            self.assertFalse(os.path.exists(os.path.join(history, "task_index_link")))
+
     def test_prepare_next_allows_empty_activity_area(self):
         with tempfile.TemporaryDirectory() as cap:
             r = run_prepare_next(cap)
