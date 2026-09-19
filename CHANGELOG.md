@@ -20,6 +20,7 @@
 - Retire 不再接受调用者自签的 Gate 参数：local 必须读取精确 `STATE cap-gate`，server 必须实时读回 canonical Review Action；`EVOLUTION.md` 纳入 no-follow 有界读取与 audit 总预算，身份字段敏感值和占位实现锚点在 Python/Node 两端失败关闭。
 - Retire 中断恢复与 complete 幂等路径也会重新验证归档 local Gate 或实时 server Review Action；知识原稿、历史召回和经验载荷统一使用 no-follow 文件描述符读取并复验 inode/containment，audit 按实际打开文件计费，带尾部标点的占位锚点与 stale/payload 敏感 Task ID 全链拒绝。
 - 收紧最终并发边界：经验载荷同步拒绝敏感 Session ID；Retire 以独占锁串行化并在清理前复核 Gate 与活动工件 CAS；Task 切换在锁内重验 STATE，预先 fsync 新 context/STATE 并以 STATE 作为原子发布提交点。
+- 补齐中断恢复保护：死进程锁按 PID 与 inode 回收，Task 切换使用持久 pending journal 回复半切换，`prepare-next` 拒绝绕过未完成 Retire；knowledge audit 对无效 JSON 也按实际打开字节计费。
 
 ## 0.12.3
 

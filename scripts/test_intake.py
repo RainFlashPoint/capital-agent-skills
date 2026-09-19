@@ -574,6 +574,22 @@ class RetireTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
             self.assertTrue(os.path.isfile(os.path.join(cap, "spec.md")))
 
+    def test_retire_reclaims_lock_owned_by_dead_process(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write(f"stage: done\ntask-id: task_dead_lock\ncap-gate: PASS reviewed-head={VALID_COMMIT}\n")
+            with open(os.path.join(cap, ".retire.lock"), "w", encoding="ascii") as f:
+                f.write("pid=999999\n")
+            result = run_retire(
+                "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_dead_lock", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--gate-kind", "local",
+                "--gate-commit", VALID_COMMIT, "--strict", default_gate=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_retire_rejects_active_artifact_drift_after_snapshot(self):
         with tempfile.TemporaryDirectory() as cap:
             _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
@@ -663,6 +679,20 @@ class RetireTest(unittest.TestCase):
             self.assertEqual(indexes["limits"]["entries"], intake.MAX_KNOWLEDGE_AUDIT_INDEXES)
             self.assertEqual(indexes["limits"]["bytes"], intake.MAX_KNOWLEDGE_AUDIT_BYTES)
 
+    def test_knowledge_audit_charges_invalid_index_bytes_before_json_parse(self):
+        with tempfile.TemporaryDirectory() as cap:
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root)
+            payload = "{" + ("x" * 4095)
+            path = os.path.join(index_root, "task_invalid_budget.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(payload)
+            result = run_knowledge_audit(cap)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            indexes = json.loads(result.stdout)["indexes"]
+            self.assertEqual(indexes["bytes"], os.path.getsize(path))
+            self.assertTrue(indexes["overBudget"] is False)
+
     def test_retire_rejects_symlinked_active_artifacts_without_cleanup(self):
         cases = ("top-level-file", "top-level-directory", "nested")
         for case in cases:
@@ -732,6 +762,18 @@ class RetireTest(unittest.TestCase):
             r = run_prepare_next(cap)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertTrue(json.loads(r.stdout)["ready"])
+
+    def test_prepare_next_blocks_incomplete_retirement_recovery(self):
+        with tempfile.TemporaryDirectory() as cap:
+            archive = os.path.join(cap, "history", "task_pending")
+            os.makedirs(archive)
+            with open(os.path.join(archive, "retirement.json"), "w", encoding="utf-8") as f:
+                json.dump({"schemaVersion": 1, "phase": "cleanup"}, f)
+            r = run_prepare_next(cap)
+            self.assertEqual(r.returncode, 3)
+            payload = json.loads(r.stdout)
+            self.assertEqual(payload["reason"], "retirement_recovery_required")
+            self.assertIn("task_pending", payload["retirements"])
 
     def test_prepare_next_blocks_active_task(self):
         with tempfile.TemporaryDirectory() as cap:

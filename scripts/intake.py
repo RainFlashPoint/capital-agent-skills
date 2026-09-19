@@ -573,7 +573,7 @@ def _prepare_history_index_path(cap, task_id):
     return _history_index_path(cap, task_id, create=True)
 
 
-def _read_history_index_payload(cap, task_id, *, with_size=False, byte_limit=MAX_HISTORY_INDEX_BYTES):
+def _read_history_index_payload(cap, task_id, *, with_size=False, byte_limit=MAX_HISTORY_INDEX_BYTES, decode=True):
     path = _history_index_path(cap, task_id, create=False)
     if path is None or not os.path.lexists(path):
         return None
@@ -581,6 +581,8 @@ def _read_history_index_payload(cap, task_id, *, with_size=False, byte_limit=MAX
         path, f"history index {task_id}", min(MAX_HISTORY_INDEX_BYTES, byte_limit),
         missing_ok=False, root=os.path.realpath(cap), with_size=True,
     )
+    if not decode:
+        return (text, size) if with_size else text
     item = json.loads(text)
     return (item, size) if with_size else item
 
@@ -642,7 +644,7 @@ def _read_json(path):
         return json.load(f)
 
 
-def _read_bounded_regular_text(path, label, limit, *, missing_ok=True, root=None, with_size=False):
+def _read_bounded_regular_text(path, label, limit, *, missing_ok=True, root=None, with_size=False, decode=True):
     """Read a UTF-8 regular file without following links and with an exact byte budget."""
     lexical_path = os.path.abspath(path)
     lexical_root = os.path.abspath(root or os.path.dirname(lexical_path))
@@ -689,6 +691,8 @@ def _read_bounded_regular_text(path, label, limit, *, missing_ok=True, root=None
             raise ValueError(f"{label} exceeds {limit} byte read budget")
     finally:
         os.close(fd)
+    if not decode:
+        return (payload, len(payload)) if with_size else payload
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -696,10 +700,10 @@ def _read_bounded_regular_text(path, label, limit, *, missing_ok=True, root=None
     return (text, len(payload)) if with_size else text
 
 
-def _read_evolution_text(cap_dir, *, with_size=False):
+def _read_evolution_text(cap_dir, *, with_size=False, decode=True):
     return _read_bounded_regular_text(
         os.path.join(cap_dir, "EVOLUTION.md"), "EVOLUTION.md", MAX_EVOLUTION_BYTES,
-        root=cap_dir, with_size=with_size,
+        root=cap_dir, with_size=with_size, decode=decode,
     )
 
 
@@ -1361,17 +1365,13 @@ def cmd_knowledge_audit(args):
                         truncated = True
                         over_budget = True
                         break
-                    opened = _read_history_index_payload(
+                    raw_text, opened_size = _read_history_index_payload(
                         args.cap, name[:-5], with_size=True,
-                        byte_limit=min(MAX_HISTORY_INDEX_BYTES, remaining_budget),
+                        byte_limit=min(MAX_HISTORY_INDEX_BYTES, remaining_budget), decode=False,
                     )
-                    if opened is None:
-                        raise ValueError("invalid index file")
-                    item, opened_size = opened
                     total_bytes += opened_size
                     index_bytes += opened_size
-                    if item is None:
-                        raise ValueError("invalid index file")
+                    item = json.loads(raw_text)
                 except (OSError, ValueError, json.JSONDecodeError) as error:
                     if "exceeds" in str(error).lower() and remaining_budget < MAX_HISTORY_INDEX_BYTES:
                         truncated = True
@@ -1413,8 +1413,12 @@ def cmd_knowledge_audit(args):
     evolution_path = os.path.join(args.cap, "EVOLUTION.md")
     if os.path.lexists(evolution_path):
         try:
-            evolution_text, evolution_bytes = _read_evolution_text(args.cap, with_size=True)
+            evolution_payload, evolution_bytes = _read_evolution_text(
+                args.cap, with_size=True, decode=False,
+            )
+            evolution_text = evolution_payload.decode("utf-8")
         except (OSError, ValueError):
+            total_bytes += evolution_bytes
             evolution_truncated = True
             try:
                 evolution_info = os.lstat(evolution_path)
@@ -1945,8 +1949,33 @@ def cmd_retire(args):
     try:
         lock_fd = os.open(lock_path, flags, 0o600)
     except FileExistsError:
-        print("retire_in_progress: another retirement operation holds the lock", file=sys.stderr)
-        return 2
+        reclaimed = False
+        try:
+            identity = os.lstat(lock_path)
+            with open(lock_path, encoding="ascii") as lock_file:
+                match = re.fullmatch(r"pid=(\d+)\s*", lock_file.read())
+            owner_pid = int(match.group(1)) if match else 0
+            if owner_pid and owner_pid != os.getpid():
+                try:
+                    os.kill(owner_pid, 0)
+                except ProcessLookupError:
+                    current = os.lstat(lock_path)
+                    if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+                        os.unlink(lock_path)
+                        reclaimed = True
+                except PermissionError:
+                    pass
+        except (FileNotFoundError, OSError, ValueError):
+            pass
+        if reclaimed:
+            try:
+                lock_fd = os.open(lock_path, flags, 0o600)
+            except FileExistsError:
+                print("retire_in_progress: another retirement operation holds the lock", file=sys.stderr)
+                return 2
+        else:
+            print("retire_in_progress: another retirement operation holds the lock", file=sys.stderr)
+            return 2
     except OSError as error:
         print(f"retire lock unavailable: {error}", file=sys.stderr)
         return 2
@@ -1969,6 +1998,32 @@ def cmd_retire(args):
 def cmd_prepare_next(args):
     """新需求前置守卫：根 .cap 只能承载一个活动 Task，不替模型猜测或覆盖旧产物。"""
     state_path = os.path.join(args.cap, "STATE.md")
+    incomplete = []
+    for root_name in ("history", "archive"):
+        root = os.path.join(args.cap, root_name)
+        if not os.path.isdir(root) or os.path.islink(root):
+            continue
+        try:
+            entries = list(os.scandir(root))
+        except OSError:
+            continue
+        for entry in entries[:MAX_KNOWLEDGE_AUDIT_INDEXES]:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            transaction_path = os.path.join(entry.path, "retirement.json")
+            try:
+                transaction = _read_retire_recovery_json(transaction_path, "retirement.json")
+            except (OSError, ValueError):
+                incomplete.append(entry.name)
+                continue
+            if transaction and transaction.get("phase") != "complete":
+                incomplete.append(entry.name)
+    if incomplete:
+        result = {"ready": False, "reason": "retirement_recovery_required",
+                  "retirements": sorted(set(incomplete)),
+                  "nextAction": "resume or repair the incomplete Retire transaction before starting a new Task"}
+        print(json.dumps(result, ensure_ascii=False))
+        return 3
     if not os.path.isfile(state_path):
         print(json.dumps({"ready": True, "reason": "no_active_task"}, ensure_ascii=False))
         return 0

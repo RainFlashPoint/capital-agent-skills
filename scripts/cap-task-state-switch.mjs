@@ -49,19 +49,65 @@ async function commitTrackedActiveMigration(migration, { beforeReplace, replace 
   const lockPath = `${migration.indexPath}.lock`
   let lock
   let ownsLock = false
+  let lockIdentity = null
   try {
     lock = await open(lockPath, 'wx')
     ownsLock = true
+    lockIdentity = await lock.stat()
     const currentIndex = await readFile(migration.indexPath)
     const currentHash = createHash('sha256').update(currentIndex).digest('hex')
     if (currentHash !== migration.originalIndexHash) throw new Error('tracked_cap_index_changed: Git index changed during active-state migration')
     await replace(migration.temporaryIndex, migration.indexPath)
   } finally {
     await lock?.close().catch(() => {})
-    if (ownsLock) await rm(lockPath, { force: true }).catch(() => {})
+    if (ownsLock && lockIdentity) {
+      const currentIdentity = await lstat(lockPath).catch(() => null)
+      if (currentIdentity && currentIdentity.dev === lockIdentity.dev && currentIdentity.ino === lockIdentity.ino) {
+        await rm(lockPath, { force: true }).catch(() => {})
+      }
+    }
   }
 }
 async function exists(path) { try { await stat(path); return true } catch { return false } }
+async function reclaimDeadTaskSwitchLock(lockPath) {
+  const identity = await lstat(lockPath).catch(() => null)
+  if (!identity) return false
+  let metadata
+  try { metadata = JSON.parse(await readFile(lockPath, 'utf8')) } catch { return false }
+  if (!Number.isInteger(metadata?.pid) || metadata.pid <= 0 || metadata.pid === process.pid) return false
+  let alive = true
+  try { process.kill(metadata.pid, 0) } catch (error) { if (error?.code === 'ESRCH') alive = false }
+  if (alive) return false
+  const current = await lstat(lockPath).catch(() => null)
+  if (!current || current.dev !== identity.dev || current.ino !== identity.ino) return false
+  await rm(lockPath, { force: true })
+  return true
+}
+async function recoverPendingTaskSwitch(repo) {
+  const capRoot = join(repo, '.cap')
+  const pendingPath = join(capRoot, 'local-state', 'locks', 'task-switch.pending.json')
+  let pending
+  try { pending = JSON.parse(await readFile(pendingPath, 'utf8')) } catch { return false }
+  if (!pending?.snapshotRoot || !pending?.taskId) return false
+  const statePath = join(capRoot, 'STATE.md')
+  const currentState = await readFile(statePath, 'utf8').catch(() => '')
+  const currentTaskId = field(currentState, 'task-id')
+  if (currentTaskId === pending.taskId) {
+    await rm(pendingPath, { force: true }).catch(() => {})
+    return true
+  }
+  const snapshotRoot = resolve(repo, pending.snapshotRoot)
+  for (const name of ACTIVE_PATHS.slice().reverse()) {
+    const source = join(snapshotRoot, name)
+    const destination = join(capRoot, name)
+    if (await exists(source) && !await exists(destination)) await rename(source, destination)
+  }
+  await rm(snapshotRoot, { recursive: true, force: true }).catch(() => {})
+  if (pending.oldState) await writeFile(statePath, pending.oldState)
+  if (pending.oldContext !== undefined) await writeFile(join(capRoot, 'task-context.md'), pending.oldContext)
+  await rm(pendingPath, { force: true }).catch(() => {})
+  return true
+}
 function field(markdown = '', name = '') {
   return String(markdown).match(new RegExp(`^${name}:\\s*(.+)$`, 'mi'))?.[1]?.replace(/\s+#.*$/, '').trim() || ''
 }
@@ -145,6 +191,7 @@ async function switchTaskStateLocked({ repoRoot = '.', taskId, sessionId, expect
   await ensureSafeCapDirectory(repo, capRoot)
   const statePath = join(capRoot, 'STATE.md')
   const oldState = await readFile(statePath, 'utf8').catch(() => '')
+  const oldContext = await readFile(join(capRoot, 'task-context.md'), 'utf8').catch(() => '')
   const branch = git(repo, ['branch', '--show-current'])
   const head = git(repo, ['rev-parse', 'HEAD'])
   const boundary = inspectTaskBoundary({ stateText: oldState, branch, worktree: gitRoot })
@@ -168,6 +215,8 @@ async function switchTaskStateLocked({ repoRoot = '.', taskId, sessionId, expect
     snapshotRoot = join(capRoot, 'local-state', 'stale', safeSegment(oldTaskId), `${fingerprint}-${randomUUID()}`)
   } else if (await exists(snapshotRoot)) throw new Error(`stale snapshot already exists: ${snapshotRoot}`)
   await ensureSafeCapDirectory(repo, snapshotRoot)
+  const pendingPath = join(capRoot, 'local-state', 'locks', 'task-switch.pending.json')
+  await writeFile(pendingPath, JSON.stringify({ schemaVersion: 1, taskId, oldState, oldContext, snapshotRoot, createdAt: new Date().toISOString() }) + '\n', { flag: 'wx', mode: 0o600 })
 
   const moved = []
   let newStateStarted = false
@@ -201,6 +250,7 @@ async function switchTaskStateLocked({ repoRoot = '.', taskId, sessionId, expect
     if (newContextStarted) await rm(join(capRoot, 'task-context.md'), { force: true }).catch(() => {})
     for (const item of moved.reverse()) await rename(item.destination, item.source).catch(() => {})
     await rm(snapshotRoot, { recursive: true, force: true }).catch(() => {})
+    await rm(pendingPath, { force: true }).catch(() => {})
     if (trackedMigration) await rm(trackedMigration.temporaryIndex, { force: true }).catch(() => {})
     if (taskBaseline?.created) await removeTaskBaseline(taskBaseline.path).catch(() => {})
     throw error
@@ -236,22 +286,35 @@ export async function switchTaskState(options = {}) {
   const statePath = join(capRoot, 'STATE.md')
   const observedState = await readFile(statePath, 'utf8').catch(() => '')
   const lockPath = join(locksRoot, 'task-switch.lock')
+  const pendingPath = join(locksRoot, 'task-switch.pending.json')
   let lock
   let lockIdentity
+  let reclaimed = false
   try {
     try {
       lock = await open(lockPath, 'wx', 0o600)
     } catch (error) {
-      if (error?.code === 'EEXIST') throw new Error('task_switch_in_progress: another Task boundary switch owns the operation lock')
-      throw error
+      if (error?.code === 'EEXIST') {
+        if (await reclaimDeadTaskSwitchLock(lockPath)) {
+          reclaimed = true
+          lock = await open(lockPath, 'wx', 0o600)
+        } else {
+          throw new Error('task_switch_in_progress: another Task boundary switch owns the operation lock')
+        }
+      } else {
+        throw error
+      }
     }
     await lock.writeFile(`${JSON.stringify({ pid: process.pid, taskId, sessionId, createdAt: new Date().toISOString() })}\n`, 'utf8')
     await lock.sync()
     lockIdentity = await lock.stat()
+    if (reclaimed) await recoverPendingTaskSwitch(repo)
     if (afterTaskSwitchLock) await afterTaskSwitchLock()
     const lockedState = await readFile(statePath, 'utf8').catch(() => '')
     if (lockedState !== observedState) throw new Error('task_switch_state_changed: active STATE changed while acquiring the Task switch lock')
-    return await switchTaskStateLocked(options)
+    const result = await switchTaskStateLocked(options)
+    await rm(pendingPath, { force: true }).catch(() => {})
+    return result
   } finally {
     await lock?.close().catch(() => {})
     if (lockIdentity) {

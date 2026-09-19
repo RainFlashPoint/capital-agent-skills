@@ -74,6 +74,34 @@ test('Task switch refuses a concurrent operation lock without moving active stat
   assert.equal(await readFile(join(repo, '.cap/spec.md'), 'utf8'), 'must remain active\n')
 })
 
+test('Task switch reclaims a lock owned by a dead process', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999, taskId: 'dead' }) + '\n')
+  const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' })
+  assert.equal(result.switched, true)
+  await assert.rejects(readFile(join(repo, '.cap/local-state/locks/task-switch.lock'), 'utf8'))
+})
+
+test('Task switch recovers a pending boundary journal before retrying', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  await writeFile(join(repo, '.cap/spec.md'), 'old spec\n')
+  const snapshotRoot = join(repo, '.cap/local-state/stale/task_old/recovery')
+  await mkdir(snapshotRoot, { recursive: true })
+  await writeFile(join(snapshotRoot, 'spec.md'), 'old spec\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
+    schemaVersion: 1, taskId: 'task_interrupted', oldState: await readFile(join(repo, '.cap/STATE.md'), 'utf8'),
+    oldContext: '', snapshotRoot, createdAt: new Date().toISOString(),
+  }) + '\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999, taskId: 'task_interrupted' }) + '\n')
+  const result = await switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' })
+  assert.equal(result.switched, true)
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_new/)
+})
+
 test('Task switch revalidates the observed STATE after acquiring its operation lock', async () => {
   const repo = await fixture()
   await mkdir(join(repo, '.cap'), { recursive: true })
