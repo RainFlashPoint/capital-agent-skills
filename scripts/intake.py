@@ -58,6 +58,7 @@ KNOWLEDGE_DISPOSITIONS = {
 EXPERIENCE_REQUIRED_DISPOSITIONS = {"synced", "pending-sync", "local-only"}
 STABLE_KNOWLEDGE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 STABLE_TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$")
+FULL_COMMIT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.I)
 HISTORY_INDEX_FIELDS = {
     "schemaVersion", "taskId", "parentTaskId", "title", "intentSummary", "keywords",
     "branch", "baseCommit", "deliveryCommit", "completedAt", "status",
@@ -224,6 +225,23 @@ def _experience_index(path):
         "invariants": anchors["invariants"],
         "path": "experience.md",
     }
+
+
+def _validate_experience_binding(path, expected_task_id, expected_delivery_commit):
+    if not os.path.isfile(path) or os.path.islink(path) or os.path.getsize(path) > MAX_HISTORY_INDEX_BYTES:
+        raise ValueError("qualified experience.md is unavailable for Task/Commit binding")
+    with open(path, encoding="utf-8") as f:
+        frontmatter = parse_frontmatter(f.read())
+    task_id = str(frontmatter.get("task-id") or "").strip()
+    source_commit = str(frontmatter.get("source-commit") or "").strip()
+    if task_id != expected_task_id:
+        raise ValueError(f"experience.md task-id 不匹配: {task_id or 'missing'} != {expected_task_id}")
+    if not FULL_COMMIT_ID.fullmatch(expected_delivery_commit or ""):
+        raise ValueError("delivery commit 必须为完整 SHA-1/SHA-256 Commit")
+    if not FULL_COMMIT_ID.fullmatch(source_commit):
+        raise ValueError("experience.md source-commit 必须为完整 SHA-1/SHA-256 Commit")
+    if source_commit.lower() != expected_delivery_commit.lower():
+        raise ValueError("experience.md source-commit 与 delivery commit 不匹配")
 
 
 def _history_index_text(value, label, *, limit=MAX_HISTORY_INDEX_TEXT):
@@ -545,7 +563,44 @@ def _outbox_event_task_ref(event):
                nested.get("task_id") or nested.get("taskId") or "").strip()
 
 
-def _has_pending_experience(cap, task_id):
+def _valid_pending_experience_event(event, task_id, delivery_commit):
+    if not isinstance(event, dict) or event.get("type") != "experience.record":
+        return False
+    if _outbox_event_task_ref(event) != task_id:
+        return False
+    idempotency_key = event.get("idempotencyKey")
+    payload = event.get("payload")
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip() or not isinstance(payload, dict):
+        return False
+    if payload.get("idempotency_key") != idempotency_key:
+        return False
+    if payload.get("task_id") != task_id or payload.get("commit_sha") != delivery_commit:
+        return False
+    if not isinstance(payload.get("intent"), str) or not payload["intent"].strip():
+        return False
+    changed_files = payload.get("changed_files")
+    if (not isinstance(changed_files, list) or not changed_files
+            or any(not isinstance(path, str) or not path.strip() for path in changed_files)):
+        return False
+    for path in changed_files:
+        parts = path.split("/")
+        if (path.startswith(("/", "\\")) or "\\" in path or re.match(r"^[A-Za-z]:", path)
+                or any(part in ("", ".", "..") for part in parts)):
+            return False
+    experience = payload.get("experience")
+    if not isinstance(experience, dict):
+        return False
+    for key in ("problem", "solution", "outcome"):
+        if not isinstance(experience.get(key), str) or not experience[key].strip():
+            return False
+    for key in ("conditions", "counterexamples", "evidence_refs"):
+        if (not isinstance(experience.get(key), list) or not experience[key]
+                or any(not isinstance(item, str) or not item.strip() for item in experience[key])):
+            return False
+    return f"commit:{delivery_commit}" in experience["evidence_refs"]
+
+
+def _has_pending_experience(cap, task_id, delivery_commit):
     path = os.path.join(cap, "outbox.jsonl")
     if not os.path.isfile(path) or os.path.islink(path):
         return False
@@ -555,12 +610,12 @@ def _has_pending_experience(cap, task_id):
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if event.get("type") == "experience.record" and _outbox_event_task_ref(event) == task_id:
+            if _valid_pending_experience_event(event, task_id, delivery_commit):
                 return True
     return False
 
 
-def _validate_knowledge_disposition(cap, task_id, disposition, document_id, experience_index, strict):
+def _validate_knowledge_disposition(cap, task_id, delivery_commit, disposition, document_id, experience_index, strict):
     if not strict:
         return disposition or "legacy-local"
     if not disposition:
@@ -575,8 +630,8 @@ def _validate_knowledge_disposition(cap, task_id, disposition, document_id, expe
         raise ValueError(f"{disposition} requires a qualified experience.md")
     if disposition == "synced" and not document_id:
         raise ValueError("synced knowledge disposition requires --knowledge-document-id")
-    if disposition == "pending-sync" and not _has_pending_experience(cap, task_id):
-        raise ValueError("pending-sync requires same-task experience.record in Outbox")
+    if disposition == "pending-sync" and not _has_pending_experience(cap, task_id, delivery_commit):
+        raise ValueError("pending-sync requires replayable same-Task/same-Commit experience.record in Outbox")
     return disposition
 
 
@@ -1105,6 +1160,9 @@ def cmd_retire(args):
         if not args.delivery_commit:
             print("缺少 delivery commit,拒绝退场", file=sys.stderr)
             return 2
+        if not FULL_COMMIT_ID.fullmatch(args.delivery_commit):
+            print("delivery commit 必须为完整 SHA-1/SHA-256 Commit", file=sys.stderr)
+            return 2
         if os.path.isfile(state_path):
             if state_task_id != args.task_id:
                 print(f"STATE task-id 不匹配: {state_task_id or 'missing'} != {args.task_id}", file=sys.stderr)
@@ -1123,8 +1181,12 @@ def cmd_retire(args):
             knowledge_disposition = "legacy-unknown"
             knowledge_document_id = str(manifest.get("knowledgeDocumentId") or "")
         else:
+            if args.strict and experience_index:
+                _validate_experience_binding(
+                    experience_source, expected_task_id, args.delivery_commit,
+                )
             knowledge_disposition = _validate_knowledge_disposition(
-                args.cap, expected_task_id, requested_disposition,
+                args.cap, expected_task_id, args.delivery_commit, requested_disposition,
                 requested_document_id, experience_index, args.strict,
             )
             knowledge_document_id = requested_document_id

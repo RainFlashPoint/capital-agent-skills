@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, opendirSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -131,11 +131,14 @@ function scoreCandidate(candidate, intentTerms, anchors = []) {
     score += matchedAnchors.reduce((sum, anchor) => sum + (anchor.includes('/') ? 24 : 30), 0)
     if (candidate.source_type === 'cap_index') score += 10
   }
+  const unresolvedDebt = candidate.knowledgeDisposition === 'pending-sync' || candidate.knowledgeDisposition === 'needs-harvest'
+  if (unresolvedDebt && score === 0) score = 1
   return {
     ...candidate,
     score: Math.min(100, score),
     matchedAnchors,
     reason: [
+      unresolvedDebt ? `待处置知识：${candidate.knowledgeDisposition}` : '',
       matchedAnchors.length ? `代码锚点命中：${matchedAnchors.slice(0, 6).join('、')}` : '',
       matched.length > 0 ? `命中：${matched.sort((a, b) => b.length - a.length).slice(0, 6).join('、')}` : '',
     ].filter(Boolean).join('；'),
@@ -168,6 +171,34 @@ function safeDirectoryEntries(path, limit = MAX_DIRECTORY_ENTRIES) {
     return readdirSync(path, { withFileTypes: true })
       .sort((left, right) => left.name.localeCompare(right.name))
       .slice(0, limit)
+  } catch {
+    return []
+  }
+}
+
+function boundedDirectoryEntries(path, limit = MAX_DIRECTORY_ENTRIES, report = null) {
+  try {
+    const info = lstatSync(path)
+    if (info.isSymbolicLink() || !info.isDirectory()) return []
+    const directory = opendirSync(path)
+    const entries = []
+    try {
+      while (entries.length <= limit) {
+        const entry = directory.readSync()
+        if (!entry) break
+        entries.push(entry)
+      }
+    } finally {
+      directory.closeSync()
+    }
+    const truncated = entries.length > limit
+    if (truncated) entries.length = limit
+    entries.sort((left, right) => left.name.localeCompare(right.name))
+    if (report) {
+      report.entries = entries.length
+      report.truncated = truncated
+    }
+    return entries
   } catch {
     return []
   }
@@ -223,7 +254,7 @@ function gitCandidates(repo) {
   return candidates
 }
 
-function capCandidates(repo) {
+function capCandidates(repo, scan = {}) {
   const capRoot = join(repo, '.cap')
   const candidates = []
   let head = ''
@@ -254,7 +285,8 @@ function capCandidates(repo) {
   // 历史正文可能很大且可能含不可信仓库内容；正常侦察只读显式索引，不递归读取快照。
   const indexRoot = join(capRoot, 'history', 'index')
   if (existsSync(indexRoot) && !lstatSync(indexRoot).isSymbolicLink() && lstatSync(indexRoot).isDirectory()) {
-    for (const entry of readdirSync(indexRoot, { withFileTypes: true })) {
+    const indexReport = { entries: 0, truncated: false }
+    for (const entry of boundedDirectoryEntries(indexRoot, MAX_DIRECTORY_ENTRIES, indexReport)) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) continue
       const file = `.cap/history/index/${entry.name}`
       const item = safeJson(join(indexRoot, entry.name))
@@ -280,6 +312,8 @@ function capCandidates(repo) {
         inspect: { kind: 'repo_file', value: file },
       })
     }
+    scan.cap_history_index_entries = indexReport.entries
+    scan.cap_history_index_truncated = indexReport.truncated
   }
   const staleRoot = join(capRoot, 'local-state', 'stale')
   if (existsSync(staleRoot)) {
@@ -313,7 +347,8 @@ function publicCandidate(candidate) {
 export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 8 } = {}) {
   const root = resolve(git(repo, ['rev-parse', '--show-toplevel']))
   const intentTerms = terms(intent)
-  const candidates = [...gitCandidates(root), ...capCandidates(root)]
+  const scan = { cap_history_index_entries: 0, cap_history_index_truncated: false }
+  const candidates = [...gitCandidates(root), ...capCandidates(root, scan)]
     .map(candidate => scoreCandidate(candidate, intentTerms, anchors))
     .filter(candidate => candidate.score > 0)
     .sort((left, right) => {
@@ -334,7 +369,7 @@ export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 
     matches.push(publicCandidate(candidate))
     if (matches.length >= limit) break
   }
-  return { repo: root, intent, anchors, scanned: { branches_and_tips: true, recent_commits: true, cap_memory: true, cap_history_index_only: true, code_anchors: anchors.length > 0 }, matches }
+  return { repo: root, intent, anchors, scanned: { branches_and_tips: true, recent_commits: true, cap_memory: true, cap_history_index_only: true, code_anchors: anchors.length > 0, ...scan }, matches }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

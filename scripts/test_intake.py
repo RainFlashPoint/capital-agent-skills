@@ -13,6 +13,9 @@ INTAKE = os.path.join(HERE, "intake.py")
 sys.path.insert(0, HERE)
 import intake  # noqa: E402  (直接引用常量/函数;CLI 行为仍走 subprocess run())
 
+VALID_COMMIT = "d" * 40
+OTHER_COMMIT = "e" * 40
+
 LEAF_TMPL = """---
 id: {id}
 title: {title}
@@ -155,7 +158,7 @@ def _make_cap(cap, names=("spec.md", "plan.md", "experience.md", "STATE.md"),
             f.write(d)
 
 
-def _write_valid_experience(cap, task_id="task_123", commit="def"):
+def _write_valid_experience(cap, task_id="task_123", commit=VALID_COMMIT):
     with open(os.path.join(cap, "experience.md"), "w", encoding="utf-8") as f:
         f.write(f"""---
 schema: cap-experience/v1
@@ -185,6 +188,34 @@ source-commit: {commit}
 """)
 
 
+def _experience_outbox_event(task_id="task_123", commit=VALID_COMMIT, **overrides):
+    idempotency_key = f"experience:{task_id}:{commit}:fixture"
+    event = {
+        "id": f"evt_{task_id}",
+        "idempotencyKey": idempotency_key,
+        "type": "experience.record",
+        "localTaskRef": task_id,
+        "dependsOn": [],
+        "payload": {
+            "task_id": task_id,
+            "commit_sha": commit,
+            "idempotency_key": idempotency_key,
+            "intent": "沉淀支付异步状态查询收敛经验",
+            "changed_files": ["src/payment/callback.ts"],
+            "experience": {
+                "problem": "同步处理中被误写为成功",
+                "solution": "必须通过官方查询收敛终态",
+                "conditions": ["同步状态为处理中"],
+                "counterexamples": ["厂商取消查询接口时不可使用"],
+                "evidence_refs": [f"commit:{commit}"],
+                "outcome": "查询状态可靠收敛",
+            },
+        },
+    }
+    event.update(overrides)
+    return event
+
+
 def _write_completed_archive(cap, task_id="task_123", **metadata):
     archive = os.path.join(cap, "history", task_id)
     os.makedirs(archive, exist_ok=True)
@@ -198,7 +229,7 @@ def _write_completed_archive(cap, task_id="task_123", **metadata):
     manifest = {
         "schemaVersion": 1, "taskId": task_id, "parentTaskId": "", "title": "test",
         "intentSummary": "test intent", "keywords": ["test"], "branch": "main",
-        "baseCommit": "abc", "deliveryCommit": "def", "completedAt": "2026-09-19",
+        "baseCommit": "abc", "deliveryCommit": VALID_COMMIT, "completedAt": "2026-09-19",
         "status": "completed", "knowledgeDisposition": "no-reusable-experience",
         "artifacts": [{"path": "spec.md", "sha256": intake._sha256(archived_spec), "size": 8}],
     }
@@ -254,7 +285,7 @@ class RetireTest(unittest.TestCase):
                            "--task-id", "task_123", "--parent-task-id", "task_parent",
                            "--title", "支付 DTO 续作", "--keywords", "支付,DTO",
                            "--branch", "dev", "--base-commit", "abc",
-                           "--delivery-commit", "def", "--completed-at", "2026-07-29T01:00:00Z",
+                           "--delivery-commit", VALID_COMMIT, "--completed-at", "2026-07-29T01:00:00Z",
                            "--knowledge-disposition", "local-only",
                            "--gate-status", "passed", "--strict")
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -265,7 +296,7 @@ class RetireTest(unittest.TestCase):
                 index = json.load(f)
             self.assertEqual(manifest["taskId"], "task_123")
             self.assertEqual(manifest["parentTaskId"], "task_parent")
-            self.assertEqual(manifest["deliveryCommit"], "def")
+            self.assertEqual(manifest["deliveryCommit"], VALID_COMMIT)
             self.assertEqual(index["artifactRoot"], ".cap/history/task_123")
             self.assertEqual(index["experienceIndex"]["path"], ".cap/history/task_123/experience.md")
             self.assertIn("查询收敛", " ".join(index["experienceIndex"]["retrievalCues"]))
@@ -287,7 +318,7 @@ class RetireTest(unittest.TestCase):
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: done\ntask-id: task_123\n")
             r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
-                           "--task-id", "task_123", "--delivery-commit", "def",
+                           "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                            "--gate-status", "passed", "--strict")
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("knowledge disposition", (r.stdout + r.stderr).lower())
@@ -301,21 +332,95 @@ class RetireTest(unittest.TestCase):
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: done\ntask-id: task_123\n")
             args = ("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
-                    "--task-id", "task_123", "--delivery-commit", "def",
+                    "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                     "--knowledge-disposition", "pending-sync",
                     "--gate-status", "passed", "--strict")
             rejected = run_retire(*args)
             self.assertNotEqual(rejected.returncode, 0)
             self.assertIn("experience.record", rejected.stderr)
             with open(os.path.join(cap, "outbox.jsonl"), "w", encoding="utf-8") as f:
-                f.write(json.dumps({"type": "experience.record", "localTaskRef": "task_other", "payload": {}}) + "\n")
-                f.write(json.dumps({"type": "experience.record", "localTaskRef": "task_123", "payload": {"task_id": "task_123"}}) + "\n")
+                f.write(json.dumps(_experience_outbox_event("task_other", VALID_COMMIT)) + "\n")
+                f.write(json.dumps({
+                    "type": "experience.record", "localTaskRef": "task_123",
+                    "idempotencyKey": "placeholder", "payload": {"task_id": "task_123"},
+                }) + "\n")
+                f.write(json.dumps(_experience_outbox_event("task_123", OTHER_COMMIT)) + "\n")
+                unsafe = _experience_outbox_event("task_123", VALID_COMMIT)
+                unsafe["id"] = "evt_unsafe_path"
+                unsafe["idempotencyKey"] += ":unsafe"
+                unsafe["payload"]["idempotency_key"] = unsafe["idempotencyKey"]
+                unsafe["payload"]["changed_files"] = ["/Users/example/private.py"]
+                f.write(json.dumps(unsafe) + "\n")
+            still_rejected = run_retire(*args)
+            self.assertNotEqual(still_rejected.returncode, 0)
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+            with open(os.path.join(cap, "outbox.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(_experience_outbox_event("task_123", VALID_COMMIT)) + "\n")
             accepted = run_retire(*args)
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
             path = os.path.join(cap, "history", "index", "task_123.json")
             with open(path, encoding="utf-8") as f:
                 index = json.load(f)
             self.assertEqual(index["knowledgeDisposition"], "pending-sync")
+
+    def test_strict_retire_requires_experience_task_and_full_delivery_commit_binding(self):
+        cases = {
+            "wrong-task": ("task_other", VALID_COMMIT),
+            "stale-commit": ("task_123", OTHER_COMMIT),
+            "malformed-commit": ("task_123", "not-a-commit"),
+        }
+        for label, (task_id, source_commit) in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as cap:
+                _make_cap(cap)
+                _write_valid_experience(cap, task_id=task_id, commit=source_commit)
+                with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                    f.write("stage: done\ntask-id: task_123\n")
+                result = run_retire(
+                    "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                    "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
+                    "--knowledge-disposition", "local-only",
+                    "--gate-status", "passed", "--strict",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+                self.assertFalse(os.path.exists(os.path.join(cap, "history", "index", "task_123.json")))
+
+    def test_strict_retire_revalidates_experience_binding_when_resuming_snapshot(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap)
+            _write_valid_experience(cap, task_id="task_123", commit=VALID_COMMIT)
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_123\n")
+            args = (
+                "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "local-only",
+                "--gate-status", "passed", "--strict",
+            )
+            interrupted = run_retire(*args, env={"CAP_RETIRE_FAIL_AFTER": "snapshot"})
+            self.assertNotEqual(interrupted.returncode, 0)
+            self.assertTrue(os.path.isdir(os.path.join(cap, "history", "task_123")))
+
+            archived_experience = os.path.join(cap, "history", "task_123", "experience.md")
+            with open(archived_experience, encoding="utf-8") as f:
+                text = f.read().replace(f"task-id: task_123", "task-id: task_other").replace(
+                    f"source-commit: {VALID_COMMIT}", f"source-commit: {OTHER_COMMIT}")
+            with open(archived_experience, "w", encoding="utf-8") as f:
+                f.write(text)
+            manifest_path = os.path.join(cap, "history", "task_123", "manifest.json")
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            for artifact in manifest["artifacts"]:
+                if artifact["path"] == "experience.md":
+                    artifact["sha256"] = intake._sha256(archived_experience)
+                    artifact["size"] = os.path.getsize(archived_experience)
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+
+            resumed = run_retire(*args)
+            self.assertNotEqual(resumed.returncode, 0)
+            self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
+            self.assertFalse(os.path.exists(os.path.join(cap, "history", "index", "task_123.json")))
 
     def test_synced_requires_document_id_and_no_reusable_rejects_valid_experience(self):
         with tempfile.TemporaryDirectory() as cap:
@@ -324,7 +429,7 @@ class RetireTest(unittest.TestCase):
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: done\ntask-id: task_123\n")
             common = ("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
-                      "--task-id", "task_123", "--delivery-commit", "def",
+                      "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                       "--gate-status", "passed", "--strict")
             no_doc = run_retire(*common, "--knowledge-disposition", "synced")
             self.assertNotEqual(no_doc.returncode, 0)
@@ -348,7 +453,7 @@ class RetireTest(unittest.TestCase):
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: done\ntask-id: task_exec\n")
             r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
-                           "--task-id", "task_exec", "--delivery-commit", "def",
+                           "--task-id", "task_exec", "--delivery-commit", VALID_COMMIT,
                            "--knowledge-disposition", "no-reusable-experience",
                            "--gate-status", "passed", "--strict")
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -367,7 +472,7 @@ class RetireTest(unittest.TestCase):
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: test\ntask-id: task_123\n")
             r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
-                           "--task-id", "task_123", "--delivery-commit", "def",
+                           "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                            "--gate-status", "passed", "--strict")
             self.assertNotEqual(r.returncode, 0)
             self.assertTrue(os.path.exists(os.path.join(cap, "STATE.md")))
@@ -384,7 +489,7 @@ class RetireTest(unittest.TestCase):
                 json.dump(manifest, f)
 
             result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
-                                "--task-id", "task_123", "--delivery-commit", "def",
+                                "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                                 "--gate-status", "passed", "--strict")
 
             self.assertNotEqual(result.returncode, 0)
@@ -406,7 +511,7 @@ class RetireTest(unittest.TestCase):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as cap:
                 _write_completed_archive(cap, **metadata)
                 result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
-                                    "--task-id", "task_123", "--delivery-commit", "def",
+                                    "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                                     "--knowledge-disposition", "no-reusable-experience",
                                     "--gate-status", "passed", "--strict")
                 self.assertNotEqual(result.returncode, 0)
@@ -431,7 +536,7 @@ class RetireTest(unittest.TestCase):
                     f.write("stage: done\ntask-id: task_123\n")
 
                 result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
-                                    "--task-id", "task_123", "--delivery-commit", "def",
+                                    "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                                     "--knowledge-disposition", "local-only",
                                     "--gate-status", "passed", "--strict")
 
@@ -443,7 +548,7 @@ class RetireTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cap:
             _write_completed_archive(cap, title="x" * (300 * 1024), keywords=["k" * 4096] * 100)
             result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
-                                "--task-id", "task_123", "--delivery-commit", "def",
+                                "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                                 "--knowledge-disposition", "no-reusable-experience",
                                 "--gate-status", "passed", "--strict")
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -468,13 +573,13 @@ class RetireTest(unittest.TestCase):
             manifest = {
                 "schemaVersion": 1, "taskId": "task_attack", "parentTaskId": "", "title": "attack",
                 "intentSummary": "", "keywords": [], "branch": "main", "baseCommit": "abc",
-                "deliveryCommit": "def", "completedAt": "2026-08-17", "status": "completed",
+                "deliveryCommit": VALID_COMMIT, "completedAt": "2026-08-17", "status": "completed",
                 "artifacts": [{"path": "../keep/data.txt", "sha256": "invalid", "size": 4}],
             }
             with open(os.path.join(archive, "manifest.json"), "w", encoding="utf-8") as f:
                 json.dump(manifest, f)
             r = run_retire("--cap", cap, "--slug", "attack", "--date", "2026-08-17",
-                           "--task-id", "task_attack", "--delivery-commit", "def",
+                           "--task-id", "task_attack", "--delivery-commit", VALID_COMMIT,
                            "--gate-status", "passed", "--strict")
             self.assertNotEqual(r.returncode, 0)
             self.assertTrue(os.path.isfile(marker))
@@ -493,7 +598,7 @@ class RetireTest(unittest.TestCase):
             manifest = {
                 "schemaVersion": 1, "taskId": "task_audit", "parentTaskId": "", "title": "audit",
                 "intentSummary": "", "keywords": [], "branch": "main", "baseCommit": "abc",
-                "deliveryCommit": "def", "completedAt": "2026-08-17", "status": "completed",
+                "deliveryCommit": VALID_COMMIT, "completedAt": "2026-08-17", "status": "completed",
                 "artifacts": [{"path": "spec.md", "sha256": intake._sha256(archived_spec), "size": 8}],
             }
             with open(os.path.join(archive, "manifest.json"), "w", encoding="utf-8") as f:
@@ -516,7 +621,7 @@ class RetireTest(unittest.TestCase):
             manifest = {
                 "schemaVersion": 1, "taskId": "task_123", "parentTaskId": "", "title": "test",
                 "intentSummary": "", "keywords": [], "branch": "main", "baseCommit": "abc",
-                "deliveryCommit": "def", "completedAt": "2026-08-17", "status": "completed",
+                "deliveryCommit": VALID_COMMIT, "completedAt": "2026-08-17", "status": "completed",
                 "artifacts": [{"path": "spec.md", "sha256": intake._sha256(archived_spec), "size": 8}],
             }
             transaction = {
@@ -529,7 +634,7 @@ class RetireTest(unittest.TestCase):
             with open(os.path.join(archive, "retirement.json"), "w", encoding="utf-8") as f:
                 json.dump(transaction, f)
             r = run_retire("--cap", cap, "--slug", "test", "--date", "2026-08-17",
-                           "--task-id", "task_123", "--delivery-commit", "def",
+                           "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                            "--gate-status", "passed", "--strict")
             self.assertNotEqual(r.returncode, 0)
             self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
@@ -540,7 +645,7 @@ class RetireTest(unittest.TestCase):
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: done\ntask-id: task_123\n")
             args = ("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
-                    "--task-id", "task_123", "--delivery-commit", "def",
+                    "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                     "--knowledge-disposition", "no-reusable-experience",
                     "--gate-status", "passed", "--strict")
             first = run_retire(*args)
@@ -560,7 +665,7 @@ class RetireTest(unittest.TestCase):
                     f.write("stage: done\ntask-id: task_123\n")
                 entry = "- 2026-08-17 · feat · 可恢复退场"
                 args = ("--cap", cap, "--slug", "feat", "--date", "2026-08-17",
-                        "--task-id", "task_123", "--delivery-commit", "deadbeef",
+                        "--task-id", "task_123", "--delivery-commit", VALID_COMMIT,
                         "--knowledge-disposition", "no-reusable-experience",
                         "--gate-status", "passed", "--strict",
                         "--leaf", "order.checkout.a", "--req-root", req,

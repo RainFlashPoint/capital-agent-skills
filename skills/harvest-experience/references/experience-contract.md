@@ -21,8 +21,8 @@
 ---
 schema: cap-experience/v1
 title: <描述问题模式和决策，不写“完成某需求”>
-task-id: <团队模式 Task；纯本地可空>
-source-commit: <本经验验证对应的完整 Commit SHA>
+task-id: <当前 Task；严格 Retire 时必须与 STATE/退场请求精确一致>
+source-commit: <本经验验证对应的完整 Commit SHA；严格 Retire 时必须与 Delivery Commit 精确一致>
 ---
 
 ## 复用触发与检索线索 / Reuse triggers and retrieval cues

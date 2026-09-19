@@ -51,7 +51,7 @@ git diff --name-only HEAD    # 未提交改动
 - 返回 `ready=true`：把 `payload` 原样作为 MCP `record_experience` 的权威输入；Server 仍按同 Task、同 Commit 的可信 Gate 决定 candidate 或 validated，客户端不得自行发布。
 - 返回 `ready=false`：报告 `missing` 所列的原稿或证据缺口并补齐真实 `.cap` 产物。无法补齐时不调用旧式 LLM fallback，不得宣称已经形成可复用知识；纯问答或没有真实代码改动仍直接跳过沉淀。
 
-显式本地模式到此为止：保留通过质量门的 `.cap/experience.md`，供 Retire 归档和后续本地 Agent 读取，但不调用 MCP、不写 Outbox。严格 Retire 仍必须选择 `local-only`（本地索引）或 `pending-sync`（同 Task Outbox 事件），不能因离线而静默丢掉处置结果。团队模式才继续执行下方 `record_experience`。
+显式本地模式到此为止：保留通过质量门的 `.cap/experience.md`，供 Retire 归档和后续本地 Agent 读取，但不调用 MCP、不写 Outbox。严格 Retire 会再次核对原稿 `task-id` 与完整 `source-commit` 是否精确绑定当前 Task/Delivery；仍必须选择 `local-only`（本地索引）或 `pending-sync`（同 Task、同 Commit 且载荷可重放的 Outbox 事件），不能因离线而静默丢掉处置结果。团队模式才继续执行下方 `record_experience`。
 
 只有生成器 `ready=true` 后才调用 MCP 工具 `record_experience`：
 
@@ -98,7 +98,7 @@ git diff --name-only HEAD    # 未提交改动
 
 沉淀成功后工具会返回经验摘要与文档 ID。
 
-若调用失败，使用 `scripts/cap-outbox.mjs enqueue <repo> '<event-json>'` 写入 `experience.record` 事件。payload 只保留本节允许的结构化字段与文件路径；事件 envelope 的 `idempotencyKey` 与 payload 的 `idempotency_key` 必须相同。服务恢复后由 `$cap` 按 replay-plan 调用原 `record_experience`，成功后 ack；Outbox 自身不是“已沉淀”的证明。
+若调用失败，使用 `scripts/cap-outbox.mjs enqueue <repo> '<event-json>'` 写入 `experience.record` 事件。payload 只保留本节允许的结构化字段与文件路径，必须包含同一 `task_id`、精确 `commit_sha`、非空 intent/changed_files、完整结构化 `experience`；事件 envelope 的 `idempotencyKey` 与 payload 的 `idempotency_key` 必须相同。服务恢复后由 `$cap` 按 replay-plan 调用原 `record_experience`，成功后 ack；空壳、错 Task/Commit 或幂等键不一致的事件不能作为 `pending-sync` 退场证明，Outbox 自身也不是“已沉淀”的证明。
 
 随后若 MCP 提供 `record_skill_event`：
 - 记录 `experience_recorded`，artifact_refs 只放知识文档 ID。

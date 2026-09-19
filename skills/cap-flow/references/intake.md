@@ -281,8 +281,8 @@ SHA-256，原子落下快照、`manifest.json` 与 `retirement.json` 后，再�
 phase 推进。任一步中断后重跑同一 Retire 会从已提交 phase 继续；清理、索引、叶状态和同一条 Evolution/叶记录均幂等，
 不会因为“快照已经存在”而跳过剩余收尾，也不会重复追加经验。快照尚未提交前失败时，根 `.cap` 保持不变。
 
-严格退场必须显式声明知识处置：`synced` 必须带中心知识文档 ID，`pending-sync` 必须有同 Task 的
-`experience.record` Outbox 事件，`local-only` 必须有合格 `experience.md` 的本地索引，
+严格退场必须显式声明知识处置，并先证明 `experience.md` 的 `task-id` 与完整 `source-commit` 精确对应当前 Task 和 Delivery Commit：`synced` 必须带中心知识文档 ID，`pending-sync` 必须有同 Task、同 Commit、envelope/payload 幂等键一致且包含完整结构化经验载荷的可重放
+`experience.record` Outbox 事件，`local-only` 必须有同一 Task/Commit 的合格 `experience.md` 本地索引，
 `no-reusable-experience` 只能用于明确没有合格经验的任务。处置值同时写入 manifest、事务请求和脱敏历史索引；缺失或互相矛盾时在清理前拒绝。旧归档没有该字段时只显示为 `legacy-unknown`，不会被猜测补齐；strict Retire 必须先显式迁移/补录旧 manifest，不能借兼容读取继续清理活动态。
 
 历史索引必须在清理活动态之前完成白名单投影、敏感值/本机路径/内网地址拒绝、字段限长限项与最终 256 KiB 校验。EVOLUTION 的超窗淘汰只接受普通非软链索引文件，并核对 Schema、Task、耐久处置、稳定知识 ID 与所需 experienceIndex；文件名或空 JSON 本身不构成耐久证明。

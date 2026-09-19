@@ -6,7 +6,7 @@
 
 MCP 工具已经加载、但平台或调用通道暂时不可用时，研发本身继续，但所有待回写事件统一写入 `.cap/outbox.jsonl`，不再为 Artifact、Action、Experience 各造一套临时文件。允许类型为 `task.attach`、`artifact.record`、`delivery.record`、`action.create:test`、`action.create:review`、`experience.record`、`skill.event`。客户端会话未加载 MCP 时不得借此创建 Outbox。
 
-每条事件必须带稳定 `idempotencyKey`、`type`、可选 `localTaskRef`、`dependsOn`、结构化 `payload`、时间与重试信息。离线创建 Task 时先生成 `localTaskRef`；后续事件依赖 `task.attach`，重放得到真实 `task_id/session_id` 后再注入后续 MCP 参数。只传路径、hash、Commit 和结构化结论，禁止保存代码正文、密钥和完整外部身份数据。
+每条事件必须带稳定 `idempotencyKey`、`type`、可选 `localTaskRef`、`dependsOn`、结构化 `payload`、时间与重试信息。离线创建 Task 时先生成 `localTaskRef`；后续事件依赖 `task.attach`，重放得到真实 `task_id/session_id` 后再注入后续 MCP 参数。`experience.record` 额外要求 envelope/payload 幂等键一致、Task 与精确 Commit 一致，并保存确定性生成器返回的完整 intent、changed_files 与结构化 experience；空壳占位不能证明可重放。只传路径、hash、Commit 和结构化结论，禁止保存代码正文、密钥和完整外部身份数据。
 
 恢复后运行 `scripts/cap-outbox.mjs replay-plan <repo>`。当前 Task 在本轮明确授权范围内的事件，严格按依赖顺序调用原 MCP Tool；成功后执行 `ack`，失败执行 `fail` 并停止依赖它的后续事件。不得并行发起多个写操作，否则首个权限拒绝时其它请求仍可能已经发送。
 

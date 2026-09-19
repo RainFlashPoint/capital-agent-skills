@@ -148,6 +148,25 @@ test('pending sync and stale harvest debt are visible and prioritized without re
   assert.equal(result.matches.some(item => JSON.stringify(item).includes('STALE_BODY_MUST_NOT_BE_READ')), false)
 })
 
+test('unresolved knowledge debt remains visible when the next task has no keyword overlap', () => {
+  const repo = fixture()
+  writeFileSync(join(repo, '.cap/history/index/task_pending_unrelated.json'), JSON.stringify({
+    taskId: 'task_pending_unrelated', title: '旧支付批次', knowledgeDisposition: 'pending-sync',
+    experienceIndex: { retrievalCues: ['完全不同的支付批次'], decisionRules: ['恢复后补报'] },
+  }))
+  const snapshot = join(repo, '.cap/local-state/stale/task_stale_unrelated/snapshot_a')
+  mkdirSync(snapshot, { recursive: true })
+  writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify({
+    oldTaskId: 'task_stale_unrelated', oldBranch: 'legacy/payment-batch', knowledgeDisposition: 'needs-harvest',
+  }))
+
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', '新增移动端主题切换动画', '--limit', '20', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  assert.ok(result.matches.some(item => item.file === '.cap/history/index/task_pending_unrelated.json'))
+  assert.ok(result.matches.some(item => item.source_type === 'cap_stale' && item.taskId === 'task_stale_unrelated'))
+})
+
 test('stale reconnaissance rejects symlinked and oversized manifests', () => {
   const repo = fixture()
   const taskRoot = join(repo, '.cap/local-state/stale/task_unsafe')
@@ -223,6 +242,21 @@ test('history index symlinks cannot make reconnaissance read outside the reposit
     encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
   }))
   assert.equal(result.matches.some(item => item.source_type === 'cap_index' && String(item.file).includes('outside.json')), false)
+})
+
+test('history index enumeration is bounded and reports truncation', () => {
+  const repo = fixture()
+  const indexRoot = join(repo, '.cap/history/index')
+  for (let index = 0; index < 1005; index += 1) {
+    writeFileSync(join(indexRoot, `bulk-${String(index).padStart(4, '0')}.json`), JSON.stringify({
+      taskId: `bulk-${index}`, title: `bulk marker ${index}`, knowledgeDisposition: 'local-only',
+    }))
+  }
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'bulk marker', '--limit', '20', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  assert.ok(result.scanned.cap_history_index_entries <= 1000)
+  assert.equal(result.scanned.cap_history_index_truncated, true)
 })
 
 test('SHA-256 commit-shaped source identifiers are not rejected as invalid', () => {
