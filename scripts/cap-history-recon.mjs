@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
-import { lstatSync, opendirSync, readFileSync, realpathSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -195,15 +195,38 @@ function safeCapPath(capRoot, path, expectedType = '') {
   }
 }
 
-function safeRead(capRoot, path) {
+export function safeRead(capRoot, path, { openFile = openSync } = {}) {
+  let fd
   try {
     const safePath = safeCapPath(capRoot, path, 'file')
     if (!safePath) return ''
-    const info = lstatSync(safePath)
-    if (info.size > MAX_TEXT_BYTES) return ''
-    return readFileSync(safePath, 'utf8')
+    const before = lstatSync(safePath)
+    if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_TEXT_BYTES) return ''
+    fd = openFile(safePath, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
+    const opened = fstatSync(fd)
+    if (!opened.isFile() || opened.size > MAX_TEXT_BYTES
+        || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) return ''
+    const payload = Buffer.alloc(opened.size + 1)
+    let offset = 0
+    while (offset < payload.length) {
+      const count = readSync(fd, payload, offset, payload.length - offset, offset)
+      if (count === 0) break
+      offset += count
+    }
+    const after = fstatSync(fd)
+    const currentPath = safeCapPath(capRoot, safePath, 'file')
+    if (!currentPath || currentPath !== safePath) return ''
+    const current = lstatSync(currentPath)
+    if (offset !== opened.size || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size
+        || current.isSymbolicLink() || !current.isFile()
+        || current.dev !== opened.dev || current.ino !== opened.ino || current.size !== opened.size) return ''
+    return payload.subarray(0, offset).toString('utf8')
   } catch {
     return ''
+  } finally {
+    if (fd !== undefined) {
+      try { closeSync(fd) } catch {}
+    }
   }
 }
 function safeJson(capRoot, path) {
@@ -290,7 +313,9 @@ function safeIndexList(value, { paths = false } = {}) {
 }
 
 function meaningfulImplementationAnchor(value) {
-  return typeof value === 'string' && value.trim() && !IMPLEMENTATION_ANCHOR_PLACEHOLDER.test(value.trim())
+  if (typeof value !== 'string') return false
+  const text = value.normalize('NFKC').replace(/\s+/g, ' ').trim().replace(/[\s.,;:!?。．，、；：！？…·]+$/u, '').trim()
+  return Boolean(text && !IMPLEMENTATION_ANCHOR_PLACEHOLDER.test(text))
 }
 
 function validExperienceIndex(value, taskId) {
@@ -347,7 +372,7 @@ function validHistoryIndex(item, entryName) {
 function validStaleManifest(item, taskName, snapshotName) {
   if (!plainObject(item) || Object.keys(item).some(key => !STALE_MANIFEST_FIELDS.has(key))) return null
   if (item.schemaVersion !== 1 && item.schemaVersion !== undefined) return null
-  if (item.oldTaskId !== taskName || !STABLE_TASK_ID.test(taskName)) return null
+  if (item.oldTaskId !== taskName || !STABLE_TASK_ID.test(taskName) || safeIndexText(taskName, 192) !== taskName) return null
   if (item.knowledgeDisposition !== 'needs-harvest') return null
   if (typeof item.fingerprint !== 'string' || !/^[0-9a-f]{12}$/.test(item.fingerprint)) return null
   if (snapshotName !== item.fingerprint && !snapshotName.startsWith(`${item.fingerprint}-`)) return null

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Tests for scripts/intake.py — stdlib unittest, no third-party deps."""
+import contextlib
+import io
 import json
 import os
 import re
@@ -361,19 +363,47 @@ class RetireTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
 
     def test_placeholder_entry_point_is_not_a_reusable_implementation_anchor(self):
-        with tempfile.TemporaryDirectory() as cap:
+        for placeholder in ("N/A", "N/A.", "none。", "无。"):
+            with self.subTest(placeholder=placeholder), tempfile.TemporaryDirectory() as cap:
+                _make_cap(cap)
+                _write_valid_experience(cap)
+                path = os.path.join(cap, "experience.md")
+                text = _read(path)
+                text = re.sub(
+                    r"(?s)(## 实现锚点与不变量 / Implementation anchors and invariants\n).*?(?=\n## 失效信号)",
+                    rf"\1- 入口：{placeholder}\n- 不变量：处理中不是成功。\n",
+                    text,
+                )
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+                self.assertIsNone(intake._experience_index(path))
+
+    def test_experience_index_does_not_follow_a_file_swapped_after_precheck(self):
+        with tempfile.TemporaryDirectory() as cap, tempfile.TemporaryDirectory() as outside:
             _make_cap(cap)
             _write_valid_experience(cap)
             path = os.path.join(cap, "experience.md")
-            text = _read(path)
-            text = re.sub(
-                r"(?s)(## 实现锚点与不变量 / Implementation anchors and invariants\n).*?(?=\n## 失效信号)",
-                r"\1- 入口：N/A\n- 不变量：处理中不是成功。\n",
-                text,
+            _write_valid_experience(outside)
+            external = os.path.join(outside, "experience.md")
+            external_text = _read(external).replace(
+                "title: 支付异步状态查询收敛", "title: EXTERNAL_SWAP_MARKER",
             )
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
-            self.assertIsNone(intake._experience_index(path))
+            with open(external, "w", encoding="utf-8") as f:
+                f.write(external_text)
+            original_getsize = intake.os.path.getsize
+            swapped = False
+
+            def swap_before_open(candidate):
+                nonlocal swapped
+                if candidate == path and not swapped:
+                    swapped = True
+                    os.remove(path)
+                    os.symlink(external, path)
+                return original_getsize(candidate)
+
+            with mock.patch.object(intake.os.path, "getsize", side_effect=swap_before_open):
+                index = intake._experience_index(path)
+            self.assertFalse(index and index.get("title") == "EXTERNAL_SWAP_MARKER")
 
     def test_history_identity_fields_reject_sensitive_token_shapes(self):
         token_task = "ghp_" + "a" * 32
@@ -466,6 +496,60 @@ class RetireTest(unittest.TestCase):
                     self.assertIn("recovery metadata", resumed.stderr.lower())
                     self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
                     self.assertEqual(_read(os.path.join(cap, "spec.md")), "spec.md")
+
+    def test_completed_local_retire_revalidates_archived_state_gate(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
+            state_path = os.path.join(cap, "STATE.md")
+            with open(state_path, "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_resume_gate\n")
+            args = (
+                "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_resume_gate", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--gate-kind", "local",
+                "--gate-commit", VALID_COMMIT, "--strict",
+            )
+            first = run_retire(*args)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            archive = os.path.join(cap, "history", "task_resume_gate")
+            archived_state = os.path.join(archive, "STATE.md")
+            with open(archived_state, "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_resume_gate\n")
+            manifest_path = os.path.join(archive, "manifest.json")
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            state_artifact = next(item for item in manifest["artifacts"] if item["path"] == "STATE.md")
+            state_artifact["size"] = os.path.getsize(archived_state)
+            state_artifact["sha256"] = intake._sha256(archived_state)
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+            resumed = run_retire(*args, default_gate=False)
+            self.assertNotEqual(resumed.returncode, 0)
+            self.assertIn("cap-gate", resumed.stderr.lower())
+
+    def test_server_retire_revalidates_canonical_gate_on_recovery(self):
+        with tempfile.TemporaryDirectory() as cap:
+            _make_cap(cap, names=("spec.md", "STATE.md"), dirs=())
+            with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                f.write("stage: done\ntask-id: task_server_resume\n")
+            args = [
+                "retire", "--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                "--task-id", "task_server_resume", "--delivery-commit", VALID_COMMIT,
+                "--knowledge-disposition", "no-reusable-experience",
+                "--gate-status", "passed", "--gate-kind", "server",
+                "--gate-commit", VALID_COMMIT, "--strict",
+            ]
+            with mock.patch.object(intake, "_verify_server_retire_gate") as verify:
+                with mock.patch.dict(os.environ, {"CAP_RETIRE_FAIL_AFTER": "snapshot"}):
+                    with self.assertRaisesRegex(RuntimeError, "snapshot"):
+                        intake.main(args)
+                self.assertEqual(verify.call_count, 1)
+            with mock.patch.object(intake, "_verify_server_retire_gate") as verify:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    result = intake.main(args)
+                self.assertEqual(result, 0)
+                verify.assert_called_once_with(cap, "task_server_resume", VALID_COMMIT)
 
     def test_evolution_entry_must_be_a_bounded_single_line(self):
         for entry in ("- first line\ncontinuation", "- control\x01character", "- " + "x" * 501):
@@ -1324,6 +1408,31 @@ class RetireTest(unittest.TestCase):
             self.assertTrue(audit["total"]["truncated"])
             self.assertTrue(audit["total"]["overBudget"])
             self.assertLessEqual(audit["total"]["bytes"], audit["total"]["limitBytes"])
+
+    def test_knowledge_audit_accounts_for_evolution_size_from_the_open_file(self):
+        with tempfile.TemporaryDirectory() as cap:
+            evolution = os.path.join(cap, "EVOLUTION.md")
+            with open(evolution, "w", encoding="utf-8") as f:
+                f.write("# Evolution log\n-small\n")
+            replacement = os.path.join(cap, "replacement.md")
+            with open(replacement, "w", encoding="utf-8") as f:
+                f.write("# Evolution log\n" + "x" * 700)
+            original_reader = intake._read_evolution_text
+
+            def replace_before_read(cap_dir, *args, **kwargs):
+                os.replace(replacement, evolution)
+                return original_reader(cap_dir, *args, **kwargs)
+
+            output = io.StringIO()
+            with mock.patch.object(intake, "MAX_KNOWLEDGE_AUDIT_BYTES", 600), \
+                    mock.patch.object(intake, "MAX_EVOLUTION_BYTES", 800), \
+                    mock.patch.object(intake, "_read_evolution_text", side_effect=replace_before_read), \
+                    contextlib.redirect_stdout(output):
+                result = intake.cmd_knowledge_audit(type("Args", (), {"cap": cap})())
+            self.assertEqual(result, 0)
+            audit = json.loads(output.getvalue())
+            self.assertTrue(audit["total"]["overBudget"])
+            self.assertTrue(audit["total"]["truncated"])
 
     def test_gitignore_tracks_only_history_indexes(self):
         with tempfile.TemporaryDirectory() as repo:

@@ -22,6 +22,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import unicodedata
 
 REQUIRED_FIELDS = [
     "id", "title", "domain_path", "cross_link", "old_system_ref",
@@ -178,7 +179,9 @@ def _safe_experience_index_text(value):
 
 
 def _meaningful_implementation_anchor(value):
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"[\s.,;:!?。．，、；：！？…·]+$", "", text).strip()
     return bool(text and not IMPLEMENTATION_ANCHOR_PLACEHOLDER.fullmatch(text))
 
 
@@ -228,11 +231,14 @@ def _experience_anchor_projection(anchor):
     }
 
 
-def _experience_index(path):
-    if not os.path.isfile(path) or os.path.islink(path) or os.path.getsize(path) > 256 * 1024:
+def _experience_index(path, root=None):
+    try:
+        text = _read_bounded_regular_text(
+            path, "experience.md", MAX_HISTORY_INDEX_BYTES,
+            root=root or os.path.dirname(os.path.abspath(path)),
+        )
+    except (OSError, ValueError):
         return None
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
     frontmatter = parse_frontmatter(text)
     if frontmatter.get("schema") != "cap-experience/v1":
         return None
@@ -279,11 +285,15 @@ def _experience_index(path):
     }
 
 
-def _validate_experience_binding(path, expected_task_id, expected_delivery_commit):
-    if not os.path.isfile(path) or os.path.islink(path) or os.path.getsize(path) > MAX_HISTORY_INDEX_BYTES:
+def _validate_experience_binding(path, expected_task_id, expected_delivery_commit, root=None):
+    try:
+        text = _read_bounded_regular_text(
+            path, "qualified experience.md", MAX_HISTORY_INDEX_BYTES,
+            missing_ok=False, root=root or os.path.dirname(os.path.abspath(path)),
+        )
+    except (OSError, ValueError):
         raise ValueError("qualified experience.md is unavailable for Task/Commit binding")
-    with open(path, encoding="utf-8") as f:
-        frontmatter = parse_frontmatter(f.read())
+    frontmatter = parse_frontmatter(text)
     task_id = str(frontmatter.get("task-id") or "").strip()
     source_commit = str(frontmatter.get("source-commit") or "").strip()
     if task_id != expected_task_id:
@@ -440,7 +450,8 @@ def _build_history_index(manifest, archive_dir):
                 or _history_index_text(document_id, "knowledgeDocumentId", limit=128) != document_id):
             raise ValueError("history index knowledgeDocumentId 非安全稳定格式")
         item["knowledgeDocumentId"] = document_id
-    experience_index = _experience_index(os.path.join(archive_dir, "experience.md"))
+    cap_root = os.path.dirname(os.path.dirname(archive_dir))
+    experience_index = _experience_index(os.path.join(archive_dir, "experience.md"), root=cap_root)
     if experience_index:
         item["experienceIndex"] = _bounded_experience_index(experience_index, task_id)
     if disposition in EXPERIENCE_REQUIRED_DISPOSITIONS and "experienceIndex" not in item:
@@ -608,10 +619,15 @@ def _read_json(path):
         return json.load(f)
 
 
-def _read_bounded_regular_text(path, label, limit, *, missing_ok=True):
+def _read_bounded_regular_text(path, label, limit, *, missing_ok=True, root=None, with_size=False):
     """Read a UTF-8 regular file without following links and with an exact byte budget."""
+    lexical_path = os.path.abspath(path)
+    lexical_root = os.path.abspath(root or os.path.dirname(lexical_path))
+    if os.path.commonpath([lexical_root, lexical_path]) != lexical_root:
+        raise ValueError(f"{label} must stay within its trusted root")
+    canonical_root = os.path.realpath(lexical_root)
     try:
-        before = os.lstat(path)
+        before = os.lstat(lexical_path)
     except FileNotFoundError:
         if missing_ok:
             return ""
@@ -621,27 +637,46 @@ def _read_bounded_regular_text(path, label, limit, *, missing_ok=True):
     if before.st_size > limit:
         raise ValueError(f"{label} exceeds {limit} byte read budget")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
+    fd = os.open(lexical_path, flags)
     try:
         opened = os.fstat(fd)
         if (not stat.S_ISREG(opened.st_mode)
                 or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
                 or opened.st_size != before.st_size):
             raise ValueError(f"{label} changed during read")
-        payload = os.read(fd, limit + 1)
+        chunks = []
+        remaining = limit + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(fd)
+        current = os.lstat(lexical_path)
+        canonical_current = os.path.realpath(lexical_path)
+        if (not stat.S_ISREG(after.st_mode)
+                or (after.st_dev, after.st_ino, after.st_size) != (opened.st_dev, opened.st_ino, opened.st_size)
+                or stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode)
+                or (current.st_dev, current.st_ino, current.st_size) != (opened.st_dev, opened.st_ino, opened.st_size)
+                or os.path.commonpath([canonical_root, canonical_current]) != canonical_root):
+            raise ValueError(f"{label} changed during read")
         if len(payload) != opened.st_size or len(payload) > limit:
             raise ValueError(f"{label} exceeds {limit} byte read budget")
     finally:
         os.close(fd)
     try:
-        return payload.decode("utf-8")
+        text = payload.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ValueError(f"{label} is not valid UTF-8") from error
+    return (text, len(payload)) if with_size else text
 
 
-def _read_evolution_text(cap_dir):
+def _read_evolution_text(cap_dir, *, with_size=False):
     return _read_bounded_regular_text(
         os.path.join(cap_dir, "EVOLUTION.md"), "EVOLUTION.md", MAX_EVOLUTION_BYTES,
+        root=cap_dir, with_size=with_size,
     )
 
 
@@ -813,9 +848,10 @@ def _state_value(path, key):
     return ""
 
 
-def _verify_local_retire_gate(state_path, delivery_commit):
+def _verify_local_retire_gate(state_path, delivery_commit, cap_root=None):
     state = _read_bounded_regular_text(
         state_path, "STATE.md local review gate", MAX_HISTORY_INDEX_BYTES, missing_ok=False,
+        root=cap_root or os.path.dirname(os.path.abspath(state_path)),
     )
     match = re.search(
         r"^cap-gate:\s*PASS\s+reviewed-head=((?:[0-9a-f]{40}|[0-9a-f]{64}))\s*$",
@@ -1342,27 +1378,25 @@ def cmd_knowledge_audit(args):
     evolution_truncated = False
     evolution_invalid = False
     evolution_path = os.path.join(args.cap, "EVOLUTION.md")
-    try:
-        evolution_info = os.lstat(evolution_path)
-    except FileNotFoundError:
-        evolution_info = None
-    if evolution_info is not None:
-        if stat.S_ISLNK(evolution_info.st_mode) or not stat.S_ISREG(evolution_info.st_mode):
-            evolution_invalid = True
+    if os.path.lexists(evolution_path):
+        try:
+            evolution_text, evolution_bytes = _read_evolution_text(args.cap, with_size=True)
+        except (OSError, ValueError):
             evolution_truncated = True
-        elif (evolution_info.st_size > MAX_EVOLUTION_BYTES
-              or total_bytes + evolution_info.st_size > MAX_KNOWLEDGE_AUDIT_BYTES):
-            evolution_truncated = True
-            over_budget = True
-        else:
             try:
-                evolution_text = _read_evolution_text(args.cap)
-            except (OSError, ValueError):
+                evolution_info = os.lstat(evolution_path)
+            except OSError:
                 evolution_invalid = True
-                evolution_truncated = True
             else:
-                evolution_bytes = evolution_info.st_size
-                total_bytes += evolution_bytes
+                evolution_invalid = stat.S_ISLNK(evolution_info.st_mode) or not stat.S_ISREG(evolution_info.st_mode)
+                if evolution_info.st_size > MAX_EVOLUTION_BYTES or total_bytes + evolution_info.st_size > MAX_KNOWLEDGE_AUDIT_BYTES:
+                    over_budget = True
+        else:
+            total_bytes += evolution_bytes
+            if total_bytes > MAX_KNOWLEDGE_AUDIT_BYTES:
+                evolution_truncated = True
+                over_budget = True
+            else:
                 evolution_entries = [line for line in evolution_text.splitlines()
                                      if line.strip() and not line.startswith("# Evolution log")]
     if evolution_truncated:
@@ -1555,7 +1589,7 @@ def cmd_retire(args):
     archived_experience = os.path.join(archive_dir, "experience.md")
     active_experience = os.path.join(args.cap, "experience.md")
     experience_source = archived_experience if os.path.isfile(archived_experience) else active_experience
-    experience_index = _experience_index(experience_source)
+    experience_index = _experience_index(experience_source, root=args.cap)
     requested_disposition = args.knowledge_disposition or ""
     requested_document_id = args.knowledge_document_id or ""
     requested_gate_kind = args.gate_kind or ""
@@ -1625,15 +1659,15 @@ def cmd_retire(args):
         elif not transaction:
             print("缺少同 Task 的 STATE 或可信 retirement transaction,拒绝恢复", file=sys.stderr)
             return 2
-        if not transaction:
-            try:
-                if requested_gate_kind == "local":
-                    _verify_local_retire_gate(state_path, args.delivery_commit)
-                else:
-                    _verify_server_retire_gate(args.cap, args.task_id, args.delivery_commit)
-            except ValueError as error:
-                print(str(error), file=sys.stderr)
-                return 2
+        try:
+            if requested_gate_kind == "local":
+                gate_state_path = os.path.join(archive_dir, "STATE.md") if transaction else state_path
+                _verify_local_retire_gate(gate_state_path, args.delivery_commit, args.cap)
+            else:
+                _verify_server_retire_gate(args.cap, args.task_id, args.delivery_commit)
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 2
     elif archive_exists and not transaction and state_stage and state_stage != "done":
         print(f"当前仍有活动 Task,拒绝从旧 manifest 恢复退场: stage={state_stage}", file=sys.stderr)
         return 2
@@ -1644,7 +1678,7 @@ def cmd_retire(args):
         else:
             if args.strict and experience_index:
                 _validate_experience_binding(
-                    experience_source, expected_task_id, args.delivery_commit,
+                    experience_source, expected_task_id, args.delivery_commit, root=args.cap,
                 )
             knowledge_disposition = _validate_knowledge_disposition(
                 args.cap, expected_task_id, args.delivery_commit, requested_disposition,

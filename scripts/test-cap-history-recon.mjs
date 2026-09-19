@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, openSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -272,15 +272,54 @@ test('Node reader rejects sensitive identity fields and placeholder implementati
   writeFileSync(join(repo, '.cap/history/index/task_sensitive_document.json'), JSON.stringify(historyIndex('task_sensitive_document', {
     title: 'SENSITIVE_DOCUMENT_ID_MARKER', knowledgeDisposition: 'synced', knowledgeDocumentId: `ghp_${'b'.repeat(32)}`,
   })))
-  writeFileSync(join(repo, '.cap/history/index/task_placeholder_anchor.json'), JSON.stringify(historyIndex('task_placeholder_anchor', {
-    title: 'PLACEHOLDER_ANCHOR_MARKER', experienceIndex: { codePaths: [], symbols: [], entryPoints: ['N/A'] },
-  })))
+  for (const [suffix, placeholder] of [['plain', 'N/A'], ['ascii-punctuation', 'N/A.'], ['cjk-punctuation', '无。']]) {
+    const taskId = `task_placeholder_anchor_${suffix}`
+    writeFileSync(join(repo, `.cap/history/index/${taskId}.json`), JSON.stringify(historyIndex(taskId, {
+      title: `PLACEHOLDER_ANCHOR_MARKER_${suffix}`, experienceIndex: { codePaths: [], symbols: [], entryPoints: [placeholder] },
+    })))
+  }
   const result = JSON.parse(execFileSync(process.execPath, [
     script, repo, '--intent', 'SENSITIVE_TASK_ID_MARKER SENSITIVE_DOCUMENT_ID_MARKER PLACEHOLDER_ANCHOR_MARKER', '--limit', '20', '--json',
   ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
   assert.equal(result.matches.some(item => item.file === `.cap/history/index/${tokenTask}.json`), false)
   assert.equal(result.matches.some(item => item.file === '.cap/history/index/task_sensitive_document.json'), false)
-  assert.equal(result.matches.some(item => item.file === '.cap/history/index/task_placeholder_anchor.json'), false)
+  assert.equal(result.matches.some(item => String(item.file || '').includes('task_placeholder_anchor_')), false)
+})
+
+test('stale reconnaissance rejects sensitive task identifiers before projection', () => {
+  const repo = fixture()
+  const tokenTask = ['ghp', 'a'.repeat(32)].join('_')
+  const fingerprint = 'abcdef123456'
+  const snapshot = join(repo, `.cap/local-state/stale/${tokenTask}/${fingerprint}`)
+  mkdirSync(snapshot, { recursive: true })
+  writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify(staleManifest(tokenTask, fingerprint)))
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'unresolved local knowledge debt', '--limit', '20', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  assert.equal(JSON.stringify(result).includes(tokenTask), false)
+  assert.equal(result.matches.some(item => item.source_type === 'cap_stale'), false)
+})
+
+test('bounded history read rejects a path replaced after its file descriptor opens', async () => {
+  const repo = fixture()
+  const target = join(repo, '.cap/PROFILE.md')
+  const outside = join(tmpdir(), `cap-history-race-${process.pid}.md`)
+  writeFileSync(target, '# Profile\nSAFE_PROFILE_CONTENT\n')
+  writeFileSync(outside, '# Profile\nPOST_CHECK_SWAP_MARKER\n')
+  const module = await import('./cap-history-recon.mjs')
+  assert.equal(typeof module.safeRead, 'function')
+  let opened = false
+  const text = module.safeRead(join(repo, '.cap'), target, {
+    openFile(path, flags) {
+      const fd = openSync(path, flags)
+      opened = true
+      unlinkSync(target)
+      symlinkSync(outside, target)
+      return fd
+    },
+  })
+  assert.equal(opened, true)
+  assert.equal(text, '')
 })
 
 test('stale reconnaissance rejects symlinked and oversized manifests', () => {

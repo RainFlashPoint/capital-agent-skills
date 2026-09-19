@@ -91,8 +91,8 @@ function fixture({ remote = true, withTask = true, withBusinessChange = true, ex
   return { repo, commit, base }
 }
 
-function generate(repo, intent = '纠正支付产品线并完成最小沙箱验收') {
-  return JSON.parse(execFileSync(process.execPath, [script, repo, '--commit', 'HEAD', '--intent', intent, '--json'], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+function generate(repo, intent = '纠正支付产品线并完成最小沙箱验收', extraEnv = {}) {
+  return JSON.parse(execFileSync(process.execPath, [script, repo, '--commit', 'HEAD', '--intent', intent, '--json'], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local', ...extraEnv } }))
 }
 
 test('canonical experience.md deterministically produces an AI-actionable payload', () => {
@@ -179,8 +179,21 @@ for (const [name, overrides, expected] of [
 }
 
 test('placeholder implementation anchor is rejected', () => {
-  const { repo } = fixture({ experienceOverrides: { anchors: '- 入口：N/A\n- 不变量：处理中不是成功。' } })
-  assert.ok(generate(repo).missing.includes('implementation_anchors'))
+  for (const placeholder of ['N/A', 'N/A.', 'none。', '无。']) {
+    const { repo } = fixture({ experienceOverrides: { anchors: `- 入口：${placeholder}\n- 不变量：处理中不是成功。` } })
+    assert.ok(generate(repo).missing.includes('implementation_anchors'), placeholder)
+  }
+})
+
+test('sensitive task identifiers are rejected before payload and idempotency projection', () => {
+  const tokenTask = ['ghp', 'a'.repeat(32)].join('_')
+  const { repo, commit, base } = fixture({ experienceOverrides: { taskId: tokenTask } })
+  writeFileSync(join(repo, '.cap/STATE.md'), `# Cap State\n\nstage: done\nstatus: development-complete\ntask-id: ${tokenTask}\nsession-id: session_payment\nbase-commit: ${base}\n`)
+  writeFileSync(join(repo, '.cap/experience.md'), experience(commit, { taskId: tokenTask }))
+  const result = generate(repo)
+  assert.equal(result.ready, false)
+  assert.ok(result.missing.includes('sensitive_identity'))
+  assert.equal(JSON.stringify(result).includes(tokenTask), false)
 })
 
 test('source commit and commit evidence must match the generated commit', () => {
@@ -208,6 +221,31 @@ test('symlinked experience outside the repository is ignored', () => {
   assert.equal(result.ready, false)
   assert.ok(result.missing.includes('experience_file'))
   assert.equal(JSON.stringify(result).includes('SYMLINK_ESCAPE_MARKER'), false)
+})
+
+test('bounded experience read rejects a path replaced after its file descriptor opens', async () => {
+  const { repo, commit } = fixture()
+  const target = join(repo, '.cap/experience.md')
+  const outside = join(tmpdir(), `cap-experience-race-${process.pid}.md`)
+  writeFileSync(outside, experience(commit, {
+    decisions: '- 决策：当发生 POST_CHECK_SWAP_MARKER 时，必须拒绝外部文件，因为检查与读取必须绑定同一对象。\n- 行动 1：拒绝该外部经验载荷。',
+  }))
+  const module = await import('./cap-experience-payload.mjs')
+  assert.equal(typeof module.safeRead, 'function')
+  const { open } = await import('node:fs/promises')
+  let opened = false
+  const text = await module.safeRead(repo, '.cap/experience.md', {
+    async openFile(path, flags) {
+      const handle = await open(path, flags)
+      opened = true
+      const fs = await import('node:fs')
+      fs.unlinkSync(target)
+      fs.symlinkSync(outside, target)
+      return handle
+    },
+  })
+  assert.equal(opened, true)
+  assert.equal(text, '')
 })
 
 test('local absolute paths are rejected instead of becoming team knowledge', () => {

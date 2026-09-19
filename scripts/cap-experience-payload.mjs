@@ -2,8 +2,9 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { lstat, readFile, realpath } from 'node:fs/promises'
-import { join, relative, resolve } from 'node:path'
+import { constants } from 'node:fs'
+import { lstat, open, realpath } from 'node:fs/promises'
+import { relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { sanitizeTaskText } from './cap-task-request.mjs'
@@ -11,6 +12,13 @@ import { sanitizeTaskText } from './cap-task-request.mjs'
 const MAX_FILE_BYTES = 256 * 1024
 const CAP_FILES = ['.cap/experience.md', '.cap/STATE.md', '.cap/verify/summary.md', '.cap/verify/logic-report.md', '.cap/review/summary.md']
 const GENERIC = /^(?:完成(?:需求|开发|修改)?|修复问题|参考(?:现有|类似)实现|按(?:现有|原有)方式处理|处理一下|优化(?:代码|逻辑)?|update|fix(?: bug)?)[。.!！]?$/i
+const STABLE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/
+const SENSITIVE_IDENTITY_PATTERNS = [
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/i,
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/i,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/i,
+  /\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{30,})\b/i,
+]
 
 function fail(message) {
   process.stderr.write(`cap-experience-payload: ${message}\n`)
@@ -94,17 +102,44 @@ function sanitizedList(values = []) {
   return values.map(sanitize).filter(Boolean)
 }
 
-async function safeRead(repo, relativePath) {
-  const path = join(repo, relativePath)
+export async function safeRead(repo, relativePath, { openFile = open } = {}) {
+  const trustedRoot = await realpath(resolve(repo))
+  const path = resolve(trustedRoot, relativePath)
+  let handle
   try {
+    const lexicalRelative = relative(trustedRoot, path)
+    if (!lexicalRelative || lexicalRelative.startsWith('..') || resolve(trustedRoot, lexicalRelative) !== path) return ''
     const info = await lstat(path)
     if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_FILE_BYTES) return ''
     const canonical = await realpath(path)
-    const rel = relative(repo, canonical)
-    if (!rel || rel.startsWith('..') || resolve(repo, rel) !== canonical) return ''
-    return readFile(canonical, 'utf8')
+    const rel = relative(trustedRoot, canonical)
+    if (!rel || rel.startsWith('..') || resolve(trustedRoot, rel) !== canonical) return ''
+    handle = await openFile(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
+    const opened = await handle.stat()
+    if (!opened.isFile() || opened.size > MAX_FILE_BYTES
+        || opened.dev !== info.dev || opened.ino !== info.ino || opened.size !== info.size) return ''
+    const payload = Buffer.alloc(opened.size + 1)
+    let offset = 0
+    while (offset < payload.length) {
+      const { bytesRead } = await handle.read(payload, offset, payload.length - offset, offset)
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    const after = await handle.stat()
+    const current = await lstat(canonical)
+    const currentCanonical = await realpath(canonical)
+    const currentRelative = relative(trustedRoot, currentCanonical)
+    if (offset !== opened.size || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size
+        || current.isSymbolicLink() || !current.isFile()
+        || current.dev !== opened.dev || current.ino !== opened.ino || current.size !== opened.size
+        || !currentRelative || currentRelative.startsWith('..') || resolve(trustedRoot, currentRelative) !== currentCanonical) return ''
+    return payload.subarray(0, offset).toString('utf8')
   } catch {
     return ''
+  } finally {
+    if (handle) {
+      try { await handle.close() } catch {}
+    }
   }
 }
 
@@ -159,9 +194,14 @@ const IMPLEMENTATION_ANCHOR_PLACEHOLDER = /^(?:n\s*\/?\s*a|none|null|unknown|tbd
 
 function hasMeaningfulImplementationAnchor(values = []) {
   return values.some(value => {
-    const text = sanitize(value).trim()
+    const text = sanitize(value).normalize('NFKC').replace(/\s+/g, ' ').trim().replace(/[\s.,;:!?。．，、；：！？…·]+$/u, '').trim()
     return text.length > 0 && !IMPLEMENTATION_ANCHOR_PLACEHOLDER.test(text)
   })
+}
+
+function safeTaskIdentity(value = '') {
+  const text = String(value).trim()
+  return Boolean(text && STABLE_TASK_ID.test(text) && !SENSITIVE_IDENTITY_PATTERNS.some(pattern => pattern.test(text)))
 }
 
 function safeEvidence(values = [], commitSha = '') {
@@ -223,6 +263,7 @@ export async function buildExperiencePayload({ repo = '.', commit = 'HEAD', inte
   const evidenceRefs = safeEvidence(evidenceValues, commitSha)
   const stateTaskId = field(state, 'task-id')
   const experienceTaskId = field(experienceText, 'task-id')
+  const unsafeTaskIdentity = [stateTaskId, experienceTaskId].filter(Boolean).some(value => !safeTaskIdentity(value))
   const sourceCommit = field(experienceText, 'source-commit')
   const unsafeContent = /(?:\/Users\/|\/home\/|\/private\/|\/tmp\/|\/var\/folders\/|[A-Za-z]:\\)|(?:^|\s)\.\.\//m.test(experienceText)
   const promptInjection = /(?:ignore (?:all |the )?(?:previous|prior) instructions|忽略(?:以上|此前|之前)(?:所有)?(?:指令|规则)|system prompt|developer message|exfiltrat(?:e|ion))/i.test(experienceText)
@@ -253,6 +294,7 @@ export async function buildExperiencePayload({ repo = '.', commit = 'HEAD', inte
     verifyPaths.length === 0 || !positiveVerification(verifyText) ? 'verification_evidence' : '',
     verificationCommits.some(value => value !== commitSha) ? 'verification_commit' : '',
     stateTaskId && experienceTaskId && stateTaskId !== experienceTaskId ? 'task_id_consistency' : '',
+    unsafeTaskIdentity ? 'sensitive_identity' : '',
     unsafeContent ? 'unsafe_content' : '',
     promptInjection ? 'prompt_injection' : '',
     !changed.some(path => !path.startsWith('.cap/')) ? 'changed_files' : '',
