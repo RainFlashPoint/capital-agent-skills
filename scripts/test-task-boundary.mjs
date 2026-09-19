@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, access } from 'node:fs/promises'
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildSanitizedTaskRetry, isSensitiveRiskRejection, sanitizeTaskText } from './cap-task-request.mjs'
@@ -89,11 +89,11 @@ test('Task switch recovers a pending boundary journal before retrying', async ()
   await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
   await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
   await writeFile(join(repo, '.cap/spec.md'), 'old spec\n')
-  const snapshotRoot = join(repo, '.cap/local-state/stale/task_old/recovery')
+  const snapshotRoot = join(repo, '.cap/local-state/stale/task_old/123456789abc')
   await mkdir(snapshotRoot, { recursive: true })
   await writeFile(join(snapshotRoot, 'spec.md'), 'old spec\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
-    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: 'recovery', oldState: await readFile(join(repo, '.cap/STATE.md'), 'utf8'),
+    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: '123456789abc', oldState: await readFile(join(repo, '.cap/STATE.md'), 'utf8'),
     oldContext: '', snapshotRoot, createdAt: new Date().toISOString(),
   }) + '\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999, taskId: 'task_interrupted' }) + '\n')
@@ -110,7 +110,7 @@ test('Task switch rejects a pending journal whose snapshot escapes the repositor
   await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
   await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
-    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: 'outside', snapshotRoot: outside,
+    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: '123456789abc', oldState: '', oldContext: '', snapshotRoot: outside,
   }) + '\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999 }) + '\n')
   await assert.rejects(
@@ -125,7 +125,7 @@ test('Task switch rejects a pending journal targeting the cap root', async () =>
   await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
   await writeFile(join(repo, '.cap/STATE.md'), '# Cap State: old\ntask-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
-    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: 'cap', snapshotRoot: join(repo, '.cap'),
+    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: '123456789abc', oldState: '', oldContext: '', snapshotRoot: join(repo, '.cap'),
   }) + '\n')
   await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999 }) + '\n')
   await assert.rejects(
@@ -133,6 +133,48 @@ test('Task switch rejects a pending journal targeting the cap root', async () =>
     /snapshot root must stay under/,
   )
   assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+})
+
+test('Task switch recovery rejects a symlinked snapshot artifact without touching its target', async () => {
+  const repo = await fixture()
+  const outside = await mkdtemp(join(tmpdir(), 'cap-recovery-link-'))
+  const target = join(outside, 'state.txt')
+  await writeFile(target, 'outside state\n')
+  const snapshotRoot = join(repo, '.cap/local-state/stale/task_old/123456789abc')
+  await mkdir(snapshotRoot, { recursive: true })
+  await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
+  await symlink(target, join(snapshotRoot, 'STATE.md'))
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
+    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: '123456789abc',
+    oldState: 'task-id: task_old\n', oldContext: '', snapshotRoot,
+  }) + '\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999 }) + '\n')
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }),
+    /snapshot contains a link, hardlink, or special file/,
+  )
+  assert.equal(await readFile(target, 'utf8'), 'outside state\n')
+})
+
+test('Task switch recovery rejects a hardlinked snapshot artifact without touching its target', async () => {
+  const repo = await fixture()
+  const outside = await mkdtemp(join(tmpdir(), 'cap-recovery-hardlink-'))
+  const target = join(outside, 'state.txt')
+  await writeFile(target, 'outside state\n')
+  const snapshotRoot = join(repo, '.cap/local-state/stale/task_old/123456789abc')
+  await mkdir(snapshotRoot, { recursive: true })
+  await mkdir(join(repo, '.cap/local-state/locks'), { recursive: true })
+  await link(target, join(snapshotRoot, 'STATE.md'))
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.pending.json'), JSON.stringify({
+    schemaVersion: 1, taskId: 'task_interrupted', oldTaskId: 'task_old', fingerprint: '123456789abc',
+    oldState: 'task-id: task_old\n', oldContext: '', snapshotRoot,
+  }) + '\n')
+  await writeFile(join(repo, '.cap/local-state/locks/task-switch.lock'), JSON.stringify({ pid: 999999 }) + '\n')
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new' }),
+    /snapshot contains a link, hardlink, or special file/,
+  )
+  assert.equal(await readFile(target, 'utf8'), 'outside state\n')
 })
 
 test('Task switch fails closed on a corrupt pending journal without creating a snapshot', async () => {

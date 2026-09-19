@@ -24,6 +24,7 @@
 - 进一步收敛恢复边界：pending snapshot 强制校验仓内 containment 与目录类型，损坏 journal 失败关闭；POSIX/Node `prepare-next` 对软链根、扫描截断和未完成 Retire 统一阻断；经验载荷兼容 SHA-256 Commit，EVOLUTION 与 audit 严格执行字节上限，Retire 清理前逐工件重验 CAS。
 - pending journal 恢复再按旧 Task 与 fingerprint 绑定 stale 快照，拒绝指向 `.cap` 根或其他 Task 快照；journal 采用 fsync 临时文件原子发布，并回收中断后遗留的空快照目录。
 - 恢复扫描对子级软链与不可读根失败关闭，并将快照父级和 fingerprint 绑定到原 Task；损坏 EVOLUTION 在累计超限时正确报告 invalid/overBudget。
+- Task 切换恢复进一步拒绝 snapshot 与活动目标中的软链、hardlink 和特殊文件，校验 journal 字段类型，并在原子写入前执行有界大小检查，避免半切换状态把仓外 inode 或不可恢复 journal 带入活动态。
 
 ## 0.12.3
 

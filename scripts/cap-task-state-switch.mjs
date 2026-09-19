@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile, readdir } from 'node:fs/promises'
 import { resolve, join, dirname, relative, sep, basename } from 'node:path'
@@ -11,6 +12,7 @@ import { inspectSessionRoot } from './cap-session-root.mjs'
 import { captureTaskBaseline, removeTaskBaseline } from './cap-worktree-baseline.mjs'
 
 const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'experience.md', 'verify', 'review', 'release', 'execution']
+const RECOVERY_FILE_MAX_BYTES = 8 * 1024 * 1024
 
 function git(repo, args) {
   return execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -69,11 +71,37 @@ async function commitTrackedActiveMigration(migration, { beforeReplace, replace 
   }
 }
 async function exists(path) { try { await stat(path); return true } catch { return false } }
+async function readRecoveryFile(path) {
+  let handle
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    const before = await handle.stat()
+    if (!before.isFile() || before.size > RECOVERY_FILE_MAX_BYTES) throw new Error('task_switch_pending_invalid: recovery file type or size')
+    const bytes = Buffer.alloc(before.size + 1)
+    let offset = 0
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+      if (!bytesRead) break
+      offset += bytesRead
+    }
+    const after = await handle.stat()
+    const current = await lstat(path)
+    if (!current.isFile() || current.ino !== before.ino || current.dev !== before.dev
+        || after.size !== before.size || after.mtimeMs !== before.mtimeMs || offset !== before.size) {
+      throw new Error('task_switch_pending_invalid: recovery file changed')
+    }
+    return bytes.subarray(0, offset).toString('utf8')
+  } finally { await handle?.close() }
+}
+async function replaceStateFile(path, text) {
+  const temporary = await writeSyncedTemporaryFile(path, text)
+  try { await rename(temporary, path) } finally { await rm(temporary, { force: true }) }
+}
 async function reclaimDeadTaskSwitchLock(lockPath) {
   const identity = await lstat(lockPath).catch(() => null)
   if (!identity) return false
   let metadata
-  try { metadata = JSON.parse(await readFile(lockPath, 'utf8')) } catch { return false }
+  try { metadata = JSON.parse(await readRecoveryFile(lockPath)) } catch { return false }
   if (!Number.isInteger(metadata?.pid) || metadata.pid <= 0 || metadata.pid === process.pid) return false
   let alive = true
   try { process.kill(metadata.pid, 0) } catch (error) { if (error?.code === 'ESRCH') alive = false }
@@ -86,14 +114,28 @@ async function reclaimDeadTaskSwitchLock(lockPath) {
 async function recoverPendingTaskSwitch(repo) {
   const capRoot = join(repo, '.cap')
   const pendingPath = join(capRoot, 'local-state', 'locks', 'task-switch.pending.json')
-  if (!await exists(pendingPath)) return false
   let pending
-  try { pending = JSON.parse(await readFile(pendingPath, 'utf8')) } catch { throw new Error('task_switch_pending_invalid: pending boundary journal is not valid JSON') }
-  if (!pending?.snapshotRoot || !pending?.taskId || !pending?.oldTaskId || !pending?.fingerprint || pending.schemaVersion !== 1) {
+  try { pending = JSON.parse(await readRecoveryFile(pendingPath)) } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw new Error('task_switch_pending_invalid: pending boundary journal is not valid JSON or a safe file')
+  }
+  if (!pending || pending.schemaVersion !== 1 || typeof pending.snapshotRoot !== 'string'
+      || typeof pending.taskId !== 'string' || typeof pending.oldTaskId !== 'string'
+      || typeof pending.fingerprint !== 'string' || typeof pending.oldState !== 'string'
+      || (pending.oldContext !== undefined && typeof pending.oldContext !== 'string')
+      || !pending.snapshotRoot || !pending.taskId || !pending.oldTaskId || !pending.fingerprint) {
     throw new Error('task_switch_pending_invalid: pending boundary journal identity is invalid')
+  }
+  if (!/^[0-9a-f]{12}$/i.test(pending.fingerprint)) {
+    throw new Error('task_switch_pending_invalid: snapshot fingerprint is invalid')
   }
   const snapshotRoot = resolve(repo, pending.snapshotRoot)
   const staleRoot = join(capRoot, 'local-state', 'stale')
+  const lexicalParts = relative(staleRoot, snapshotRoot).split(sep)
+  if (lexicalParts.length !== 2 || lexicalParts[0] !== safeSegment(pending.oldTaskId)
+      || !new RegExp(`^${pending.fingerprint}(?:-[0-9a-f-]{36})?$`, 'i').test(lexicalParts[1])) {
+    throw new Error('unsafe_cap_state_path: snapshot root must stay under its exact stale Task directory')
+  }
   await ensureSafeCapDirectory(repo, staleRoot)
   await ensureSafeCapDirectory(repo, snapshotRoot)
   const canonicalStale = await realpath(staleRoot)
@@ -107,7 +149,9 @@ async function recoverPendingTaskSwitch(repo) {
   }
   const expectedParent = join(canonicalStale, safeSegment(pending.oldTaskId))
   const canonicalParent = await realpath(dirname(canonicalSnapshot)).catch(() => '')
-  if (canonicalParent !== expectedParent || !basename(canonicalSnapshot).startsWith(`${pending.fingerprint}`)) {
+  const snapshotName = basename(canonicalSnapshot)
+  if (canonicalParent !== expectedParent
+      || !new RegExp(`^${pending.fingerprint}(?:-[0-9a-f-]{36})?$`, 'i').test(snapshotName)) {
     throw new Error('task_switch_pending_invalid: snapshot identity does not match the retired Task')
   }
   const snapshotInfo = await lstat(snapshotRoot).catch(() => null)
@@ -116,6 +160,19 @@ async function recoverPendingTaskSwitch(repo) {
     return true
   }
   if (!snapshotInfo.isDirectory()) throw new Error('task_switch_pending_invalid: snapshot root is not a directory')
+  async function validateSnapshotTree(path) {
+    const info = await lstat(path)
+    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
+      throw new Error('task_switch_pending_invalid: snapshot contains a link, hardlink, or special file')
+    }
+    if (info.isFile() && info.nlink > 1) {
+      throw new Error('task_switch_pending_invalid: snapshot contains a link, hardlink, or special file')
+    }
+    if (info.isDirectory()) {
+      for (const name of await readdir(path)) await validateSnapshotTree(join(path, name))
+    }
+  }
+  await validateSnapshotTree(snapshotRoot)
   const statePath = join(capRoot, 'STATE.md')
   const currentState = await readFile(statePath, 'utf8').catch(() => '')
   const currentTaskId = field(currentState, 'task-id')
@@ -123,14 +180,23 @@ async function recoverPendingTaskSwitch(repo) {
     await rm(pendingPath, { force: true }).catch(() => {})
     return true
   }
+  if (currentTaskId && currentTaskId !== pending.oldTaskId) {
+    throw new Error('task_switch_pending_invalid: active Task conflicts with recovery')
+  }
+  for (const name of ACTIVE_PATHS) {
+    const destination = join(capRoot, name)
+    if (await exists(destination)) await validateSnapshotTree(destination)
+  }
   for (const name of ACTIVE_PATHS.slice().reverse()) {
     const source = join(snapshotRoot, name)
     const destination = join(capRoot, name)
     if (await exists(source) && !await exists(destination)) await rename(source, destination)
   }
-  await rm(snapshotRoot, { recursive: true, force: true }).catch(() => {})
-  if (pending.oldState) await writeFile(statePath, pending.oldState)
-  if (pending.oldContext !== undefined) await writeFile(join(capRoot, 'task-context.md'), pending.oldContext)
+  // Keep the snapshot until a successful subsequent boundary has preserved it.
+  // Never recursively delete paths supplied by recovery metadata.
+  if (pending.oldState) await replaceStateFile(statePath, pending.oldState)
+  if (pending.oldContext !== undefined) await replaceStateFile(join(capRoot, 'task-context.md'), pending.oldContext)
+  await rename(snapshotRoot, `${snapshotRoot}-recovered-${randomUUID()}`)
   await rm(pendingPath, { force: true }).catch(() => {})
   return true
 }
@@ -246,10 +312,11 @@ async function switchTaskStateLocked({ repoRoot = '.', taskId, sessionId, expect
   }
   await ensureSafeCapDirectory(repo, dirname(snapshotRoot))
   const pendingPath = join(capRoot, 'local-state', 'locks', 'task-switch.pending.json')
-  const pendingTemporaryPath = await writeSyncedTemporaryFile(
-    pendingPath,
-    JSON.stringify({ schemaVersion: 1, taskId, oldTaskId, fingerprint, oldState, oldContext, snapshotRoot, createdAt: new Date().toISOString() }) + '\n',
-  )
+  const pendingText = JSON.stringify({ schemaVersion: 1, taskId, oldTaskId, fingerprint, oldState, oldContext, snapshotRoot, createdAt: new Date().toISOString() }) + '\n'
+  if (Buffer.byteLength(pendingText, 'utf8') > RECOVERY_FILE_MAX_BYTES) {
+    throw new Error('task_switch_pending_invalid: boundary journal exceeds the recovery size limit')
+  }
+  const pendingTemporaryPath = await writeSyncedTemporaryFile(pendingPath, pendingText)
   await rename(pendingTemporaryPath, pendingPath)
   await ensureSafeCapDirectory(repo, snapshotRoot)
 
@@ -343,10 +410,11 @@ export async function switchTaskState(options = {}) {
     await lock.writeFile(`${JSON.stringify({ pid: process.pid, taskId, sessionId, createdAt: new Date().toISOString() })}\n`, 'utf8')
     await lock.sync()
     lockIdentity = await lock.stat()
-    if (await exists(pendingPath)) await recoverPendingTaskSwitch(repo)
+    const recoveredBoundary = await recoverPendingTaskSwitch(repo)
+    const expectedState = recoveredBoundary ? await readFile(statePath, 'utf8').catch(() => '') : observedState
     if (afterTaskSwitchLock) await afterTaskSwitchLock()
     const lockedState = await readFile(statePath, 'utf8').catch(() => '')
-    if (lockedState !== observedState) throw new Error('task_switch_state_changed: active STATE changed while acquiring the Task switch lock')
+    if (lockedState !== expectedState) throw new Error('task_switch_state_changed: active STATE changed while acquiring the Task switch lock')
     const result = await switchTaskStateLocked(options)
     await rm(pendingPath, { force: true }).catch(() => {})
     return result
