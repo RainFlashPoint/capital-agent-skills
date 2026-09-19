@@ -112,6 +112,7 @@ test('explicit tracked active migration preserves unrelated staged entries and r
   const stagedAfter = execFileSync('git', ['diff', '--cached', '--', 'README.md'], { cwd: repo, encoding: 'utf8' })
   const trackedAfter = execFileSync('git', ['ls-files', '--', '.cap/STATE.md', '.cap/verify/old.md'], { cwd: repo, encoding: 'utf8' })
   const manifest = JSON.parse(await readFile(join(result.snapshotRoot, 'manifest.json'), 'utf8'))
+  assert.equal(manifest.schemaVersion, 1)
   assert.equal(stagedAfter, stagedBefore)
   assert.equal(trackedAfter, '')
   assert.equal(manifest.knowledgeDisposition, 'needs-harvest')

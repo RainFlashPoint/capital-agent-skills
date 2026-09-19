@@ -119,7 +119,7 @@ export async function switchTaskState({ repoRoot = '.', taskId, sessionId, expec
       await rename(source, destination)
       moved.push({ source, destination })
     }
-    await writeFile(join(snapshotRoot, 'manifest.json'), `${JSON.stringify({ oldTaskId, oldSessionId: field(oldState, 'session-id'), oldBranch: field(oldState, 'branch'), currentBranch: branch, currentWorktree: gitRoot, fingerprint, knowledgeDisposition: 'needs-harvest', moved: moved.map(item => item.source.slice(capRoot.length + 1)) }, null, 2)}\n`)
+    await writeFile(join(snapshotRoot, 'manifest.json'), `${JSON.stringify({ schemaVersion: 1, oldTaskId, oldSessionId: field(oldState, 'session-id'), oldBranch: field(oldState, 'branch'), currentBranch: branch, currentWorktree: gitRoot, fingerprint, knowledgeDisposition: 'needs-harvest', moved: moved.map(item => item.source.slice(capRoot.length + 1)) }, null, 2)}\n`)
     newStateStarted = true
     await writeFile(statePath, `# Cap State: ${title}\n\nstage: ${stage}\nstatus: in-progress\nexecution-required: true\ntask-id: ${taskId}\nsession-id: ${sessionId}\nbranch: ${branch}\nbranch-purpose: feature/${safeSegment(title, 'task')}\nbase-commit: ${head}\nworktree: ${gitRoot}\nupdated: pending\n\n## Gates passed\n- [ ] context：task-context.md 已基于当前任务与代码 HEAD 刷新\n- [x] git：旧任务状态已安全隔离，当前分支与本 Task 绑定\n\n## Decisions log\n- 旧活动状态已保存到 .cap/local-state/stale/${safeSegment(oldTaskId)}/${fingerprint}，未修改业务源码。\n\n## Next action\n-> refresh task-context before implementation\n`)
     newContextStarted = true

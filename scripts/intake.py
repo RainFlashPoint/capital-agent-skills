@@ -948,11 +948,33 @@ def cmd_knowledge_audit(args):
             except (OSError, ValueError, json.JSONDecodeError):
                 rows.append({"file": name, "knowledgeDisposition": "invalid-json"})
                 continue
-            if not isinstance(item, dict):
+            task_id = name[:-5]
+            try:
+                if (not isinstance(item, dict) or item.get("schemaVersion") != 1
+                        or item.get("taskId") != task_id
+                        or not STABLE_TASK_ID.fullmatch(task_id)
+                        or item.get("artifactRoot") != f".cap/history/{task_id}"):
+                    raise ValueError("identity")
+                _validate_history_index_payload(item, task_id)
+                disposition = item.get("knowledgeDisposition") or "legacy-unknown"
+                if disposition not in KNOWLEDGE_DISPOSITIONS | {"legacy-unknown", "legacy-local"}:
+                    raise ValueError("disposition")
+                document_id = item.get("knowledgeDocumentId")
+                if document_id and (not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id)):
+                    raise ValueError("document")
+                if disposition == "synced" and not document_id:
+                    raise ValueError("document")
+                if disposition in EXPERIENCE_REQUIRED_DISPOSITIONS:
+                    experience = item.get("experienceIndex")
+                    if (not isinstance(experience, dict)
+                            or experience.get("schema") != "cap-experience-index/v1"
+                            or experience.get("path") != f".cap/history/{task_id}/experience.md"):
+                        raise ValueError("experience")
+            except (TypeError, ValueError):
                 rows.append({"file": name, "knowledgeDisposition": "invalid-schema"})
                 continue
-            rows.append({"file": name, "taskId": item.get("taskId", ""),
-                         "knowledgeDisposition": item.get("knowledgeDisposition") or "legacy-unknown"})
+            rows.append({"file": name, "taskId": task_id,
+                         "knowledgeDisposition": disposition})
     evolution_path = os.path.join(args.cap, "EVOLUTION.md")
     evolution_entries = []
     if os.path.isfile(evolution_path) and not os.path.islink(evolution_path):

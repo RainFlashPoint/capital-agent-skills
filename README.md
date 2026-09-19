@@ -13,6 +13,7 @@
 - 远程平台仍是团队知识权威，本地只维护脱敏历史投影，不新增传统知识搜索系统。
 - Retire 会把经验原稿绑定到当前 Task 和完整 Delivery Commit，`pending-sync` 只接受真正可重放的同 Commit Outbox 载荷；未处理知识债务不再因新任务关键词不同而消失。
 - history index 侦察单次最多读取 1000 项并报告截断，配合 `knowledge-audit` 控制长期 Git 知识增长成本。
+- index 与 stale manifest 在召回前按 Task、artifact root、experience path 和快照指纹失败关闭校验；archive/stale 目录同样采用流式有界枚举，伪造元数据不能挤占真实候选。
 
 ## v0.12.3 更新
 

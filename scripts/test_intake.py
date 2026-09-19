@@ -904,12 +904,17 @@ class RetireTest(unittest.TestCase):
             index_root = os.path.join(cap, "history", "index")
             os.makedirs(index_root)
             with open(os.path.join(index_root, "legacy.json"), "w", encoding="utf-8") as f:
-                json.dump({"schemaVersion": 1, "taskId": "legacy"}, f)
+                legacy = _valid_history_index("legacy")
+                legacy.pop("knowledgeDisposition")
+                json.dump(legacy, f)
             with open(os.path.join(index_root, "pending.json"), "w", encoding="utf-8") as f:
-                json.dump({"schemaVersion": 1, "taskId": "pending",
-                           "knowledgeDisposition": "pending-sync"}, f)
+                pending = _valid_history_index("pending")
+                pending["knowledgeDisposition"] = "pending-sync"
+                json.dump(pending, f)
             with open(os.path.join(index_root, "invalid-shape.json"), "w", encoding="utf-8") as f:
-                json.dump([], f)
+                invalid = _valid_history_index("invalid-shape")
+                invalid["knowledgeDisposition"] = {"forged": "pending-sync"}
+                json.dump(invalid, f)
             with open(os.path.join(cap, "EVOLUTION.md"), "w", encoding="utf-8") as f:
                 f.write("# Evolution log\n\n" + "\n".join(f"- line {n}" for n in range(51)) + "\n")
             before = {path: _read(os.path.join(index_root, path)) for path in os.listdir(index_root)}

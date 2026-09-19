@@ -1,12 +1,28 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, opendirSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, opendirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const MAX_TEXT_BYTES = 256 * 1024
 const MAX_DIRECTORY_ENTRIES = 1000
+const HISTORY_INDEX_FIELDS = new Set([
+  'schemaVersion', 'taskId', 'parentTaskId', 'title', 'intentSummary', 'keywords',
+  'branch', 'baseCommit', 'deliveryCommit', 'completedAt', 'status',
+  'knowledgeDisposition', 'artifactRoot', 'knowledgeDocumentId', 'experienceIndex',
+])
+const EXPERIENCE_INDEX_FIELDS = new Set([
+  'schema', 'title', 'sourceCommit', 'retrievalCues', 'problemPatterns', 'decisionRules',
+  'invalidationSignals', 'codePaths', 'entryPoints', 'symbols', 'invariants', 'codeAnchors', 'path',
+])
+const STALE_MANIFEST_FIELDS = new Set([
+  'schemaVersion', 'oldTaskId', 'oldSessionId', 'oldBranch', 'currentBranch',
+  'currentWorktree', 'fingerprint', 'knowledgeDisposition', 'moved',
+])
+const CURRENT_DISPOSITIONS = new Set(['synced', 'pending-sync', 'local-only', 'no-reusable-experience'])
+const EXPERIENCE_REQUIRED_DISPOSITIONS = new Set(['synced', 'pending-sync', 'local-only'])
+const STABLE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'into', 'this', 'that', 'fix', 'feat', 'chore',
   '修复', '实现', '新增', '更新', '修改', '问题', '功能', '一个', '这个', '进行', '相关',
@@ -164,18 +180,6 @@ function safeJson(path) {
     return null
   }
 }
-function safeDirectoryEntries(path, limit = MAX_DIRECTORY_ENTRIES) {
-  try {
-    const info = lstatSync(path)
-    if (info.isSymbolicLink() || !info.isDirectory()) return []
-    return readdirSync(path, { withFileTypes: true })
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .slice(0, limit)
-  } catch {
-    return []
-  }
-}
-
 function boundedDirectoryEntries(path, limit = MAX_DIRECTORY_ENTRIES, report = null) {
   try {
     const info = lstatSync(path)
@@ -208,6 +212,104 @@ function scalar(value) {
 }
 function listText(value) {
   return Array.isArray(value) ? value.map(scalar).filter(Boolean).join(' ') : ''
+}
+
+function plainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function safeIndexText(value, limit = 500) {
+  if (typeof value !== 'string') return null
+  const text = value.replace(/\s+/g, ' ').trim()
+  if (text.length > limit) return null
+  if (/https?:\/\/[^\s/@]+:[^\s/@]+@/i.test(text)) return null
+  if (/(?:^|[\s("':=`])\/(?!\/)(?:[^/\s,，;；]+\/)+[^/\s,，;；]+/.test(text)) return null
+  if (/(?:^|[\s("'=])[A-Za-z]:\\/.test(text)) return null
+  if (/\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b/.test(text)) return null
+  if (/\b(?:secret|token|password|passwd|api[_-]?key)\s*[:#=]\s*[^\s,，;；]+/i.test(text)) return null
+  if (/\bauthorization\s*:\s*(?:(?:bearer|basic|digest)\s+)?[^\s,，;；]+/i.test(text)) return null
+  if (/\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/i.test(text)) return null
+  if (/\b(?:account|merchant(?:\s*id)?|customer(?:\s*id)?)\s*[:#=]\s*[a-z0-9_-]{3,}\b/i.test(text)) return null
+  if (/(?:商户号|商户编号|商编|账户号|账号)\s*[:：=#]\s*[a-z0-9_-]{3,}/i.test(text)) return null
+  if (/\b(?:[a-z0-9-]+\.)+(?:internal|local|corp|lan)\b/i.test(text)) return null
+  return text
+}
+
+function safeIndexList(value, { paths = false } = {}) {
+  if (!Array.isArray(value) || value.length > 8) return null
+  const result = []
+  for (const item of value) {
+    const text = safeIndexText(item)
+    if (text === null || !text || text !== item || result.includes(text)) return null
+    if (paths) {
+      const segments = text.split('/')
+      if (!text || text.startsWith('/') || text.startsWith('\\') || text.includes('\\') || /^[A-Za-z]:/.test(text)) return null
+      if (segments.some(segment => !segment || segment === '.' || segment === '..')) return null
+      if (['users', 'home', 'private', 'tmp', 'opt', 'etc', 'var'].includes(segments[0].toLowerCase())) return null
+    }
+    result.push(text)
+  }
+  return result
+}
+
+function validExperienceIndex(value, taskId) {
+  if (!plainObject(value) || value.schema !== 'cap-experience-index/v1') return null
+  if (Object.keys(value).some(key => !EXPERIENCE_INDEX_FIELDS.has(key))) return null
+  if (value.path !== `.cap/history/${taskId}/experience.md`) return null
+  const result = { schema: value.schema, path: value.path }
+  for (const key of ['title', 'sourceCommit']) {
+    if (!(key in value)) continue
+    const text = safeIndexText(value[key])
+    if (text === null) return null
+    result[key] = text
+  }
+  for (const key of ['retrievalCues', 'problemPatterns', 'decisionRules', 'invalidationSignals', 'entryPoints', 'symbols', 'invariants', 'codeAnchors']) {
+    if (!(key in value)) continue
+    const items = safeIndexList(value[key])
+    if (!items) return null
+    result[key] = items
+  }
+  if ('codePaths' in value) {
+    const items = safeIndexList(value.codePaths, { paths: true })
+    if (!items) return null
+    result.codePaths = items
+  }
+  return result
+}
+
+function validHistoryIndex(item, entryName) {
+  if (!plainObject(item) || item.schemaVersion !== 1 || Object.keys(item).some(key => !HISTORY_INDEX_FIELDS.has(key))) return null
+  const taskId = item.taskId
+  if (typeof taskId !== 'string' || !STABLE_TASK_ID.test(taskId) || entryName !== `${taskId}.json`) return null
+  if (item.artifactRoot !== `.cap/history/${taskId}`) return null
+  const scalarLimits = { parentTaskId: 128, title: 500, intentSummary: 500, branch: 256, baseCommit: 128, deliveryCommit: 128, completedAt: 128, status: 32 }
+  for (const [key, limit] of Object.entries(scalarLimits)) {
+    if (!(key in item)) continue
+    const text = safeIndexText(item[key], limit)
+    if (text === null || text !== item[key]) return null
+  }
+  if ('keywords' in item && !safeIndexList(item.keywords)) return null
+  const rawDisposition = item.knowledgeDisposition
+  const disposition = rawDisposition === undefined ? 'legacy-unknown' : rawDisposition
+  if (rawDisposition !== undefined && !CURRENT_DISPOSITIONS.has(rawDisposition) && rawDisposition !== 'legacy-local' && rawDisposition !== 'legacy-unknown') return null
+  const experience = item.experienceIndex === undefined ? null : validExperienceIndex(item.experienceIndex, taskId)
+  if (item.experienceIndex !== undefined && !experience) return null
+  if (EXPERIENCE_REQUIRED_DISPOSITIONS.has(disposition) && !experience) return null
+  if (disposition === 'synced' && (typeof item.knowledgeDocumentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.knowledgeDocumentId))) return null
+  if ('knowledgeDocumentId' in item && (typeof item.knowledgeDocumentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.knowledgeDocumentId))) return null
+  return { ...item, knowledgeDisposition: disposition, experienceIndex: experience }
+}
+
+function validStaleManifest(item, taskName, snapshotName) {
+  if (!plainObject(item) || Object.keys(item).some(key => !STALE_MANIFEST_FIELDS.has(key))) return null
+  if (item.schemaVersion !== 1 && item.schemaVersion !== undefined) return null
+  if (item.oldTaskId !== taskName || !STABLE_TASK_ID.test(taskName)) return null
+  if (item.knowledgeDisposition !== 'needs-harvest') return null
+  if (typeof item.fingerprint !== 'string' || !/^[0-9a-f]{12}$/.test(item.fingerprint)) return null
+  if (snapshotName !== item.fingerprint && !snapshotName.startsWith(`${item.fingerprint}-`)) return null
+  for (const key of ['oldSessionId', 'oldBranch', 'currentBranch', 'currentWorktree']) if (typeof item[key] !== 'string') return null
+  if (!Array.isArray(item.moved) || item.moved.some(path => typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..'))) return null
+  return item
 }
 
 function gitCandidates(repo) {
@@ -272,7 +374,8 @@ function capCandidates(repo, scan = {}) {
 
   const archiveRoot = join(capRoot, 'archive')
   if (existsSync(archiveRoot)) {
-    for (const entry of safeDirectoryEntries(archiveRoot)) {
+    const archiveReport = { entries: 0, truncated: false }
+    for (const entry of boundedDirectoryEntries(archiveRoot, MAX_DIRECTORY_ENTRIES, archiveReport)) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue
       candidates.push({
         source_type: 'cap_archive', file: `.cap/archive/${entry.name}`,
@@ -280,6 +383,8 @@ function capCandidates(repo, scan = {}) {
         inspect: { kind: 'repo_path', value: `.cap/archive/${entry.name}` },
       })
     }
+    scan.cap_archive_entries = archiveReport.entries
+    scan.cap_archive_truncated = archiveReport.truncated
   }
 
   // 历史正文可能很大且可能含不可信仓库内容；正常侦察只读显式索引，不递归读取快照。
@@ -289,10 +394,10 @@ function capCandidates(repo, scan = {}) {
     for (const entry of boundedDirectoryEntries(indexRoot, MAX_DIRECTORY_ENTRIES, indexReport)) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) continue
       const file = `.cap/history/index/${entry.name}`
-      const item = safeJson(join(indexRoot, entry.name))
-      const rawDisposition = item?.knowledgeDisposition || item?.knowledge_disposition
-      const knowledgeDisposition = typeof rawDisposition === 'string' ? rawDisposition : 'legacy-unknown'
-      const experienceIndex = item?.experienceIndex && typeof item.experienceIndex === 'object' && !Array.isArray(item.experienceIndex) ? item.experienceIndex : {}
+      const item = validHistoryIndex(safeJson(join(indexRoot, entry.name)), entry.name)
+      if (!item) continue
+      const knowledgeDisposition = item.knowledgeDisposition
+      const experienceIndex = item.experienceIndex || {}
       const sourceCommit = scalar(experienceIndex.sourceCommit)
       const anchorValues = listValues(
         experienceIndex.codePaths,
@@ -317,15 +422,26 @@ function capCandidates(repo, scan = {}) {
   }
   const staleRoot = join(capRoot, 'local-state', 'stale')
   if (existsSync(staleRoot)) {
-    for (const taskEntry of safeDirectoryEntries(staleRoot)) {
+    const taskReport = { entries: 0, truncated: false }
+    let snapshotEntries = 0
+    let snapshotTruncated = false
+    const taskEntries = boundedDirectoryEntries(staleRoot, MAX_DIRECTORY_ENTRIES, taskReport)
+    for (let taskIndex = 0; taskIndex < taskEntries.length; taskIndex += 1) {
+      const taskEntry = taskEntries[taskIndex]
       if (!taskEntry.isDirectory() || taskEntry.isSymbolicLink()) continue
+      const remainingSnapshots = MAX_DIRECTORY_ENTRIES - snapshotEntries
+      if (remainingSnapshots <= 0) {
+        snapshotTruncated = true
+        break
+      }
       const taskRoot = join(staleRoot, taskEntry.name)
-      for (const snapshotEntry of safeDirectoryEntries(taskRoot)) {
+      const snapshotReport = { entries: 0, truncated: false }
+      for (const snapshotEntry of boundedDirectoryEntries(taskRoot, remainingSnapshots, snapshotReport)) {
         if (!snapshotEntry.isDirectory() || snapshotEntry.isSymbolicLink()) continue
         const manifestPath = join(taskRoot, snapshotEntry.name, 'manifest.json')
-        const item = safeJson(manifestPath)
+        const item = validStaleManifest(safeJson(manifestPath), taskEntry.name, snapshotEntry.name)
         if (!item) continue
-        const knowledgeDisposition = typeof item.knowledgeDisposition === 'string' ? item.knowledgeDisposition : 'needs-harvest'
+        const knowledgeDisposition = item.knowledgeDisposition
         const file = `.cap/local-state/stale/${taskEntry.name}/${snapshotEntry.name}/manifest.json`
         candidates.push({
           source_type: 'cap_stale', file, taskId: scalar(item.oldTaskId) || taskEntry.name,
@@ -334,7 +450,14 @@ function capCandidates(repo, scan = {}) {
           inspect: { kind: 'repo_file', value: file },
         })
       }
+      snapshotEntries += snapshotReport.entries
+      snapshotTruncated ||= snapshotReport.truncated
+      if (snapshotEntries >= MAX_DIRECTORY_ENTRIES && taskIndex + 1 < taskEntries.length) snapshotTruncated = true
     }
+    scan.cap_stale_task_entries = taskReport.entries
+    scan.cap_stale_task_truncated = taskReport.truncated
+    scan.cap_stale_snapshot_entries = snapshotEntries
+    scan.cap_stale_snapshot_truncated = snapshotTruncated
   }
   return candidates
 }

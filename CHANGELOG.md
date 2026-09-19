@@ -11,6 +11,8 @@
 - 历史侦察在真实 SHA-256 仓库中保留 Commit 路径锚点，并拒绝 archive/stale 根软链或普通文件，对 Task 与快照两层目录分别限制单次枚举规模。
 - strict Retire 进一步要求经验原稿的 `task-id` 与完整 `source-commit` 精确绑定当前 Task/Delivery；`pending-sync` 只接受同 Task、同 Commit、幂等键一致且载荷可重放的 Outbox 事件。
 - 未处理的 `pending-sync` / `needs-harvest` 债务不再依赖新任务关键词才能被发现；历史索引侦察每次最多读取 1000 项并显式报告截断，避免长期 Git 知识积累拖垮每次代码侦察。
+- 历史侦察读取端现在对 index 文件名、Task、artifact root、处置枚举与 experience path 做完整绑定校验；伪造/损坏索引和 stale manifest 不再获得知识债务优先级，`knowledge-audit` 对非字符串处置失败关闭而不崩溃。
+- archive、stale Task 与 snapshot 目录改为真正流式有界枚举并报告截断；POSIX 与 Node/Windows Context Guard 统一裁剪 History usage 字段，空白值和 `none` 尾随空格不能绕过采用门禁。
 
 ## 0.12.3
 

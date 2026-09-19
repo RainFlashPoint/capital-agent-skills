@@ -9,6 +9,57 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const script = join(root, 'scripts/cap-history-recon.mjs')
 
+function historyIndex(taskId, overrides = {}) {
+  const base = {
+    schemaVersion: 1,
+    taskId,
+    parentTaskId: '',
+    title: taskId,
+    intentSummary: '',
+    keywords: [],
+    branch: 'main',
+    baseCommit: '',
+    deliveryCommit: '',
+    completedAt: '2026-09-19',
+    status: 'completed',
+    knowledgeDisposition: 'local-only',
+    artifactRoot: `.cap/history/${taskId}`,
+    experienceIndex: {
+      schema: 'cap-experience-index/v1',
+      title: taskId,
+      sourceCommit: '',
+      retrievalCues: [],
+      problemPatterns: [],
+      decisionRules: [],
+      invalidationSignals: [],
+      codePaths: [],
+      entryPoints: [],
+      symbols: [],
+      invariants: [],
+      codeAnchors: [],
+      path: `.cap/history/${taskId}/experience.md`,
+    },
+  }
+  const result = { ...base, ...overrides }
+  if (overrides.experienceIndex) result.experienceIndex = { ...base.experienceIndex, ...overrides.experienceIndex }
+  return result
+}
+
+function staleManifest(taskId, fingerprint, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    oldTaskId: taskId,
+    oldSessionId: 'session_fixture',
+    oldBranch: 'feature/fixture',
+    currentBranch: 'main',
+    currentWorktree: '/tmp/local-fixture',
+    fingerprint,
+    knowledgeDisposition: 'needs-harvest',
+    moved: ['STATE.md'],
+    ...overrides,
+  }
+}
+
 function git(repo, args) {
   return execFileSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }).trim()
 }
@@ -28,16 +79,13 @@ function fixture() {
   git(repo, ['switch', '-q', 'main'])
   mkdirSync(join(repo, '.cap/history/index'), { recursive: true })
   mkdirSync(join(repo, '.cap/history/task-secret'), { recursive: true })
-  writeFileSync(join(repo, '.cap/history/index/task_1147.json'), JSON.stringify({
-    task_id: 'task_1147', title: '快乐通宝 1147 协议', branch: 'history/huiyuan-1147-contract',
-    knowledgeDisposition: 'local-only',
+  writeFileSync(join(repo, '.cap/history/index/task_1147.json'), JSON.stringify(historyIndex('task_1147', {
+    title: '快乐通宝 1147 协议', branch: 'history/huiyuan-1147-contract',
     experienceIndex: {
-      schema: 'cap-experience-index/v1',
       retrievalCues: ['当再次处理电子协议签署顺序时', '签署传递节点、异步协议回执'],
       decisionRules: ['当回执异步到达时，必须先绑定协议版本再推进签署状态'],
-      path: '.cap/history/task_1147/experience.md',
     },
-  }))
+  })))
   writeFileSync(join(repo, '.cap/history/task-secret/STATE.md'), 'NEVER_RECURSIVELY_LOAD_ME 独占绝密召回词\n')
   return repo
 }
@@ -68,10 +116,9 @@ test('local experience retrieval cues make an archived task discoverable without
 
 test('code anchors discover an archived experience without title or intent keyword overlap', () => {
   const repo = fixture()
-  writeFileSync(join(repo, '.cap/history/index/task_anchor.json'), JSON.stringify({
-    taskId: 'task_anchor', title: '无关的历史标题', intentSummary: '无关的历史意图', keywords: ['legacy-only'],
+  writeFileSync(join(repo, '.cap/history/index/task_anchor.json'), JSON.stringify(historyIndex('task_anchor', {
+    title: '无关的历史标题', intentSummary: '无关的历史意图', keywords: ['legacy-only'],
     experienceIndex: {
-      schema: 'cap-experience-index/v1',
       sourceCommit: git(repo, ['rev-parse', 'HEAD']),
       codePaths: ['src/payment/callback.ts'],
       symbols: ['PaymentStatus_PROCESSING'],
@@ -79,7 +126,7 @@ test('code anchors discover an archived experience without title or intent keywo
       invariants: ['PaymentStatus_PROCESSING 不能直接写入成功'],
       retrievalCues: ['完全不相关的召回词'], decisionRules: ['完全不相关的规则'],
     },
-  }))
+  })))
   const result = JSON.parse(execFileSync(process.execPath, [
     script, repo, '--intent', '继续处理一个无关需求',
     '--anchor', 'src/payment/callback.ts', '--anchor', 'PaymentStatus_PROCESSING',
@@ -124,15 +171,16 @@ test('cap memory symlinks cannot make reconnaissance read files outside the repo
 
 test('pending sync and stale harvest debt are visible and prioritized without reading snapshot bodies', () => {
   const repo = fixture()
-  writeFileSync(join(repo, '.cap/history/index/task_pending.json'), JSON.stringify({
-    taskId: 'task_pending', title: '1147 协议待补报', knowledgeDisposition: 'pending-sync',
+  writeFileSync(join(repo, '.cap/history/index/task_pending.json'), JSON.stringify(historyIndex('task_pending', {
+    title: '1147 协议待补报', knowledgeDisposition: 'pending-sync',
     experienceIndex: { retrievalCues: ['1147 协议签署'], decisionRules: ['先补报知识'] },
-  }))
-  const snapshot = join(repo, '.cap/local-state/stale/task_stale/snapshot_a')
+  })))
+  const snapshotId = 'aaaaaaaaaaaa'
+  const snapshot = join(repo, `.cap/local-state/stale/task_stale/${snapshotId}`)
   mkdirSync(snapshot, { recursive: true })
-  writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify({
-    oldTaskId: 'task_stale', oldBranch: 'history/huiyuan-1147-contract', knowledgeDisposition: 'needs-harvest',
-  }))
+  writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify(staleManifest('task_stale', snapshotId, {
+    oldBranch: 'history/huiyuan-1147-contract',
+  })))
   writeFileSync(join(snapshot, 'experience.md'), 'STALE_BODY_MUST_NOT_BE_READ\n')
   const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', '1147 协议签署', '--limit', '20', '--json'], {
     encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
@@ -150,15 +198,16 @@ test('pending sync and stale harvest debt are visible and prioritized without re
 
 test('unresolved knowledge debt remains visible when the next task has no keyword overlap', () => {
   const repo = fixture()
-  writeFileSync(join(repo, '.cap/history/index/task_pending_unrelated.json'), JSON.stringify({
-    taskId: 'task_pending_unrelated', title: '旧支付批次', knowledgeDisposition: 'pending-sync',
+  writeFileSync(join(repo, '.cap/history/index/task_pending_unrelated.json'), JSON.stringify(historyIndex('task_pending_unrelated', {
+    title: '旧支付批次', knowledgeDisposition: 'pending-sync',
     experienceIndex: { retrievalCues: ['完全不同的支付批次'], decisionRules: ['恢复后补报'] },
-  }))
-  const snapshot = join(repo, '.cap/local-state/stale/task_stale_unrelated/snapshot_a')
+  })))
+  const snapshotId = 'bbbbbbbbbbbb'
+  const snapshot = join(repo, `.cap/local-state/stale/task_stale_unrelated/${snapshotId}`)
   mkdirSync(snapshot, { recursive: true })
-  writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify({
-    oldTaskId: 'task_stale_unrelated', oldBranch: 'legacy/payment-batch', knowledgeDisposition: 'needs-harvest',
-  }))
+  writeFileSync(join(snapshot, 'manifest.json'), JSON.stringify(staleManifest('task_stale_unrelated', snapshotId, {
+    oldBranch: 'legacy/payment-batch',
+  })))
 
   const result = JSON.parse(execFileSync(process.execPath, [
     script, repo, '--intent', '新增移动端主题切换动画', '--limit', '20', '--json',
@@ -215,9 +264,11 @@ test('stale task enumeration is bounded before reading snapshot manifests', () =
     script, repo, '--intent', 'STALE_ENUMERATION_OVERFLOW_MARKER STALE_SNAPSHOT_OVERFLOW_MARKER', '--limit', '20', '--json',
   ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
   assert.equal(result.matches.some(item => item.source_type === 'cap_stale'), false)
+  assert.ok(result.scanned.cap_stale_snapshot_entries <= 1000)
+  assert.equal(result.scanned.cap_stale_snapshot_truncated, true)
 })
 
-test('malformed index field shapes are treated as untrusted metadata instead of crashing reconnaissance', () => {
+test('malformed or forged indexes are ignored instead of becoming knowledge candidates', () => {
   const repo = fixture()
   writeFileSync(join(repo, '.cap/history/index/malformed.json'), JSON.stringify({
     title: { injected: true }, keywords: 'not-an-array', knowledgeDisposition: { forged: 'synced' },
@@ -226,8 +277,51 @@ test('malformed index field shapes are treated as untrusted metadata instead of 
   const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'malformed', '--limit', '20', '--json'], {
     encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
   }))
-  const match = result.matches.find(item => item.file === '.cap/history/index/malformed.json')
-  assert.equal(match.knowledgeDisposition, 'legacy-unknown')
+  assert.equal(result.matches.some(item => item.file === '.cap/history/index/malformed.json'), false)
+})
+
+test('history index identity, artifact root and experience path must bind the filename task', () => {
+  const repo = fixture()
+  writeFileSync(join(repo, '.cap/history/index/task_forged.json'), JSON.stringify(historyIndex('task_other', {
+    taskId: 'task_other',
+    artifactRoot: '.cap/history/task_other',
+    knowledgeDisposition: 'pending-sync',
+  })))
+  writeFileSync(join(repo, '.cap/history/index/task_bad_path.json'), JSON.stringify(historyIndex('task_bad_path', {
+    knowledgeDisposition: 'pending-sync',
+    experienceIndex: { path: '.cap/history/task_other/experience.md', retrievalCues: ['FORGED_DEBT_MARKER'] },
+  })))
+  writeFileSync(join(repo, '.cap/history/index/task_unknown.json'), JSON.stringify({
+    ...historyIndex('task_unknown'),
+    unreviewedMetadata: 'FORGED_DEBT_MARKER',
+  }))
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'FORGED_DEBT_MARKER', '--limit', '20', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  assert.equal(result.matches.some(item => item.file === '.cap/history/index/task_forged.json'), false)
+  assert.equal(result.matches.some(item => item.file === '.cap/history/index/task_bad_path.json'), false)
+  assert.equal(result.matches.some(item => item.file === '.cap/history/index/task_unknown.json'), false)
+})
+
+test('stale manifests require schema, task and snapshot fingerprint binding', () => {
+  const repo = fixture()
+  const forgedSnapshot = 'cccccccccccc'
+  const forged = join(repo, `.cap/local-state/stale/task_forged/${forgedSnapshot}`)
+  mkdirSync(forged, { recursive: true })
+  writeFileSync(join(forged, 'manifest.json'), JSON.stringify(staleManifest('task_other', forgedSnapshot, {
+    oldBranch: 'FORGED_STALE_MARKER',
+  })))
+  const missingSnapshot = 'dddddddddddd'
+  const missingDisposition = join(repo, `.cap/local-state/stale/task_missing/${missingSnapshot}`)
+  mkdirSync(missingDisposition, { recursive: true })
+  const invalid = staleManifest('task_missing', missingSnapshot)
+  delete invalid.knowledgeDisposition
+  writeFileSync(join(missingDisposition, 'manifest.json'), JSON.stringify(invalid))
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'FORGED_STALE_MARKER task_missing', '--limit', '20', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  assert.equal(result.matches.some(item => item.source_type === 'cap_stale' && item.taskId === 'task_other'), false)
+  assert.equal(result.matches.some(item => item.source_type === 'cap_stale' && item.taskId === 'task_missing'), false)
 })
 
 test('history index symlinks cannot make reconnaissance read outside the repository', () => {
@@ -248,9 +342,13 @@ test('history index enumeration is bounded and reports truncation', () => {
   const repo = fixture()
   const indexRoot = join(repo, '.cap/history/index')
   for (let index = 0; index < 1005; index += 1) {
-    writeFileSync(join(indexRoot, `bulk-${String(index).padStart(4, '0')}.json`), JSON.stringify({
-      taskId: `bulk-${index}`, title: `bulk marker ${index}`, knowledgeDisposition: 'local-only',
-    }))
+    const taskId = `bulk-${index}`
+    writeFileSync(join(indexRoot, `bulk-${String(index).padStart(4, '0')}.json`), JSON.stringify(historyIndex(taskId, {
+      taskId: `bulk-${String(index).padStart(4, '0')}`,
+      title: `bulk marker ${index}`,
+      artifactRoot: `.cap/history/bulk-${String(index).padStart(4, '0')}`,
+      experienceIndex: { path: `.cap/history/bulk-${String(index).padStart(4, '0')}/experience.md` },
+    })))
   }
   const result = JSON.parse(execFileSync(process.execPath, [
     script, repo, '--intent', 'bulk marker', '--limit', '20', '--json',
@@ -261,10 +359,10 @@ test('history index enumeration is bounded and reports truncation', () => {
 
 test('SHA-256 commit-shaped source identifiers are not rejected as invalid', () => {
   const repo = fixture()
-  writeFileSync(join(repo, '.cap/history/index/task_sha256.json'), JSON.stringify({
-    taskId: 'task_sha256', title: 'SHA256 source marker',
+  writeFileSync(join(repo, '.cap/history/index/task_sha256.json'), JSON.stringify(historyIndex('task_sha256', {
+    title: 'SHA256 source marker',
     experienceIndex: { sourceCommit: 'a'.repeat(64), retrievalCues: ['SHA256_SOURCE_MARKER'] },
-  }))
+  })))
   const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'SHA256_SOURCE_MARKER', '--json'], {
     encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
   }))
@@ -315,7 +413,7 @@ test('archive root symlinks and plain files are ignored without escaping or cras
   }
 })
 
-test('archive enumeration is bounded before candidate scoring', () => {
+test('archive enumeration is bounded before candidate scoring and reports truncation', () => {
   const repo = fixture()
   const archiveRoot = join(repo, '.cap/archive')
   mkdirSync(archiveRoot, { recursive: true })
@@ -325,5 +423,6 @@ test('archive enumeration is bounded before candidate scoring', () => {
   const result = JSON.parse(execFileSync(process.execPath, [
     script, repo, '--intent', 'ARCHIVE_OVERFLOW_MARKER', '--limit', '20', '--json',
   ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
-  assert.equal(result.matches.some(item => item.source_type === 'cap_archive'), false)
+  assert.ok(result.scanned.cap_archive_entries <= 1000)
+  assert.equal(result.scanned.cap_archive_truncated, true)
 })

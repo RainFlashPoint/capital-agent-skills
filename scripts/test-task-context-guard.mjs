@@ -305,3 +305,22 @@ test('history usage must explain candidate adoption and plan/verification impact
   assert.equal(result.status, 1)
   assert.match(result.stderr, /History usage/)
 })
+
+test('history usage rejects whitespace-only values and trims candidates before enum checks', () => {
+  const repo = fixture(); writeContext(repo)
+  const context = join(repo, '.cap/task-context.md')
+  let content = readFileSync(context, 'utf8').replace('- reason: 没有匹配的历史经验候选', '- reason:   ')
+  writeFileSync(context, content)
+  let result = run(repo, '--stage', 'plan')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /History usage 缺少 reason/)
+
+  writeContext(repo)
+  content = readFileSync(context, 'utf8')
+    .replace('- candidates: none', '- candidates: none   ')
+    .replace('- outcome: not_used', '- outcome: direct_adopted')
+  writeFileSync(context, content)
+  result = run(repo, '--stage', 'plan')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /candidates=none/)
+})

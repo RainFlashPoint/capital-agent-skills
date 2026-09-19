@@ -38,6 +38,8 @@ history_field() {
     active && /^## / { exit }
     active && $0 ~ "^- " key ":[[:space:]]*" {
       sub("^- " key ":[[:space:]]*", "", $0)
+      sub("^[[:space:]]+", "", $0)
+      sub("[[:space:]]+$", "", $0)
       print $0
       exit
     }
