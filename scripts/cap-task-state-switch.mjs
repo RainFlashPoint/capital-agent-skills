@@ -48,15 +48,17 @@ async function commitTrackedActiveMigration(migration, { beforeReplace, replace 
   if (beforeReplace) await beforeReplace()
   const lockPath = `${migration.indexPath}.lock`
   let lock
+  let ownsLock = false
   try {
     lock = await open(lockPath, 'wx')
+    ownsLock = true
     const currentIndex = await readFile(migration.indexPath)
     const currentHash = createHash('sha256').update(currentIndex).digest('hex')
     if (currentHash !== migration.originalIndexHash) throw new Error('tracked_cap_index_changed: Git index changed during active-state migration')
     await replace(migration.temporaryIndex, migration.indexPath)
   } finally {
     await lock?.close().catch(() => {})
-    await rm(lockPath, { force: true }).catch(() => {})
+    if (ownsLock) await rm(lockPath, { force: true }).catch(() => {})
   }
 }
 async function exists(path) { try { await stat(path); return true } catch { return false } }

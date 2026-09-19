@@ -58,6 +58,16 @@ KNOWLEDGE_DISPOSITIONS = {
 EXPERIENCE_REQUIRED_DISPOSITIONS = {"synced", "pending-sync", "local-only"}
 STABLE_KNOWLEDGE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 STABLE_TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$")
+HISTORY_INDEX_FIELDS = {
+    "schemaVersion", "taskId", "parentTaskId", "title", "intentSummary", "keywords",
+    "branch", "baseCommit", "deliveryCommit", "completedAt", "status",
+    "knowledgeDisposition", "artifactRoot", "knowledgeDocumentId", "experienceIndex",
+}
+EXPERIENCE_INDEX_FIELDS = {
+    "schema", "title", "sourceCommit", "retrievalCues", "problemPatterns", "decisionRules",
+    "invalidationSignals", "codePaths", "entryPoints", "symbols", "invariants",
+    "codeAnchors", "path",
+}
 
 
 def _sha256(path):
@@ -186,6 +196,18 @@ def _experience_index(path):
     invalidations = _experience_labeled(invalidation, ["失效信号", "invalidation signal"])
     if not frontmatter.get("title") or not cues or not problems or not decisions or not invalidations:
         return None
+    projected = {
+        "retrievalCues": cues,
+        "problemPatterns": problems,
+        "decisionRules": decisions,
+        "invalidationSignals": invalidations,
+        "entryPoints": _experience_labeled(anchor, ["入口", "entry", "entrypoint"]),
+        "changePoints": _experience_labeled(anchor, ["改动点", "change point", "change points", "anchor"]),
+        "invariants": _experience_labeled(anchor, ["不变量", "invariant", "invariants"]),
+    }
+    for label, values in projected.items():
+        for index, value in enumerate(values):
+            _history_index_text(value, f"experience.{label}[{index}]")
     clean = lambda values: [item for item in (_safe_experience_index_text(value) for value in values) if item][:MAX_EXPERIENCE_INDEX_ITEMS]
     anchors = _experience_anchor_projection(anchor)
     return {
@@ -210,9 +232,15 @@ def _history_index_text(value, label, *, limit=MAX_HISTORY_INDEX_TEXT):
     text = re.sub(r"\s+", " ", value).strip()
     unsafe = (
         re.search(r"https?://[^\s/@]+:[^\s/@]+@", text, re.I)
-        or re.search(r"(?:^|[\s(\"'=])(?:/Users/|/home/|/private/|/tmp/|/var/folders/|[A-Za-z]:\\)", text)
+        or re.search(r"(?:^|[\s(\"':=`])/(?!/)(?:[^/\s,，;；]+/)+[^/\s,，;；]+", text)
+        or re.search(r"(?:^|[\s(\"'=])[A-Za-z]:\\", text)
         or re.search(r"\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b", text)
         or re.search(r"\b(?:secret|token|password|passwd|api[_-]?key)\s*[:#=]\s*[^\s,，;；]+", text, re.I)
+        or re.search(r"\bauthorization\s*:\s*(?:(?:bearer|basic|digest)\s+)?[^\s,，;；]+", text, re.I)
+        or re.search(r"\bbearer\s+[A-Za-z0-9._~+/=-]{8,}", text, re.I)
+        or re.search(r"\b(?:account|merchant(?:\s*id)?|customer(?:\s*id)?)\s*[:#=]\s*[a-z0-9_-]{3,}\b", text, re.I)
+        or re.search(r"(?:商户号|商户编号|商编|账户号|账号)\s*[:：=#]\s*[a-z0-9_-]{3,}", text, re.I)
+        or re.search(r"\b(?:[a-z0-9-]+\.)+(?:internal|local|corp|lan)\b", text, re.I)
     )
     if unsafe:
         raise ValueError(f"history index {label} 包含敏感值、本机绝对路径或内网地址")
@@ -232,19 +260,58 @@ def _history_index_list(value, label):
     return result
 
 
+def _history_index_code_paths(value, label):
+    result = _history_index_list(value, label)
+    for index, path in enumerate(result):
+        segments = path.split("/")
+        if (path.startswith(("/", "\\")) or "\\" in path
+                or re.match(r"^[A-Za-z]:", path)
+                or any(segment in ("", ".", "..") for segment in segments)
+                or segments[0].lower() in {"users", "home", "private", "tmp", "opt", "etc", "var"}):
+            raise ValueError(f"history index {label}[{index}] 必须为仓库相对路径")
+    return result
+
+
 def _bounded_experience_index(value, task_id):
     if not isinstance(value, dict) or value.get("schema") != "cap-experience-index/v1":
         raise ValueError("history index experienceIndex schema 非法")
+    unknown = set(value) - EXPERIENCE_INDEX_FIELDS
+    if unknown:
+        raise ValueError(f"history index experienceIndex 包含未知字段: {', '.join(sorted(unknown))}")
     result = {"schema": "cap-experience-index/v1"}
     for key in ("title", "sourceCommit"):
         if key in value:
             result[key] = _history_index_text(value[key], f"experienceIndex.{key}")
     for key in ("retrievalCues", "problemPatterns", "decisionRules", "invalidationSignals",
-                "codePaths", "entryPoints", "symbols", "invariants", "codeAnchors"):
+                "entryPoints", "symbols", "invariants", "codeAnchors"):
         if key in value:
             result[key] = _history_index_list(value[key], f"experienceIndex.{key}")
+    if "codePaths" in value:
+        result["codePaths"] = _history_index_code_paths(value["codePaths"], "experienceIndex.codePaths")
     result["path"] = f".cap/history/{task_id}/experience.md"
     return result
+
+
+def _validate_history_index_payload(item, task_id):
+    if not isinstance(item, dict):
+        raise ValueError("history index 必须为对象")
+    unknown = set(item) - HISTORY_INDEX_FIELDS
+    if unknown:
+        raise ValueError(f"history index 包含未知字段: {', '.join(sorted(unknown))}")
+    scalar_limits = {
+        "parentTaskId": 128, "title": MAX_HISTORY_INDEX_TEXT,
+        "intentSummary": MAX_HISTORY_INDEX_TEXT, "branch": 256,
+        "baseCommit": 128, "deliveryCommit": 128, "completedAt": 128, "status": 32,
+    }
+    for key, limit in scalar_limits.items():
+        if key in item and _history_index_text(item[key], key, limit=limit) != item[key]:
+            raise ValueError(f"history index {key} 未规范化或超过长度上限")
+    if "keywords" in item and _history_index_list(item["keywords"], "keywords") != item["keywords"]:
+        raise ValueError("history index keywords 未规范化或超过数量上限")
+    if "experienceIndex" in item:
+        bounded = _bounded_experience_index(item["experienceIndex"], task_id)
+        if bounded != item["experienceIndex"]:
+            raise ValueError("history index experienceIndex 未规范化或超过安全边界")
 
 
 def _build_history_index(manifest, archive_dir):
@@ -280,6 +347,7 @@ def _build_history_index(manifest, archive_dir):
         item["experienceIndex"] = _bounded_experience_index(experience_index, task_id)
     if disposition in EXPERIENCE_REQUIRED_DISPOSITIONS and "experienceIndex" not in item:
         raise ValueError(f"history index {disposition} 缺少合格 experienceIndex")
+    _validate_history_index_payload(item, task_id)
     encoded = (json.dumps(item, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if len(encoded) > MAX_HISTORY_INDEX_BYTES:
         raise ValueError("history index 超过 256 KiB 上限")
@@ -303,6 +371,7 @@ def _read_valid_history_index(cap_dir, task_id):
             return None
         if item.get("artifactRoot") != f".cap/history/{task_id}":
             return None
+        _validate_history_index_payload(item, task_id)
         document_id = item.get("knowledgeDocumentId")
         if document_id and (not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id)):
             return None

@@ -6,9 +6,9 @@
 - `task-context` 新增 History usage 采用证明，POSIX 与 Node/Windows 门禁都会要求候选、采用结果、原因以及对计划和验证的影响。
 - 增加 gu-bei 风格路径/符号召回与历史采用门禁回归，保持远程团队知识库为权威，不新增本地知识搜索系统。
 - 历史索引读取拒绝软链越界，兼容 SHA-256 Git 对象标识，并补齐 camelCase 符号的锚点投影。
-- 修复独立评审发现的退场安全缺口：strict 模式拒绝未迁移的旧 manifest，历史索引在清理活动态前按白名单、脱敏边界与 256 KiB 上限完成验证。
-- EVOLUTION 只把结构、Task、处置与经验 Schema 均有效的索引视为耐久证明；Task 切换以 Git index lock + 内容 CAS 防止并发暂存被覆盖。
-- 历史侦察在真实 SHA-256 仓库中保留 Commit 路径锚点，并拒绝 archive 根软链/普通文件、限制单次目录枚举规模。
+- 修复独立评审发现的退场安全缺口：strict 模式拒绝未迁移的旧 manifest，历史索引在清理活动态前按全字段白名单、敏感信息失败关闭与 256 KiB 上限完成验证，代码路径只接受仓库相对路径。
+- EVOLUTION 只把结构、Task、处置与经验 Schema 均有效的索引视为耐久证明；Task 切换以 Git index lock + 内容 CAS 防止并发暂存被覆盖，且只释放当前进程实际持有的锁。
+- 历史侦察在真实 SHA-256 仓库中保留 Commit 路径锚点，并拒绝 archive/stale 根软链或普通文件，对 Task 与快照两层目录分别限制单次枚举规模。
 
 ## 0.12.3
 

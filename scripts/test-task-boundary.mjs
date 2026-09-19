@@ -158,6 +158,25 @@ test('tracked active migration detects concurrent Git index changes and preserve
   assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
 })
 
+test('tracked active migration never removes a Git index lock owned by another process', async () => {
+  const repo = await fixture()
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_old\nbranch: feature/old\nworktree: /tmp/old\nstage: test\n')
+  execFileSync('git', ['add', '-f', '.cap/STATE.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-qm', 'track legacy cap state'], { cwd: repo })
+  const lockPath = join(repo, execFileSync('git', ['rev-parse', '--git-path', 'index.lock'], { cwd: repo, encoding: 'utf8' }).trim())
+  await writeFile(lockPath, 'foreign git writer\n')
+
+  await assert.rejects(
+    switchTaskState({ repoRoot: repo, taskId: 'task_new', sessionId: 'session_new', migrateTrackedActive: true }),
+    error => error?.code === 'EEXIST',
+  )
+
+  assert.equal(await readFile(lockPath, 'utf8'), 'foreign git writer\n')
+  assert.match(await readFile(join(repo, '.cap/STATE.md'), 'utf8'), /task-id: task_old/)
+})
+
 test('tracked active migration rolls files back when index replacement fails', async () => {
   const repo = await fixture()
   await mkdir(join(repo, '.cap'), { recursive: true })

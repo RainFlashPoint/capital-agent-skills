@@ -164,6 +164,40 @@ test('stale reconnaissance rejects symlinked and oversized manifests', () => {
   assert.equal(result.matches.some(item => item.source_type === 'cap_stale' && item.taskId === 'SYMLINK_STALE_MARKER'), false)
 })
 
+test('stale reconnaissance ignores a plain-file root without crashing', () => {
+  const repo = fixture()
+  mkdirSync(join(repo, '.cap/local-state'), { recursive: true })
+  writeFileSync(join(repo, '.cap/local-state/stale'), 'STALE_ROOT_PLAIN_FILE_MARKER\n')
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'STALE_ROOT_PLAIN_FILE_MARKER', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  assert.equal(result.matches.some(item => item.source_type === 'cap_stale'), false)
+})
+
+test('stale task enumeration is bounded before reading snapshot manifests', () => {
+  const repo = fixture()
+  const staleRoot = join(repo, '.cap/local-state/stale')
+  mkdirSync(staleRoot, { recursive: true })
+  for (let index = 0; index < 1000; index += 1) mkdirSync(join(staleRoot, `a-${String(index).padStart(4, '0')}`))
+  const boundedTask = join(staleRoot, 'a-0000')
+  for (let index = 0; index < 1000; index += 1) mkdirSync(join(boundedTask, `a-${String(index).padStart(4, '0')}`))
+  const nestedOverflow = join(boundedTask, 'zzzz-overflow-snapshot')
+  mkdirSync(nestedOverflow)
+  writeFileSync(join(nestedOverflow, 'manifest.json'), JSON.stringify({
+    oldTaskId: 'STALE_SNAPSHOT_OVERFLOW_MARKER', knowledgeDisposition: 'needs-harvest',
+  }))
+  const overflow = join(staleRoot, 'zzzz-overflow-task/snapshot')
+  mkdirSync(overflow, { recursive: true })
+  writeFileSync(join(overflow, 'manifest.json'), JSON.stringify({
+    oldTaskId: 'STALE_ENUMERATION_OVERFLOW_MARKER', knowledgeDisposition: 'needs-harvest',
+  }))
+
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'STALE_ENUMERATION_OVERFLOW_MARKER STALE_SNAPSHOT_OVERFLOW_MARKER', '--limit', '20', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  assert.equal(result.matches.some(item => item.source_type === 'cap_stale'), false)
+})
+
 test('malformed index field shapes are treated as untrusted metadata instead of crashing reconnaissance', () => {
   const repo = fixture()
   writeFileSync(join(repo, '.cap/history/index/malformed.json'), JSON.stringify({

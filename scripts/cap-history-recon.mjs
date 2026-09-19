@@ -282,11 +282,11 @@ function capCandidates(repo) {
     }
   }
   const staleRoot = join(capRoot, 'local-state', 'stale')
-  if (existsSync(staleRoot) && !lstatSync(staleRoot).isSymbolicLink()) {
-    for (const taskEntry of readdirSync(staleRoot, { withFileTypes: true })) {
+  if (existsSync(staleRoot)) {
+    for (const taskEntry of safeDirectoryEntries(staleRoot)) {
       if (!taskEntry.isDirectory() || taskEntry.isSymbolicLink()) continue
       const taskRoot = join(staleRoot, taskEntry.name)
-      for (const snapshotEntry of readdirSync(taskRoot, { withFileTypes: true })) {
+      for (const snapshotEntry of safeDirectoryEntries(taskRoot)) {
         if (!snapshotEntry.isDirectory() || snapshotEntry.isSymbolicLink()) continue
         const manifestPath = join(taskRoot, snapshotEntry.name, 'manifest.json')
         const item = safeJson(manifestPath)

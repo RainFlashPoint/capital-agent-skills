@@ -396,7 +396,11 @@ class RetireTest(unittest.TestCase):
         unsafe_cases = {
             "secret": {"title": "token=super-secret-value"},
             "absolute-path": {"intentSummary": "read /Users/alice/private.txt"},
+            "generic-absolute-path": {"intentSummary": "read /opt/internal/private/config"},
             "private-address": {"branch": "deploy-" + ".".join(("10", "2", "7", "214"))},
+            "authorization": {"title": "Authorization: Bearer dummy-secret-value"},
+            "internal-host": {"intentSummary": "connect to db.internal"},
+            "account": {"title": "account: local-user"},
         }
         for label, metadata in unsafe_cases.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as cap:
@@ -407,6 +411,32 @@ class RetireTest(unittest.TestCase):
                                     "--gate-status", "passed", "--strict")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(_read(os.path.join(cap, "spec.md")), "active")
+                self.assertFalse(os.path.exists(os.path.join(cap, "history", "index", "task_123.json")))
+
+    def test_history_index_rejects_sensitive_experience_projection_before_cleanup(self):
+        unsafe_cases = {
+            "absolute-code-path": ("src/payment/callback.ts", "/Users/example/.ssh/id_rsa"),
+            "authorization": ("必须通过官方查询收敛终态", "Authorization: Bearer dummy-secret-value"),
+        }
+        for label, replacement in unsafe_cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as cap:
+                _make_cap(cap)
+                _write_valid_experience(cap)
+                experience_path = os.path.join(cap, "experience.md")
+                with open(experience_path, encoding="utf-8") as f:
+                    experience = f.read()
+                with open(experience_path, "w", encoding="utf-8") as f:
+                    f.write(experience.replace(*replacement))
+                with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
+                    f.write("stage: done\ntask-id: task_123\n")
+
+                result = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-09-19",
+                                    "--task-id", "task_123", "--delivery-commit", "def",
+                                    "--knowledge-disposition", "local-only",
+                                    "--gate-status", "passed", "--strict")
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(os.path.isfile(os.path.join(cap, "STATE.md")))
                 self.assertFalse(os.path.exists(os.path.join(cap, "history", "index", "task_123.json")))
 
     def test_history_index_bounds_oversized_manifest_metadata(self):
@@ -744,6 +774,24 @@ class RetireTest(unittest.TestCase):
                 json.dump(_valid_history_index("task_bad"), f)
             os.symlink(outside, path)
             self.assertFalse(intake._evolution_entry_is_durable(cap, "- [task:task_bad] symlink"))
+
+    def test_evolution_durability_rejects_unknown_and_sensitive_index_fields(self):
+        with tempfile.TemporaryDirectory() as cap:
+            index_root = os.path.join(cap, "history", "index")
+            os.makedirs(index_root)
+            path = os.path.join(index_root, "task_bad.json")
+
+            unknown = _valid_history_index("task_bad")
+            unknown["unreviewedMetadata"] = "must not authorize pruning"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(unknown, f)
+            self.assertFalse(intake._evolution_entry_is_durable(cap, "- [task:task_bad] unknown"))
+
+            sensitive = _valid_history_index("task_bad")
+            sensitive["title"] = "Authorization: Bearer dummy-secret-value"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(sensitive, f)
+            self.assertFalse(intake._evolution_entry_is_durable(cap, "- [task:task_bad] sensitive"))
 
     def test_knowledge_audit_is_read_only_and_reports_legacy_pending_and_capacity(self):
         with tempfile.TemporaryDirectory() as repo:
