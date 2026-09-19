@@ -155,6 +155,15 @@ function isSpecific(values = []) {
   return values.some(value => sanitize(value).length >= 12 && !GENERIC.test(sanitize(value)))
 }
 
+const IMPLEMENTATION_ANCHOR_PLACEHOLDER = /^(?:n\s*\/?\s*a|none|null|unknown|tbd|todo|not\s+applicable|无|暂无|未知|不适用|待定|待补|无入口)$/i
+
+function hasMeaningfulImplementationAnchor(values = []) {
+  return values.some(value => {
+    const text = sanitize(value).trim()
+    return text.length > 0 && !IMPLEMENTATION_ANCHOR_PLACEHOLDER.test(text)
+  })
+}
+
 function safeEvidence(values = [], commitSha = '') {
   const refs = []
   for (const value of values) {
@@ -230,7 +239,7 @@ export async function buildExperiencePayload({ repo = '.', commit = 'HEAD', inte
     failedApproaches.length === 0 ? 'failed_approach' : '',
     decisions.length === 0 || !hasDecisionRule(decisions) || !isSpecific(decisions) ? 'decision_rule' : '',
     actions.length === 0 || !isSpecific(actions) ? 'actions' : '',
-    entries.length === 0 && changePoints.length === 0 ? 'implementation_anchors' : '',
+    !hasMeaningfulImplementationAnchor([...entries, ...changePoints]) ? 'implementation_anchors' : '',
     invariants.length === 0 ? 'invariants' : '',
     verificationActions.length === 0 ? 'verification_action' : '',
     passSignals.length === 0 || failureSignals.length === 0 ? 'verification_observables' : '',

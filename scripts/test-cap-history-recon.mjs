@@ -263,6 +263,26 @@ test('Node reader rejects contradictory document ids and raw sensitive token for
   }
 })
 
+test('Node reader rejects sensitive identity fields and placeholder implementation anchors', () => {
+  const repo = fixture()
+  const tokenTask = `ghp_${'a'.repeat(32)}`
+  writeFileSync(join(repo, `.cap/history/index/${tokenTask}.json`), JSON.stringify(historyIndex(tokenTask, {
+    title: 'SENSITIVE_TASK_ID_MARKER',
+  })))
+  writeFileSync(join(repo, '.cap/history/index/task_sensitive_document.json'), JSON.stringify(historyIndex('task_sensitive_document', {
+    title: 'SENSITIVE_DOCUMENT_ID_MARKER', knowledgeDisposition: 'synced', knowledgeDocumentId: `ghp_${'b'.repeat(32)}`,
+  })))
+  writeFileSync(join(repo, '.cap/history/index/task_placeholder_anchor.json'), JSON.stringify(historyIndex('task_placeholder_anchor', {
+    title: 'PLACEHOLDER_ANCHOR_MARKER', experienceIndex: { codePaths: [], symbols: [], entryPoints: ['N/A'] },
+  })))
+  const result = JSON.parse(execFileSync(process.execPath, [
+    script, repo, '--intent', 'SENSITIVE_TASK_ID_MARKER SENSITIVE_DOCUMENT_ID_MARKER PLACEHOLDER_ANCHOR_MARKER', '--limit', '20', '--json',
+  ], { encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' } }))
+  assert.equal(result.matches.some(item => item.file === `.cap/history/index/${tokenTask}.json`), false)
+  assert.equal(result.matches.some(item => item.file === '.cap/history/index/task_sensitive_document.json'), false)
+  assert.equal(result.matches.some(item => item.file === '.cap/history/index/task_placeholder_anchor.json'), false)
+})
+
 test('stale reconnaissance rejects symlinked and oversized manifests', () => {
   const repo = fixture()
   const taskRoot = join(repo, '.cap/local-state/stale/task_unsafe')

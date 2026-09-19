@@ -23,6 +23,7 @@ const STALE_MANIFEST_FIELDS = new Set([
 const CURRENT_DISPOSITIONS = new Set(['synced', 'pending-sync', 'local-only', 'no-reusable-experience'])
 const EXPERIENCE_REQUIRED_DISPOSITIONS = new Set(['synced', 'pending-sync', 'local-only'])
 const STABLE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/
+const IMPLEMENTATION_ANCHOR_PLACEHOLDER = /^(?:n\s*\/?\s*a|none|null|unknown|tbd|todo|not\s+applicable|无|暂无|未知|不适用|待定|待补|无入口)$/i
 const SENSITIVE_INDEX_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/i,
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/i,
@@ -288,6 +289,10 @@ function safeIndexList(value, { paths = false } = {}) {
   return result
 }
 
+function meaningfulImplementationAnchor(value) {
+  return typeof value === 'string' && value.trim() && !IMPLEMENTATION_ANCHOR_PLACEHOLDER.test(value.trim())
+}
+
 function validExperienceIndex(value, taskId) {
   if (!plainObject(value) || value.schema !== 'cap-experience-index/v1') return null
   if (Object.keys(value).some(key => !EXPERIENCE_INDEX_FIELDS.has(key))) return null
@@ -316,7 +321,7 @@ function validExperienceIndex(value, taskId) {
 function validHistoryIndex(item, entryName) {
   if (!plainObject(item) || item.schemaVersion !== 1 || Object.keys(item).some(key => !HISTORY_INDEX_FIELDS.has(key))) return null
   const taskId = item.taskId
-  if (typeof taskId !== 'string' || !STABLE_TASK_ID.test(taskId) || entryName !== `${taskId}.json`) return null
+  if (typeof taskId !== 'string' || !STABLE_TASK_ID.test(taskId) || safeIndexText(taskId, 192) !== taskId || entryName !== `${taskId}.json`) return null
   if (item.artifactRoot !== `.cap/history/${taskId}`) return null
   const scalarLimits = { parentTaskId: 128, title: 500, intentSummary: 500, branch: 256, baseCommit: 128, deliveryCommit: 128, completedAt: 128, status: 32 }
   for (const [key, limit] of Object.entries(scalarLimits)) {
@@ -332,9 +337,9 @@ function validHistoryIndex(item, entryName) {
   if (item.experienceIndex !== undefined && !experience) return null
   if (EXPERIENCE_REQUIRED_DISPOSITIONS.has(disposition) && !experience) return null
   if (EXPERIENCE_REQUIRED_DISPOSITIONS.has(disposition)
-      && !(experience.codePaths?.length || experience.entryPoints?.length || experience.symbols?.length)) return null
-  if (disposition === 'synced' && (typeof item.knowledgeDocumentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.knowledgeDocumentId))) return null
-  if ('knowledgeDocumentId' in item && (typeof item.knowledgeDocumentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.knowledgeDocumentId))) return null
+      && ![...(experience.codePaths || []), ...(experience.entryPoints || []), ...(experience.symbols || [])].some(meaningfulImplementationAnchor)) return null
+  if (disposition === 'synced' && (typeof item.knowledgeDocumentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.knowledgeDocumentId) || safeIndexText(item.knowledgeDocumentId, 128) !== item.knowledgeDocumentId)) return null
+  if ('knowledgeDocumentId' in item && (typeof item.knowledgeDocumentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.knowledgeDocumentId) || safeIndexText(item.knowledgeDocumentId, 128) !== item.knowledgeDocumentId)) return null
   if (disposition !== 'synced' && item.knowledgeDocumentId) return null
   return { ...item, knowledgeDisposition: disposition, experienceIndex: experience }
 }

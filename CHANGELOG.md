@@ -17,6 +17,7 @@
 - Retire 在 snapshot/cleanup 前验证 `.cap/history/index` 整条写入路径，拒绝软链接与错误目录类型；POSIX 索引原子替换绑定 no-follow 目录句柄，避免向仓库外写入后才发现失败。
 - 完成态 Retire 重新绑定归档 manifest 校验并安全修复丢失/损坏的耐久索引；索引读写与审计统一拒绝父级软链，处置状态与知识文档 ID 强制双向一致，敏感投影补齐裸 JWT、GitHub/AWS/API token 和 UNC 路径检测，Node/POSIX Context Guard 统一精确标题语义。
 - Task 切换拒绝 stale 父链软链接并连同 `execution/` 隔离；strict Retire 显式区分 local/server Gate 且绑定精确 Commit，恢复元数据、实现锚点与 Evolution 单行输入均失败关闭；历史召回为相关锚点保留容量，Node 校验与 Python 对齐，knowledge audit 增加总读取预算和截断证据。
+- Retire 不再接受调用者自签的 Gate 参数：local 必须读取精确 `STATE cap-gate`，server 必须实时读回 canonical Review Action；`EVOLUTION.md` 纳入 no-follow 有界读取与 audit 总预算，身份字段敏感值和占位实现锚点在 Python/Node 两端失败关闭。
 
 ## 0.12.3
 

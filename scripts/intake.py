@@ -54,6 +54,7 @@ MAX_HISTORY_INDEX_BYTES = 256 * 1024
 MAX_HISTORY_INDEX_TEXT = 500
 EVOLUTION_WINDOW_LIMIT = 50
 MAX_EVOLUTION_ENTRY_TEXT = 500
+MAX_EVOLUTION_BYTES = 256 * 1024
 MAX_KNOWLEDGE_AUDIT_INDEXES = 1000
 MAX_KNOWLEDGE_AUDIT_BYTES = 16 * 1024 * 1024
 KNOWLEDGE_DISPOSITIONS = {
@@ -81,6 +82,10 @@ HISTORY_INDEX_SENSITIVE_PATTERNS = tuple(re.compile(pattern, re.I) for pattern i
     r"\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{30,})\b",
     r"(?:^|[\s(\"'=])\\\\[^\\\s]+\\[^\\\s]+",
 ))
+IMPLEMENTATION_ANCHOR_PLACEHOLDER = re.compile(
+    r"^(?:n\s*/?\s*a|none|null|unknown|tbd|todo|not\s+applicable|无|暂无|未知|不适用|待定|待补|无入口)$",
+    re.I,
+)
 
 
 def _sha256(path):
@@ -172,6 +177,11 @@ def _safe_experience_index_text(value):
     return text[:500]
 
 
+def _meaningful_implementation_anchor(value):
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return bool(text and not IMPLEMENTATION_ANCHOR_PLACEHOLDER.fullmatch(text))
+
+
 def _dedupe_experience_values(values):
     result = []
     seen = set()
@@ -191,10 +201,13 @@ def _experience_anchor_projection(anchor):
     enough for the next task to match a code surface without recursively
     loading historical task bodies.
     """
-    entry_points = _experience_labeled(anchor, ["入口", "entry", "entrypoint"])
-    change_points = _experience_labeled(anchor, ["改动点", "change point", "change points", "anchor"])
+    entry_points = [value for value in _experience_labeled(anchor, ["入口", "entry", "entrypoint"])
+                    if _meaningful_implementation_anchor(value)]
+    change_points = [value for value in _experience_labeled(anchor, ["改动点", "change point", "change points", "anchor"])
+                     if _meaningful_implementation_anchor(value)]
     invariants = _experience_labeled(anchor, ["不变量", "invariant", "invariants"])
-    anchor_values = entry_points + change_points + invariants
+    anchor_values = [value for value in entry_points + change_points + invariants
+                     if _meaningful_implementation_anchor(value)]
     path_pattern = re.compile(
         r"(?<![A-Za-z0-9_])(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.*${}-]+"
         r"(?:\.[A-Za-z0-9_.*${}-]+)?"
@@ -356,6 +369,11 @@ def _validate_history_index_payload(item, task_id):
     unknown = set(item) - HISTORY_INDEX_FIELDS
     if unknown:
         raise ValueError(f"history index 包含未知字段: {', '.join(sorted(unknown))}")
+    item_task_id = item.get("taskId")
+    if (not isinstance(item_task_id, str) or item_task_id != task_id
+            or not STABLE_TASK_ID.fullmatch(item_task_id)
+            or _history_index_text(item_task_id, "taskId", limit=192) != item_task_id):
+        raise ValueError("history index taskId 非安全稳定格式或与文件身份不匹配")
     scalar_limits = {
         "parentTaskId": 128, "title": MAX_HISTORY_INDEX_TEXT,
         "intentSummary": MAX_HISTORY_INDEX_TEXT, "branch": 256,
@@ -372,23 +390,32 @@ def _validate_history_index_payload(item, task_id):
             raise ValueError("history index experienceIndex 未规范化或超过安全边界")
     disposition = item.get("knowledgeDisposition")
     document_id = item.get("knowledgeDocumentId")
-    if document_id and (not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id)):
-        raise ValueError("history index knowledgeDocumentId 非稳定格式")
+    if document_id and (not isinstance(document_id, str)
+                        or not STABLE_KNOWLEDGE_ID.fullmatch(document_id)
+                        or _history_index_text(document_id, "knowledgeDocumentId", limit=128) != document_id):
+        raise ValueError("history index knowledgeDocumentId 非安全稳定格式")
     if disposition == "synced" and not document_id:
         raise ValueError("history index synced 缺少 knowledgeDocumentId")
     if disposition != "synced" and document_id:
         raise ValueError("history index knowledgeDocumentId only valid for synced disposition")
     if disposition in EXPERIENCE_REQUIRED_DISPOSITIONS:
         experience = item.get("experienceIndex") or {}
-        if not (experience.get("codePaths") or experience.get("entryPoints") or experience.get("symbols")):
+        implementation_anchors = [
+            value
+            for key in ("codePaths", "entryPoints", "symbols")
+            for value in (experience.get(key) or [])
+            if _meaningful_implementation_anchor(value)
+        ]
+        if not implementation_anchors:
             raise ValueError("history index reusable experience lacks implementation anchors")
 
 
 def _build_history_index(manifest, archive_dir):
     task_id = manifest.get("taskId")
     if (not isinstance(task_id, str) or _safe_archive_segment(task_id, "task-id") != task_id
-            or not STABLE_TASK_ID.fullmatch(task_id)):
-        raise ValueError("history index taskId 非稳定格式")
+            or not STABLE_TASK_ID.fullmatch(task_id)
+            or _history_index_text(task_id, "taskId", limit=192) != task_id):
+        raise ValueError("history index taskId 非安全稳定格式")
     disposition = manifest.get("knowledgeDisposition") or "legacy-unknown"
     if disposition not in KNOWLEDGE_DISPOSITIONS | {"legacy-unknown", "legacy-local"}:
         raise ValueError(f"history index knowledgeDisposition 非法: {disposition}")
@@ -409,8 +436,9 @@ def _build_history_index(manifest, archive_dir):
     }
     document_id = manifest.get("knowledgeDocumentId")
     if document_id:
-        if not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id):
-            raise ValueError("history index knowledgeDocumentId 非稳定格式")
+        if (not isinstance(document_id, str) or not STABLE_KNOWLEDGE_ID.fullmatch(document_id)
+                or _history_index_text(document_id, "knowledgeDocumentId", limit=128) != document_id):
+            raise ValueError("history index knowledgeDocumentId 非安全稳定格式")
         item["knowledgeDocumentId"] = document_id
     experience_index = _experience_index(os.path.join(archive_dir, "experience.md"))
     if experience_index:
@@ -491,8 +519,9 @@ def _history_index_root(cap, *, create):
 
 def _history_index_path(cap, task_id, *, create):
     segment = _safe_archive_segment(task_id, "task-id")
-    if not STABLE_TASK_ID.fullmatch(segment):
-        raise ValueError("history index taskId 非稳定格式")
+    if (not STABLE_TASK_ID.fullmatch(segment)
+            or _history_index_text(segment, "taskId", limit=192) != segment):
+        raise ValueError("history index taskId 非安全稳定格式")
     root = _history_index_root(cap, create=create)
     if root is None:
         return None
@@ -577,6 +606,43 @@ def _atomic_write_history_index(cap, task_id, value):
 def _read_json(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _read_bounded_regular_text(path, label, limit, *, missing_ok=True):
+    """Read a UTF-8 regular file without following links and with an exact byte budget."""
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        if missing_ok:
+            return ""
+        raise ValueError(f"{label} is missing")
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise ValueError(f"{label} must be a bounded regular file")
+    if before.st_size > limit:
+        raise ValueError(f"{label} exceeds {limit} byte read budget")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        opened = os.fstat(fd)
+        if (not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                or opened.st_size != before.st_size):
+            raise ValueError(f"{label} changed during read")
+        payload = os.read(fd, limit + 1)
+        if len(payload) != opened.st_size or len(payload) > limit:
+            raise ValueError(f"{label} exceeds {limit} byte read budget")
+    finally:
+        os.close(fd)
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{label} is not valid UTF-8") from error
+
+
+def _read_evolution_text(cap_dir):
+    return _read_bounded_regular_text(
+        os.path.join(cap_dir, "EVOLUTION.md"), "EVOLUTION.md", MAX_EVOLUTION_BYTES,
+    )
 
 
 def _read_retire_recovery_json(path, label):
@@ -747,6 +813,67 @@ def _state_value(path, key):
     return ""
 
 
+def _verify_local_retire_gate(state_path, delivery_commit):
+    state = _read_bounded_regular_text(
+        state_path, "STATE.md local review gate", MAX_HISTORY_INDEX_BYTES, missing_ok=False,
+    )
+    match = re.search(
+        r"^cap-gate:\s*PASS\s+reviewed-head=((?:[0-9a-f]{40}|[0-9a-f]{64}))\s*$",
+        state,
+        re.I | re.M,
+    )
+    if not match or match.group(1).lower() != delivery_commit.lower():
+        raise ValueError("local strict retire requires STATE cap-gate: PASS reviewed-head=<delivery commit>")
+
+
+def _server_review_action_matches(action, delivery_commit):
+    if not isinstance(action, dict):
+        return False
+    action_id = str(action.get("id") or action.get("actionId") or "").strip()
+    action_type = str(action.get("type") or action.get("actionType") or "").strip().lower()
+    action_status = str(action.get("status") or action.get("actionStatus") or "").strip().lower()
+    action_commit = str(action.get("sourceCommit") or action.get("commitSha") or action.get("commit") or "").strip()
+    return bool(action_id and action_type == "review" and action_status == "succeeded"
+                and action_commit.lower() == delivery_commit.lower())
+
+
+def _verify_server_retire_gate(cap, task_id, delivery_commit):
+    """Read the authenticated live canonical Task; a repository file cannot self-sign this gate."""
+    repo = os.path.dirname(os.path.realpath(cap))
+    status_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap-status.mjs")
+    try:
+        completed = subprocess.run(
+            ["node", status_script, repo, "--json", "--mcp-runtime", "loaded"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        status = json.loads(completed.stdout) if completed.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        raise ValueError("server strict retire cannot verify canonical Server Review Action") from error
+    local_modes = {"local_explicit", "local_fallback_explicit", "restart_required", "session_root_blocked"}
+    task = status.get("task") if isinstance(status, dict) else None
+    platform = status.get("platform") if isinstance(status, dict) else None
+    delivery = task.get("serverDelivery") if isinstance(task, dict) else None
+    valid = (
+        isinstance(status, dict)
+        and status.get("mode") not in local_modes
+        and isinstance(platform, dict) and platform.get("connected") is True
+        and isinstance(task, dict) and task.get("id") == task_id
+        and str(task.get("currentCommit") or "").lower() == delivery_commit.lower()
+        and task.get("gatesReady") is True
+        and _server_review_action_matches(task.get("currentAction"), delivery_commit)
+        and isinstance(delivery, dict) and delivery.get("source") == "server_task"
+        and delivery.get("taskId") == task_id
+        and str(delivery.get("currentCommit") or "").lower() == delivery_commit.lower()
+        and delivery.get("gatesReady") is True
+        and _server_review_action_matches(delivery.get("action"), delivery_commit)
+    )
+    if not valid:
+        raise ValueError("server strict retire requires a live canonical Server Review Action for this Task/Commit")
+
+
 def _outbox_event_task_ref(event):
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     nested = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
@@ -810,6 +937,9 @@ def _has_pending_experience(cap, task_id, delivery_commit):
 def _validate_knowledge_disposition(cap, task_id, delivery_commit, disposition, document_id, experience_index, strict):
     if document_id and disposition != "synced":
         raise ValueError("knowledge document id is only valid for synced disposition")
+    if document_id and (not STABLE_KNOWLEDGE_ID.fullmatch(document_id)
+                        or _history_index_text(document_id, "knowledgeDocumentId", limit=128) != document_id):
+        raise ValueError("knowledge document id is not a safe stable identifier")
     if not strict:
         return disposition or "legacy-local"
     if not disposition:
@@ -1077,10 +1207,7 @@ def _normalize_evolution_entry(entry):
 def _append_evolution(cap_dir, entry):
     """追加近期决策，并只移出已有耐久索引证明的超窗条目。"""
     target = os.path.join(cap_dir, "EVOLUTION.md")
-    text = ""
-    if os.path.isfile(target):
-        with open(target, encoding="utf-8") as f:
-            text = f.read()
+    text = _read_evolution_text(cap_dir)
     if entry not in text.splitlines():
         if not text:
             text = "# Evolution log\n\n"
@@ -1139,6 +1266,7 @@ def cmd_knowledge_audit(args):
     """只读报告本地知识投影、同步处置和容量状态。"""
     rows = []
     total_bytes = 0
+    index_bytes = 0
     scanned_entries = 0
     truncated = False
     over_budget = False
@@ -1171,6 +1299,7 @@ def cmd_knowledge_audit(args):
                     over_budget = True
                     break
                 total_bytes += size
+                index_bytes += size
                 if size > MAX_HISTORY_INDEX_BYTES:
                     rows.append({"file": name, "knowledgeDisposition": "invalid-oversize"})
                     continue
@@ -1208,17 +1337,41 @@ def cmd_knowledge_audit(args):
                     continue
                 rows.append({"file": name, "taskId": task_id,
                              "knowledgeDisposition": disposition})
-    evolution_path = os.path.join(args.cap, "EVOLUTION.md")
     evolution_entries = []
-    if os.path.isfile(evolution_path) and not os.path.islink(evolution_path):
-        with open(evolution_path, encoding="utf-8") as f:
-            evolution_entries = [line for line in f.read().splitlines()
-                                 if line.strip() and not line.startswith("# Evolution log")]
+    evolution_bytes = 0
+    evolution_truncated = False
+    evolution_invalid = False
+    evolution_path = os.path.join(args.cap, "EVOLUTION.md")
+    try:
+        evolution_info = os.lstat(evolution_path)
+    except FileNotFoundError:
+        evolution_info = None
+    if evolution_info is not None:
+        if stat.S_ISLNK(evolution_info.st_mode) or not stat.S_ISREG(evolution_info.st_mode):
+            evolution_invalid = True
+            evolution_truncated = True
+        elif (evolution_info.st_size > MAX_EVOLUTION_BYTES
+              or total_bytes + evolution_info.st_size > MAX_KNOWLEDGE_AUDIT_BYTES):
+            evolution_truncated = True
+            over_budget = True
+        else:
+            try:
+                evolution_text = _read_evolution_text(args.cap)
+            except (OSError, ValueError):
+                evolution_invalid = True
+                evolution_truncated = True
+            else:
+                evolution_bytes = evolution_info.st_size
+                total_bytes += evolution_bytes
+                evolution_entries = [line for line in evolution_text.splitlines()
+                                     if line.strip() and not line.startswith("# Evolution log")]
+    if evolution_truncated:
+        truncated = True
     dispositions = [item["knowledgeDisposition"] for item in rows]
     result = {
         "schemaVersion": 1,
         "indexes": {
-            "count": len(rows), "bytes": total_bytes,
+            "count": len(rows), "bytes": index_bytes,
             "scanned": scanned_entries,
             "truncated": truncated,
             "overBudget": over_budget,
@@ -1231,7 +1384,15 @@ def cmd_knowledge_audit(args):
         },
         "evolution": {"entries": len(evolution_entries),
                       "limit": EVOLUTION_WINDOW_LIMIT,
-                      "overBudget": len(evolution_entries) > EVOLUTION_WINDOW_LIMIT},
+                      "bytes": evolution_bytes,
+                      "limitBytes": MAX_EVOLUTION_BYTES,
+                      "truncated": evolution_truncated,
+                      "invalid": evolution_invalid,
+                      "overBudget": evolution_truncated or len(evolution_entries) > EVOLUTION_WINDOW_LIMIT},
+        "total": {"bytes": total_bytes,
+                  "limitBytes": MAX_KNOWLEDGE_AUDIT_BYTES,
+                  "truncated": truncated,
+                  "overBudget": over_budget},
         "git": {"trackedRawHistory": _tracked_raw_history(args.cap)},
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -1345,6 +1506,7 @@ def cmd_retire(args):
     """特性退场:快照提交后按耐久 phase 推进；中断时从 retirement.json 幂等恢复。"""
     try:
         _validate_retire_artifacts(args.cap)
+        _read_evolution_text(args.cap)
     except (OSError, ValueError) as error:
         print(str(error), file=sys.stderr)
         return 2
@@ -1463,6 +1625,15 @@ def cmd_retire(args):
         elif not transaction:
             print("缺少同 Task 的 STATE 或可信 retirement transaction,拒绝恢复", file=sys.stderr)
             return 2
+        if not transaction:
+            try:
+                if requested_gate_kind == "local":
+                    _verify_local_retire_gate(state_path, args.delivery_commit)
+                else:
+                    _verify_server_retire_gate(args.cap, args.task_id, args.delivery_commit)
+            except ValueError as error:
+                print(str(error), file=sys.stderr)
+                return 2
     elif archive_exists and not transaction and state_stage and state_stage != "done":
         print(f"当前仍有活动 Task,拒绝从旧 manifest 恢复退场: stage={state_stage}", file=sys.stderr)
         return 2

@@ -178,6 +178,11 @@ for (const [name, overrides, expected] of [
   })
 }
 
+test('placeholder implementation anchor is rejected', () => {
+  const { repo } = fixture({ experienceOverrides: { anchors: '- 入口：N/A\n- 不变量：处理中不是成功。' } })
+  assert.ok(generate(repo).missing.includes('implementation_anchors'))
+})
+
 test('source commit and commit evidence must match the generated commit', () => {
   const { repo } = fixture({ experienceOverrides: { sourceCommit: 'deadbeef', evidence: '- 证据：commit:deadbeef\n- 证据：.cap/verify/logic-report.md\n- 结果：测试通过。' } })
   const result = generate(repo)
