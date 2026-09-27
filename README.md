@@ -4,7 +4,11 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.12.4，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.12.5，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.12.5 更新
+
+- 修复本地/非团队环境误等待 Server Test/Review Action 的问题；`local-only` 仓库和未配置完整团队连接的机器均按本地验证流程运行。
 
 ## v0.12.4 更新
 

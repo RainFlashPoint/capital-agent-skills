@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.5
+
+- 修复本地/非团队环境的状态路由缺陷：未配置完整团队连接时按本地验证处理，不再等待不存在的 Server Test/Review Action；同时将 `local-only` 作为仓库级 Harness 边界，即使存在远程 Task 元数据也不进入 Server Test/Review Action。
+
 ## 0.12.4
 
 - 经验索引新增受限 `codePaths`、`entryPoints`、`symbols`、`invariants` 投影；历史侦察支持 `--anchor`，并报告经验源 Commit 与当前 HEAD 的关系。

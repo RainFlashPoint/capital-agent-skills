@@ -142,6 +142,28 @@ test('offline handshake exposes missing platform and task instead of silently su
   assert.ok(result.reasons.includes('task_not_attached'))
 })
 
+test('unconfigured machine keeps a local test stage instead of waiting for Server Test Action', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-unconfigured-test-'))
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'stage: test\nstatus: in-progress\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true, mcpRuntime: 'missing' })
+  assert.equal(result.mode, 'local_degraded')
+  assert.equal(result.workflow.stage, 'test')
+  assert.equal(result.workflow.action, '测试验证')
+  assert.notEqual(result.workflow.action, '等待 Server Test Action')
+})
+
+test('unconfigured machine keeps a local review stage instead of waiting for Server Review Action', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-unconfigured-review-'))
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'stage: review\nstatus: in-progress\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true, mcpRuntime: 'missing' })
+  assert.equal(result.mode, 'local_degraded')
+  assert.equal(result.workflow.stage, 'review')
+  assert.equal(result.workflow.action, '代码评审')
+  assert.notEqual(result.workflow.action, '等待 Server Review Action')
+})
+
 test('explicit local mode skips all platform and outbox work even with stale server credentials', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-local-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true })
@@ -257,6 +279,40 @@ test('repository profile exposes local-only Harness eligibility without disablin
   assert.equal(result.repository.harnessMode, 'local-only')
   assert.equal(result.repository.harnessEligible, false)
   assert.equal(result.task.id, 'task_tools')
+})
+
+test('local-only repository does not fall back to a Server Test Action in team-configured mode', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-harness-local-gate-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: local-only\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_tools\nstage: test\nstatus: in-progress\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true, mcpRuntime: 'loaded' })
+  assert.equal(result.mode, 'platform_attached_unverified')
+  assert.equal(result.repository.harnessMode, 'local-only')
+  assert.equal(result.workflow.stage, 'test')
+  assert.notEqual(result.workflow.action, '等待 Server Test Action')
+  assert.equal(result.task.currentAction, null)
+  assert.equal(result.task.serverDelivery.source, 'server_unobserved')
+})
+
+test('local-only repository keeps local workflow even when remote Task metadata has a Server Action', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-harness-local-remote-task-'))
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: local-only\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_tools\nstage: test\nstatus: in-progress\n')
+  const fetchImpl = async url => url.endsWith('/api/auth/handshake')
+    ? { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    : url.endsWith('/api/health')
+      ? { ok: true, status: 200, json: async () => ({}) }
+      : { ok: true, status: 200, json: async () => ({ data: { id: 'task_tools', status: 'active', currentStage: 'test', currentAction: { id: 'server-test-1', type: 'test', status: 'waiting' }, nextAction: { kind: 'action', actionId: 'server-test-1', actionType: 'verify', actionStatus: 'waiting', label: '等待 Server Test Action' } } }) }
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl, mcpRuntime: 'loaded' })
+  assert.equal(result.repository.harnessMode, 'local-only')
+  assert.equal(result.workflow.stage, 'test')
+  assert.equal(result.workflow.action, '测试验证')
+  assert.equal(result.correction.required, false)
+  assert.equal(result.task.serverDelivery.action.id, 'server-test-1')
 })
 
 test('offline handshake exposes queued outbox work without claiming platform completion', async () => {

@@ -376,17 +376,26 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const changedFiles = changedFilesForReview(repo, stateText, head)
   const independentEvidence = await inspectIndependentEvidence(repo, stateText, head)
   const reviewGate = localReviewGate(stateText, { changedFiles, independentEvidence, currentHead: head })
-  const executionGate = stateText && !boundary.blocked && (localRun || harnessMode === 'local-only')
+  // Without a complete team configuration there is no Server Harness to wait
+  // for; an unconfigured/degraded installation must remain locally verifiable.
+  const localWorkflow = localRun || harnessMode === 'local-only' || !teamConfigured
+  const executionGate = stateText && !boundary.blocked && localWorkflow
     ? await inspectLocalExecution(repo)
     : { required: false, passed: false, action: null, artifactDir: '', reason: 'not-local-execution' }
-  const localNext = resolveNextAction({ stateText, artifacts, dirty, changedFiles, independentEvidence, currentHead: head, executionGate, allowStateGate: localRun || harnessMode === 'local-only' })
-  const guardedLocalNext = !remoteTask && teamConfigured && !localRun && localNext.stage === 'test'
+  const localNext = resolveNextAction({ stateText, artifacts, dirty, changedFiles, independentEvidence, currentHead: head, executionGate, allowStateGate: localWorkflow })
+  // local-only is a repository boundary, not a priority tie-breaker: its
+  // workflow must never be replaced by a Server Harness action, even if a
+  // team-configured machine happens to return remote Task metadata.
+  const localOnly = harnessMode === 'local-only'
+  const guardedLocalNext = !remoteTask && teamConfigured && !localOnly && !localRun && localNext.stage === 'test'
     ? { stage: 'implement', action: '通过 MCP 确认最终候选与 Test Action', reason: '尚未取得 Server canonical projection，不能称为正在测试验证', gated: true }
     : localNext
   const localStage = canonicalStage(field(stateText, 'stage'))
   const remoteWorkflowStage = remoteTask ? canonicalWorkflowStage(remoteTask, localStage) : ''
   const remoteDoneBlocked = remoteTask?.status === 'done' && reviewGate.required && reviewGate.independentBlocked
-  const nextBase = switchingTask
+  const nextBase = localOnly
+    ? guardedLocalNext
+    : switchingTask
     ? nextFromPlatformTask(remoteTask, guardedLocalNext)
     : remoteDoneBlocked
     ? { stage: 'review', action: '完成独立复核', reason: `独立复核状态为 ${reviewGate.independent || 'required'}，Server done 不能绕过本地独立证据`, gated: true }
@@ -417,7 +426,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     if (!taskId) reasons.push('task_not_attached')
     if (reconciliation.needsDeliveryReconciliation) reasons.push('git_delivery_reconciliation_needed')
   }
-  const correction = remoteTask && (remoteWorkflowStage !== localStage || localStatusFromRemote(remoteTask.status) !== field(stateText, 'status').toLowerCase())
+  const correction = !localOnly && remoteTask && (remoteWorkflowStage !== localStage || localStatusFromRemote(remoteTask.status) !== field(stateText, 'status').toLowerCase())
     ? { required: true, reason: 'server_canonical_state_overrides_local_state', localStage, remoteStage: remoteWorkflowStage, remoteStatus: remoteTask.status }
     : { required: false, reason: '' }
   if (correction.required && !boundary.blocked) await persistCanonicalCursor(statePath, stateText, remoteTask, remoteWorkflowStage).catch(() => false)
