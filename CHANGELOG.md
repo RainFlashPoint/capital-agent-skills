@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.6
+
+- 修复宿主按 `skills/cap/SKILL.md` 所在目录解析 `scripts/...` 时无法执行 package 根 CLI 的问题；使用跨平台兼容启动器替代目录软链接，并增加真实进程级回归测试，覆盖状态输出与标准输入转发。
+
 ## 0.12.5
 
 - 修复本地/非团队环境的状态路由缺陷：未配置完整团队连接时按本地验证处理，不再等待不存在的 Server Test/Review Action；同时将 `local-only` 作为仓库级 Harness 边界，即使存在远程 Task 元数据也不进入 Server Test/Review Action。

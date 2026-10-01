@@ -22,6 +22,10 @@ echo "== 1. 关键共享文件/目录 =="
 for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/cross-project-handoff.md" "$REF/independent-review.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-worktree-baseline.mjs" "scripts/cap-runtime.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "scripts/setup.ps1" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
+for p in "$ROOT/cap/scripts/_forward.mjs" "$ROOT/cap/scripts/cap-status.mjs" "$ROOT/cap/scripts/cap-task-request.mjs" "$ROOT/cap/scripts/cap-task-state-switch.mjs" "$ROOT/cap/scripts/cap-execute.mjs" "$ROOT/cap/scripts/cap-outbox.mjs" "$ROOT/cap/scripts/cap-push-candidate.mjs" "$ROOT/cap/scripts/cap-local-test-provider.mjs"; do
+  [ -f "$p" ] && ok "$p" || err "缺失:$p"
+done
+[ ! -L "$ROOT/cap/scripts" ] && ok "$ROOT/cap/scripts 使用可移植兼容入口" || err "$ROOT/cap/scripts 不得依赖目录软链接"
 
 echo "== 2. 每个 SKILL.md frontmatter(name + description) =="
 for f in "$ROOT"/*/SKILL.md; do

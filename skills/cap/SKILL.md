@@ -9,7 +9,7 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 
 ## 1. 启动：先取 compact 状态
 
-真实研发任务开始前，先确认当前宿主是否暴露 Capital Agent MCP，再从用户当前打开的仓库运行：
+研发前检查 Capital Agent MCP，从当前仓运行。`scripts/...` 指 package 根；Skill 目录同名启动器兼容相对解析：
 
 ```text
 node scripts/cap-status.mjs <repo> --compact --mcp-runtime <loaded|missing|unknown>

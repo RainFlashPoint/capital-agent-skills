@@ -4,7 +4,11 @@
 
 它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
 
-> **状态**：v0.12.5，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+> **状态**：v0.12.6，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+
+## v0.12.6 更新
+
+- 修复部分宿主从 `cap` Skill 目录解析 `scripts/...` 时 CLI 静默不执行的问题；兼容入口不依赖目录软链接，可在 Windows、macOS 和 Linux 使用。
 
 ## v0.12.5 更新
 
