@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "high-risk-independent-review",
+  "title": "Block high-risk release without independent review",
+  "category": "independent_review",
+  "runner": "node_test",
+  "testFile": "scripts/test-cap-status.mjs",
+  "testNamePattern": "required independent review blocks local release"
+}

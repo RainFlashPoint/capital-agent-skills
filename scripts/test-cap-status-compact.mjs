@@ -116,6 +116,22 @@ test('real Server aliases and provider preflight remain explicit in compact outp
   assert.equal(blockerStatus.task.blocker.preflight.remediation, 'restart provider')
 })
 
+test('compact status preserves remote update and dirty-worktree safety semantics', () => {
+  const full = mockStatus({
+    installation: {
+      status: 'working_tree_modified', conditions: ['working_tree_modified', 'remote_update_available'],
+      upgradeRecommended: false, updateAvailable: true, safeToUpgrade: false, bootstrapRecommended: false,
+      reason: 'working_tree_modified', changedFiles: ['README.md'], sourceRoot: '/mock/package',
+    },
+  })
+  const compact = compactCapStatus(full)
+  assert.equal(compact.installation.status, 'working_tree_modified')
+  assert.deepEqual(compact.installation.conditions, ['working_tree_modified', 'remote_update_available'])
+  assert.equal(compact.installation.updateAvailable, true)
+  assert.equal(compact.installation.safeToUpgrade, false)
+  assert.deepEqual(statusDecisionSignature(compact).installation, statusDecisionSignature(full).installation)
+})
+
 test('compact projection falls back to complete evidence for risky states', () => {
   const riskyCases = [
     mockStatus({ mode: 'boundary_blocked', boundary: { ...mockStatus().boundary, blocked: true, code: 'task_mismatch', detail: 'wrong task', remediation: 'switch task' }, workflow: { currentStage: 'implement', status: 'blocked', stage: 'implement', action: '切换 Task', reason: 'wrong task', gated: true } }),

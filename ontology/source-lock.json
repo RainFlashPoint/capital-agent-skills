@@ -3,7 +3,7 @@
   "files": [
     {
       "path": "skills/cap-flow/SKILL.md",
-      "hash": "26b3b6b3f97e8cabf2cf4cd293c2e0a325f229c29bafe4e4958e0a49650ff8f3"
+      "hash": "5f4e500290a0008bf3afbca1924cb53cf1361169b94da8b9f7af29f0c55e4371"
     },
     {
       "path": "skills/cap-flow/references/complexity-routing.md",
@@ -23,7 +23,7 @@
     },
     {
       "path": "skills/cap-define/SKILL.md",
-      "hash": "27d1c082d63c5dc6bd164bc32497858960abef8e9c49e3a9f1a84c76b132a51b"
+      "hash": "12c0fa706538b039896572bc02f55b65db6729411cb71c38ce7eb534ef4a910f"
     },
     {
       "path": "skills/cap-plan/SKILL.md",
@@ -31,7 +31,7 @@
     },
     {
       "path": "skills/cap-implement/SKILL.md",
-      "hash": "3b693b6cca4202804c1d79185ca7ebcdda720bebeff3befd76bcbf06cce2cdf6"
+      "hash": "dd939ac579ff5c129f8c898850e53dc570fffa0915fd57ea987511abc3fdf9d8"
     },
     {
       "path": "skills/cap-test/SKILL.md",
@@ -39,7 +39,7 @@
     },
     {
       "path": "skills/cap-review/SKILL.md",
-      "hash": "ec71e8032713cf5f466ff407d82b2049e96bc4d8d8f64feeb2834b6771c87c42"
+      "hash": "de8bc522a476524eb2083f5dcbbee074948ba39e54a9d3902fd94e58c96a3110"
     },
     {
       "path": "skills/cap-release/SKILL.md",

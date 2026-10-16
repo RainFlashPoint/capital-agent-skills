@@ -2,6 +2,8 @@
 import { pathToFileURL } from 'node:url'
 import { runLocalAction, doctorLocalExecution, inspectLocalExecution, recoverLocalExecution, executionNextActions, compactExecutionResult } from '../runtime/execution/local-flow.mjs'
 import { parseJson } from '../runtime/ontology/json.mjs'
+import { inspectSemanticContext } from './cap-context-gate.mjs'
+import { inspectTaskContext } from './cap-runtime.mjs'
 
 export function parseArguments(argv) {
  const out={operation:'run',repo:'.'};let i=0
@@ -32,6 +34,17 @@ export async function main(argv=process.argv.slice(2)) {
   else if(options.operation==='status')result=await inspectLocalExecution(options.repo,options)
   else if(options.operation==='recover')result=await recoverLocalExecution(options.repo)
   else {
+   const contextGate = await inspectSemanticContext(options.repo, { stage: options.stage || '', action: options.action || '' })
+   try { await inspectTaskContext(options.repo, { stage: contextGate.stage, checkSemantic: false }) }
+   catch (cause) {
+    const historyRules = cause.historyRules?.passed === false ? cause.historyRules : null
+    process.stdout.write(`${JSON.stringify({ schemaVersion: 1, trust: 'local-observed', contextGate, blockers: cause.blockers || [{ code: cause.code || 'context_preflight_failed', detail: cause.message }], gate: { passed: false, gate: 'BLOCKED', reason: cause.code || 'context_preflight_failed' }, nextActions: historyRules?.nextActions || [{ kind: 'repair_task_context', requiresUser: false }], remediation: historyRules?.remediation || '修复全部调查缺项和精确归属后重跑；用户授权不豁免事实门禁' }, null, 2)}\n`)
+    return 1
+   }
+   if (!contextGate.passed) {
+    process.stdout.write(`${JSON.stringify({ schemaVersion: 1, trust: 'local-observed', contextGate, gate: { passed: false, gate: 'BLOCKED', reason: contextGate.reason }, nextActions: contextGate.nextActions, remediation: contextGate.remediation }, null, 2)}\n`)
+    return 1
+   }
    const run=await runLocalAction(options.repo,options)
    if(options.compact)result=compactExecutionResult(run)
    else {

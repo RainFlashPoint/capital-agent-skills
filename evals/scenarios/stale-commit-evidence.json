@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "stale-commit-evidence",
+  "title": "Reject evidence bound to an old Commit",
+  "category": "stale_commit",
+  "runner": "node_test",
+  "testFile": "scripts/test-context-compaction.mjs",
+  "testNamePattern": "active evidence from another commit is stale"
+}

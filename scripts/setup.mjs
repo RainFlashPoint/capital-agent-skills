@@ -7,7 +7,7 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
-import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, localTestProviderPolicy, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, probeRemoteMcp, skillTargets, writeInstallManifest } from './setup-lib.mjs'
+import { activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallationState, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, installationNeedsAttention, isCompatibleLocalNode, isCompatibleMcpNode, localTestProviderPolicy, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, probeRemoteMcp, skillTargets, writeInstallManifest } from './setup-lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url)); const root = resolve(here, '..'); const args = parseSetupArgs(process.argv.slice(2))
 const configDir = join(homedir(), '.config/capital-agent'); const configFile = join(configDir, 'env')
@@ -52,9 +52,18 @@ function run(command, values, options={}) {
   return execFileSync(command,values,{stdio:'inherit',...options})
 }
 function installStateDetail(state, localMode = false) {
-  if (state.ok) return `PASS（${state.current.sourceCommit.slice(0, 12)} / v${state.current.version || 'unknown'}）`
+  const local = state.local || {}
+  const current = local.current || {}
+  if (state.status === 'current') return `PASS（${current.sourceCommit?.slice(0, 12) || 'working-tree'} / v${current.version || 'unknown'}；远端已核对）`
+  if (state.status === 'offline_unknown' && local.ok) return `UNKNOWN（本地一致；远端检查离线或超时，未冒充 current）`
+  if (state.conditions?.includes('working_tree_modified')) return `BLOCKED（工作区有改动；不会自动 pull。请先提交、转移或明确处理改动）`
+  if (state.status === 'remote_update_available') return `UPDATE（远端 ${state.remote?.remoteRef || '默认分支'} 有新 Commit；请运行 ${localMode ? '--local --upgrade' : '--upgrade'}）`
+  if (state.status === 'local_ahead') return 'BLOCKED（本地默认分支领先远端；不会自动 pull）'
+  if (state.status === 'diverged') return 'BLOCKED（本地默认分支与远端已分叉；不会自动 pull）'
+  if (state.status === 'branch_mismatch') return `BLOCKED（当前分支 ${state.remote?.localBranch || 'unknown'} 不是远端默认分支 ${state.remote?.remoteBranch || 'unknown'}；不会自动 pull）`
+  if (state.status === 'remote_default_unknown' || state.status === 'remote_relation_unknown') return 'UNKNOWN（无法证明当前分支可安全快进；不会自动 pull）'
   const labels = { manifest_missing: '未找到安装清单', source_unavailable: '安装源码不可用', source_root_mismatch: '运行副本与本次源码目录不一致', version_drift: '版本号漂移', source_commit_drift: '源码 Commit 漂移', file_manifest_drift: '文件内容漂移' }
-  return `FAIL（${labels[state.reason] || state.reason}${state.changedFiles.length ? `: ${state.changedFiles.slice(0, 5).join(', ')}` : ''}；请运行 ${localMode ? '--local --upgrade' : '--upgrade'}）`
+  return `FAIL（${labels[local.reason] || local.reason || state.status}${local.changedFiles?.length ? `: ${local.changedFiles.slice(0, 5).join(', ')}` : ''}；请运行 ${localMode ? '--local --upgrade' : '--upgrade'}）`
 }
 function legacySkillDetail(state = {}) {
   if (state.ok) return 'PASS'
@@ -83,11 +92,11 @@ if (args.doctor && args.local) {
   const codexActivation = await hasActivationRule(rules.codex)
   const claudeActivation = await hasActivationRule(rules.claude)
   const cursorActivation = await hasActivationRule(rules.cursor)
-  const installState = await inspectInstallManifest(homedir(), root)
+  const installState = await inspectInstallationState(homedir(), root)
   const legacySkills = await inspectLegacyCodexSkills(homedir(), join(root, 'skills'))
   const installDetail = installStateDetail(installState, true)
   process.stdout.write(`运行模式: 本地（显式）\n安装源码一致性: ${installDetail}\n旧版 Codex Skill 隔离: ${legacySkillDetail(legacySkills)}\nCodex Skill: ${codexSkill?'PASS':'未安装'}\nClaude Skill: ${claudeSkill?'PASS':'未安装'}\nCursor Skill: ${cursorSkill?'PASS':'未安装'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n平台 / MCP / Test Provider: 本地模式跳过\n当前会话加载状态: Doctor 只能验证磁盘配置；已打开的客户端需重启后才会加载更新。\n`)
-  if (!installState.ok || !legacySkills.ok || (!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode = 1
+  if (installationNeedsAttention(installState) || !legacySkills.ok || (!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode = 1
   process.exit()
 }
 
@@ -116,7 +125,7 @@ if (args.doctor) {
   const codexActivation = await hasActivationRule(rules.codex)
   const claudeActivation = await hasActivationRule(rules.claude)
   const cursorActivation = await hasActivationRule(rules.cursor)
-  const installState = await inspectInstallManifest(homedir(), root)
+  const installState = await inspectInstallationState(homedir(), root)
   const legacySkills = await inspectLegacyCodexSkills(homedir(), join(root, 'skills'))
   const installDetail = installStateDetail(installState)
   const label = (state,index) => {
@@ -128,11 +137,17 @@ if (args.doctor) {
     return clientMcpProbes[index] ? 'PASS' : 'FAIL（实际调用失败）'
   }
   process.stdout.write(`安装源码一致性: ${installDetail}\n旧版 Codex Skill 隔离: ${legacySkillDetail(legacySkills)}\n平台身份连接: ${health.ok?'PASS':'FAIL'}\nTask 写能力: ${health.capabilities?.taskWrite?'PASS':'FAIL'}\nCommit 自动补报: ${health.capabilities?.commitReconcile?'PASS':'FAIL'}\nMCP 固定运行时: ${mcpRuntime?'PASS':'FAIL'}\nMCP 工具真实调用: ${mcpTools?'PASS':'FAIL'}\nCodex MCP: ${label(codexMcp,0)}\nClaude MCP: ${label(claudeMcp,1)}\nCursor MCP: ${label(cursorMcp,2)}\nCodex Skill: ${codexSkill?'PASS':'未安装'}\nClaude Skill: ${claudeSkill?'PASS':'未安装'}\nCursor Skill: ${cursorSkill?'PASS':'未安装'}\nCodex 自动进入 Cap: ${codexActivation?'PASS':'FAIL'}\nClaude 自动进入 Cap: ${claudeActivation?'PASS':'FAIL'}\nCursor 自动进入 Cap: ${cursorActivation?'PASS':'FAIL'}\n本机配置: ${existing&&userKey?'PASS':'FAIL'}\n本地 Test Provider: ${providerStatus}\nProvider 权限: ${providerPermission}\n当前会话加载状态: Doctor 已验证磁盘配置与独立 MCP 调用，但不能让已打开的客户端热加载；当前任务仍无 MCP 工具时请完全重启客户端。\n`)
-  if (!installState.ok || !legacySkills.ok || !health.ok || !mcpRuntime || !mcpTools || !mcpRegistered || !providerReady || (!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode=1
+  if (installationNeedsAttention(installState) || !legacySkills.ok || !health.ok || !mcpRuntime || !mcpTools || !mcpRegistered || !providerReady || (!codexSkill && !claudeSkill && !cursorSkill) || !codexActivation || !claudeActivation || !cursorActivation) process.exitCode=1
   process.exit()
 }
 
-if (args.upgrade) run('git',['pull','--ff-only'],{cwd:root})
+if (args.upgrade) {
+  const updateState = await inspectInstallationState(homedir(), root)
+  if (updateState.workingTreeModified) throw new Error('工作区存在未提交或未跟踪改动，已拒绝自动 pull；请先提交、转移或明确处理这些改动。')
+  if (!updateState.safeToUpgrade) throw new Error(`当前安装状态 ${updateState.status} 未证明是远端默认分支的可快进落后状态，已拒绝自动 pull。`)
+  const remoteBranch = String(updateState.remote?.remoteRef || '').replace(/^refs\/heads\//, '')
+  run('git',['pull','--ff-only','origin',remoteBranch],{cwd:root})
+}
 if (args.local) {
   await mkdir(configDir,{recursive:true,mode:0o700})
   const retainedConfig = existing.split(/\r?\n/).filter(line => line && !line.startsWith('CAPITAL_AGENT_MODE=')).join('\n')

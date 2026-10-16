@@ -100,6 +100,7 @@ Codex 运行时的具体 fan-out / 降级规则见 `cap-flow/references/runtime-
 | 分支意图 Gate 已通过 | STATE 有 `branch-purpose / base-branch / base-commit`，且当前分支与本任务匹配 | 回 cap-flow 执行分支意图 Gate；不能只因“不是 main”就放行历史分支 |
 | 已 resolve 出 active 角色 + 验证项 | 读 `STATE.md` 的 `## Active roles`;若空则现做(§2) | 现场 resolve |
 | spec 已批准(SDD 前置) | `STATE.md` 中 spec 状态为 approved | 回 `cap-define` |
+| 历史规则对照已处置 | 有候选时遵循 `cap-flow/references/history-rule-consistency.md`，task-context 无未决/未核实项 | 先取证或澄清受影响规则；不把旧知识自动当成最新需求 |
 
 > 入口铁律:**改动面→角色 + 验证项解析先做**(§2),再开始第一个任务。这样实现时就带着对的视角
 > (client-dev / server-dev / ...)和对的"完成后要跑什么验证"的预期。

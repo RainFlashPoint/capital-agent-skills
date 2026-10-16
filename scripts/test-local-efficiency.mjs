@@ -6,6 +6,10 @@ import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { runLocalAction, inspectLocalExecution, doctorLocalExecution, compactExecutionResult } from '../runtime/execution/local-flow.mjs'
+import { inspectSessionRoot } from './cap-session-root.mjs'
+import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
+import { captureContextBinding, captureCoverageRequirements } from './cap-context-gate.mjs'
+import { createManifest } from './cap-context-checkpoint.mjs'
 
 const cli=fileURLToPath(new URL('./cap-execute.mjs',import.meta.url))
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()
@@ -17,6 +21,28 @@ async function fixture(t) {
  return root
 }
 const opts={environment:{},command:[process.execPath,'-e','process.stdout.write("ok; still argv")']}
+
+async function prepareCliContext(root) {
+ const f=await inspectContextFingerprint(root),branch=git(root,'branch','--show-current'),head=git(root,'rev-parse','HEAD')
+ await mkdir(join(root,'.cap/context'),{recursive:true})
+ await writeFile(join(root,'.cap/task-context.md'),`- intent: Execute local regression\n- branch: ${branch}\n- head: ${head}\n- index-fingerprint: ${f.index}\n- worktree-fingerprint: ${f.worktree}\n- untracked-fingerprint: ${f.untracked}\n- profile-used-as: index-only\n\n## Entry points\n- \`source.txt\`\n## Call chain and data flow\n- source to test\n## Similar implementations\n- existing test\n## History usage\n- candidates: none\n- outcome: not_used\n- reason: no candidate\n- plan-impact: none\n- verification-impact: none\n## Tests and environment\n- \`source.txt\`\n## Evidence sources\n- \`source.txt\`\n## External operation boundary\n- environment: local\n- authorization: local only\n- minimum-impact: source.txt\n- recovery: git\n- invalidates-on: scope change\n## Impact surface\n- modify: \`source.txt\`\n## Profile drift\n- none\n`)
+ const binding=await captureContextBinding(root,{stage:'test',environment:{}}),requirements=await captureCoverageRequirements(root,{environment:{}})
+ const scope={taskId:binding.taskId,repo:binding.repo,branch:binding.branch,commit:binding.commit}
+ const atoms=requirements.map((item,index)=>({id:`atom-${index}`,type:item.types[0],assertion:`Retain ${item.label}: ${item.id}`,protection:item.minProtection,priority:index?80:100,scope,scopeBinding:'task',sourceRefs:[item.sourceRef],trust:'repository-observed',status:'active',certainty:'confirmed',recoverability:'source-backed',invalidation:[],supersedes:[]}))
+ atoms.push({id:'acceptance-1',type:'acceptance_criterion',assertion:'Preserve local test outcome',protection:'P1',priority:80,scope,scopeBinding:'task',sourceRefs:['user-message:fixture'],trust:'user-stated',status:'active',certainty:'confirmed',recoverability:'source-backed',invalidation:[],supersedes:[]})
+ atoms.push({id:'next-action-1',type:'next_action',assertion:'Run local tests',protection:'P1',priority:80,scope,scopeBinding:'task',sourceRefs:['user-message:fixture-next'],trust:'user-stated',status:'active',certainty:'confirmed',recoverability:'source-backed',invalidation:[],supersedes:[]})
+ const checkpoint={schemaVersion:1,identity:{...scope,stage:'test'},atoms,coverage:requirements.map((item,index)=>({id:item.id,atomIds:[`atom-${index}`]}))}
+ const log=atoms.map(item=>JSON.stringify(item)).join('\n')+'\n'
+ const sources=Object.fromEntries(await Promise.all(['.cap/STATE.md','.cap/task-context.md'].map(async path=>[path,await readFile(join(root,path),'utf8')])))
+ const manifest=createManifest(checkpoint,{checkpointPath:'checkpoint.json',atomLogPath:'atoms.jsonl',atomLogContent:log,sourceContents:sources,budgetTokens:20000,trigger:'stage-entry',pressure:'unknown'})
+ manifest.entry=binding
+ manifest.entry.previousManifest='none'
+ manifest.entry.previousDigest=null
+ await writeFile(join(root,'.cap/context/checkpoint.json'),JSON.stringify(checkpoint))
+ await writeFile(join(root,'.cap/context/atoms.jsonl'),log)
+ await writeFile(join(root,'.cap/context/manifest.json'),JSON.stringify(manifest))
+ await writeFile(join(root,'.cap/STATE.md'),sources['.cap/STATE.md']+`\ncontext-manifest: .cap/context/manifest.json\ncontext-checkpoint: .cap/context/checkpoint.json\ncontext-checkpoint-digest: ${manifest.digest}\ncontext-previous-manifest: none\ncontext-previous-digest: none\n`)
+}
 
 test('ordinary local run needs no key and persisted evidence can be recomputed',async t=>{
  const root=await fixture(t);const run=await runLocalAction(root,opts)
@@ -115,8 +141,10 @@ test('CLI help/doctor and malformed inputs do not require secrets or echo input'
 
 test('CLI compact mode suppresses successful noise and restores failed diagnostics',async t=>{
  const root=await fixture(t),env={...process.env,CAPITAL_AGENT_MODE:'local',CAPITAL_AGENT_SESSION_LOCK_DIR:join(root,'.cap/session-locks')}
+ await inspectSessionRoot({repoRoot:root,environment:env})
+ await prepareCliContext(root)
  let r=spawnSync(process.execPath,[cli,'run','--repo',root,'--compact','--',process.execPath,'-e','process.stdout.write("success-noise\\n".repeat(2000))'],{encoding:'utf8',env})
- assert.equal(r.status,0,r.stderr)
+ assert.equal(r.status,0,r.stderr+r.stdout)
  let projected=JSON.parse(r.stdout)
  assert.equal(projected.outputMode,'compact');assert.equal(projected.gate.gate,'PASS');assert.doesNotMatch(r.stdout,/success-noise/)
  r=spawnSync(process.execPath,[cli,'run','--repo',root,'--compact','--',process.execPath,'-e','console.error("first clue\\n"+"noise\\n".repeat(5000)+"last clue\\ntoken=sk-123456789012345");process.exit(3)'],{encoding:'utf8',env})
@@ -186,8 +214,10 @@ test('CLI dogfood runs discovered project tests and detects changed source on st
  await writeFile(join(root,'package.json'),JSON.stringify({scripts:{test:'node check.cjs'}}))
  await writeFile(join(root,'check.cjs'),'if (require("fs").readFileSync("source.txt","utf8") !== "base\\n") process.exit(7)\n')
  const env={...process.env,CAPITAL_AGENT_MODE:'local',CAPITAL_AGENT_SESSION_LOCK_DIR:join(root,'.cap/session-locks')}
+ await inspectSessionRoot({repoRoot:root,environment:env})
+ await prepareCliContext(root)
  const run=(...args)=>spawnSync(process.execPath,[cli,...args,'--repo',root,'--json'],{encoding:'utf8',env})
- let r=run('run');assert.equal(r.status,0,r.stderr);assert.equal(JSON.parse(r.stdout).gate.gate,'PASS')
+ let r=run('run');assert.equal(r.status,0,r.stderr+r.stdout);assert.equal(JSON.parse(r.stdout).gate.gate,'PASS')
  await writeFile(join(root,'source.txt'),'regression\n')
  r=run('status');assert.equal(JSON.parse(r.stdout).reason,'execution_source_changed')
  r=run('run');assert.equal(r.status,1);assert.equal(JSON.parse(r.stdout).gate.gate,'BLOCKED')

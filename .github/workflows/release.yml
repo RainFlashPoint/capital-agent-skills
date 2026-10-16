@@ -1,0 +1,40 @@
+name: Publish Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-publish:
+    name: Verify tag and publish GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind tag to manifest version and Commit
+        run: node scripts/release-contract.mjs check --phase tag --tag "$GITHUB_REF_NAME"
+      - name: Full release gate
+        run: |
+          base="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-parse HEAD^)"
+          CAP_RELEASE_DIFF_BASE="$base" bash scripts/release-check
+      - name: Extract version notes
+        run: node scripts/release-contract.mjs notes > "$RUNNER_TEMP/release-notes.md"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
+      - name: Verify published Release relation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-contract.mjs check --phase release --tag "$GITHUB_REF_NAME" --repository "$GITHUB_REPOSITORY"

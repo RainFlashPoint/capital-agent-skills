@@ -32,6 +32,8 @@
 
 历史候选必须在同一份 `task-context.md` 中留下采用结果，不能只记录“看过”:
 
+有历史候选时，按 [`history-rule-consistency.md`](history-rule-consistency.md) 核对历史规则与本次需求，`candidates` 使用逗号分隔原始引用，并写入 `Historical rule check`。复用现有知识做验证；未决冲突先提示来源、差异与影响，明确授权的规则变更沿用原始决策继续。
+
 ```markdown
 ## History usage
 - candidates: none | <repo-relative index / knowledge id>
@@ -99,6 +101,12 @@
 - inspect-only: `<path/glob>` — <原因>
 - out-of-scope: `<path/glob>` — <边界>
 
+## Dirty ownership (only when prior dirty paths are explicitly adopted)
+- task-id: <current Task ID>
+- baseline-digest: <immutable captured Task baseline digest>
+- authority: user-message:<original user authorization reference>
+- adopted: `<exact repo-relative path>`
+
 ## Profile drift
 - none
 # 或列出真实代码与 PROFILE 的不一致及刷新动作
@@ -117,3 +125,7 @@ bash <cap-flow>/scripts/cap-context-guard --stage <stage> [--intent "<当前任�
 原生 Windows / PowerShell 使用 package 根的跨平台入口：`node scripts/cap-runtime.mjs context <repo> --stage <stage> --intent "<当前任务原文>"`。POSIX 继续使用上面的既有 Shell 入口；两者必须保持相同的失败关闭语义。
 
 门禁先核对宿主稳定会话 ID 对应的锁定根，再从该 canonical Git root 运行，检查文件存在、必填段、intent、branch、HEAD、index/worktree/untracked fingerprint、任务开始前脏路径归属、PROFILE 的 `index-only` 声明，以及入口/测试/影响范围、证据来源和外部操作边界。任一工作区事实变化都先刷新 `task-context.md`，不得口头解释后绕过。会话根不一致或计划修改路径与旧脏区重叠时必须停止。
+
+影响范围中的每个修改/新增/删除路径须用独立反引号路径表示；含糊的文件名串或空修改集合不能据此推断“没有重叠”。用户已明确允许沿用旧改动时，只能把明确路径按 Task、初始基线摘要和原始授权引用逐项认领；其余重叠仍阻断。这个记录不是凭证签名，执行前仍须核对实际用户授权。Context Guard 一次报告所有独立调查缺项，先修复并复查，再生成不可变检查点清单。
+
+已初始化 Task 的阶段入口还共享执行 `scripts/cap-context-gate.mjs`。语义检查点缺失、旧阶段/旧 Session、源码或授权/决策输入变化时，按 `contextGate.nextActions` 自动补齐，再重跑门禁；协议见 `context-compaction.md`。这个本地修复不要求用户再次授权已批准的实施工作，纯问答也不因此创建 Task。

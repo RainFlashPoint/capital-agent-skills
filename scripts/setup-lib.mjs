@@ -1,4 +1,6 @@
+import { mkdtempSync, rmSync } from 'fs'
 import { chmod, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rename, symlink, unlink, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
 import { basename, dirname, join, relative, resolve } from 'path'
 import { execFileSync } from 'child_process'
 import { createRequire } from 'module'
@@ -64,6 +66,7 @@ export const activationRuleTargets = home => ({ codex: join(home, '.codex', 'AGE
 export const codexConfigPath = home => join(home, '.codex', 'config.toml')
 export const cursorMcpConfigPath = home => join(home, '.cursor', 'mcp.json')
 export const installManifestPath = home => join(home, '.capital-agent', 'install-manifest.json')
+export const updateCachePath = home => join(home, '.capital-agent', 'update-cache.json')
 export const legacyCodexSkillRoot = home => join(home, '.codex', 'skills')
 
 const MANAGED_DIRECTORIES = ['skills', 'scripts', 'runtime', 'ontology', '.claude-plugin']
@@ -129,6 +132,147 @@ export async function inspectInstallManifest(home, sourceRoot) {
     : recorded.sourceCommit !== current.sourceCommit ? 'source_commit_drift'
       : changedFiles.length ? 'file_manifest_drift' : ''
   return { ok: !reason, reason, path, recorded, current, changedFiles }
+}
+
+function gitText(root, args, options = {}) {
+  try {
+    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: options.timeoutMs || 2000 }).trim()
+  } catch (error) {
+    const reason = error?.code === 'ETIMEDOUT' || error?.signal === 'SIGTERM' ? 'timeout' : 'unavailable'
+    const failure = new Error(reason)
+    failure.code = reason
+    throw failure
+  }
+}
+
+function parseRemoteHead(output = '') {
+  const lines = String(output).split(/\r?\n/).filter(Boolean)
+  const ref = lines.find(line => line.startsWith('ref: '))?.match(/^ref:\s+(refs\/heads\/[^\s]+)\s+HEAD$/)?.[1] || ''
+  const head = lines.find(line => /^[0-9a-f]{40}\s+HEAD$/i.test(line))?.split(/\s+/)[0] || ''
+  if (!head) throw Object.assign(new Error('remote_head_missing'), { code: 'remote_head_missing' })
+  return { remoteRef: ref, remoteHead: head }
+}
+
+function gitIsAncestor(root, ancestor, descendant) {
+  try {
+    execFileSync('git', ['-C', root, 'merge-base', '--is-ancestor', ancestor, descendant], { stdio: 'ignore', timeout: 2000 })
+    return true
+  } catch (error) {
+    if (error?.status === 1) return false
+    throw error
+  }
+}
+
+function classifyRemoteStateIsolated(root, localHead, remoteHead, remoteRef, remoteUrl, timeoutMs) {
+  if (!remoteUrl || !remoteRef) throw new Error('remote_graph_source_missing')
+  const graph = mkdtempSync(join(tmpdir(), 'cap-update-graph-'))
+  try {
+    const run = args => execFileSync('git', ['-C', graph, ...args], { stdio: 'ignore', timeout: timeoutMs })
+    run(['init', '--bare', '-q'])
+    run(['fetch', '--quiet', '--no-tags', root, `${localHead}:refs/cap-update/local`])
+    run(['fetch', '--quiet', '--no-tags', remoteUrl, `${remoteRef}:refs/cap-update/remote`])
+    if (gitIsAncestor(graph, localHead, remoteHead)) return 'remote_update_available'
+    if (gitIsAncestor(graph, remoteHead, localHead)) return 'local_ahead'
+    return 'diverged'
+  } finally {
+    rmSync(graph, { recursive: true, force: true })
+  }
+}
+
+function classifyRemoteState(root, localHead, observed, options = {}) {
+  const remoteHead = observed?.remoteHead || ''
+  const remoteRef = observed?.remoteRef || ''
+  if (!remoteHead) return observed
+  const localBranch = (() => { try { return gitText(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']) } catch { return '' } })()
+  const remoteBranch = remoteRef.startsWith('refs/heads/') ? remoteRef.slice('refs/heads/'.length) : ''
+  if (!remoteBranch) return { ...observed, status: 'remote_default_unknown', localBranch }
+  if (localBranch !== remoteBranch) return { ...observed, status: 'branch_mismatch', localBranch, remoteBranch }
+  if (remoteHead === localHead) return { ...observed, status: 'current', localBranch, remoteBranch, observedLocalHead: localHead }
+  if (observed.source === 'cache' && observed.observedLocalHead === localHead && ['remote_update_available', 'local_ahead', 'diverged', 'remote_relation_unknown'].includes(observed.status)) {
+    return { ...observed, localBranch, remoteBranch }
+  }
+  try {
+    if (gitIsAncestor(root, localHead, remoteHead)) return { ...observed, status: 'remote_update_available', localBranch, remoteBranch, observedLocalHead: localHead }
+    if (gitIsAncestor(root, remoteHead, localHead)) return { ...observed, status: 'local_ahead', localBranch, remoteBranch, observedLocalHead: localHead }
+    return { ...observed, status: 'diverged', localBranch, remoteBranch, observedLocalHead: localHead }
+  } catch {
+    try {
+      const status = classifyRemoteStateIsolated(root, localHead, remoteHead, remoteRef, options.remoteUrl, Number(options.timeoutMs || 10_000))
+      return { ...observed, status, localBranch, remoteBranch, observedLocalHead: localHead, graphSource: 'isolated_fetch' }
+    } catch {
+      return { ...observed, status: 'remote_relation_unknown', localBranch, remoteBranch, observedLocalHead: localHead }
+    }
+  }
+}
+
+export function installationNeedsAttention(state = {}) {
+  if (!state.local?.ok || state.workingTreeModified) return true
+  return !['current', 'offline_unknown'].includes(state.status)
+}
+
+async function readUpdateCache(home) {
+  const cache = await readFile(updateCachePath(home), 'utf8').then(JSON.parse).catch(() => null)
+  return cache?.schemaVersion === 1 && cache.entries && typeof cache.entries === 'object' ? cache : { schemaVersion: 1, entries: {} }
+}
+
+async function writeUpdateCache(home, cache) {
+  const path = updateCachePath(home)
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
+  await writeFile(temporary, `${JSON.stringify(cache, null, 2)}\n`, { mode: 0o600 })
+  await rename(temporary, path)
+  await chmod(path, 0o600)
+}
+
+export async function inspectInstallationState(home, sourceRoot, options = {}) {
+  const local = await inspectInstallManifest(home, sourceRoot)
+  if (local.reason === 'manifest_missing') return { status: 'unmanaged', conditions: ['manifest_missing'], local, remote: { status: 'not_checked' }, workingTreeModified: false, safeToUpgrade: false, upgradeRecommended: false, bootstrapRecommended: true }
+  const root = local.current?.sourceRoot || local.recorded?.sourceRoot || resolve(sourceRoot)
+  const localHead = local.current?.sourceCommit || ''
+  let workingTreeModified = false
+  try { workingTreeModified = Boolean(gitText(root, ['status', '--porcelain'])) } catch {}
+  const remoteUrl = (() => { try { return gitText(root, ['remote', 'get-url', 'origin']) } catch { return '' } })()
+  const cache = await readUpdateCache(home)
+  const cacheKey = createHash('sha256').update(`${root}\n${remoteUrl}`).digest('hex')
+  const now = Number(options.now ?? Date.now())
+  const ttlMs = Number(options.ttlMs || 6 * 60 * 60 * 1000)
+  const cached = cache.entries[cacheKey]
+  const cacheFresh = Boolean(cached?.remoteHead && now - Number(cached.checkedAtMs || 0) >= 0 && now - Number(cached.checkedAtMs || 0) < ttlMs)
+  let remote
+  if (cacheFresh) remote = classifyRemoteState(root, localHead, { ...cached, source: 'cache', cacheFresh: true }, { remoteUrl, timeoutMs: options.timeoutMs })
+  else if (options.offline || !remoteUrl) remote = { status: 'offline_unknown', error: options.offline ? 'offline_requested' : 'origin_missing', checkedAtMs: now, source: 'none', cacheFresh: false }
+  else {
+    try {
+      const resolved = options.remoteResolver
+        ? await options.remoteResolver({ root, remoteUrl, timeoutMs: Number(options.timeoutMs || 2000) })
+        : parseRemoteHead(gitText(root, ['ls-remote', '--symref', 'origin', 'HEAD'], { timeoutMs: Number(options.timeoutMs || 2000) }))
+      remote = classifyRemoteState(root, localHead, { remoteHead: resolved.remoteHead, remoteRef: resolved.remoteRef || '', checkedAtMs: now, source: 'network', cacheFresh: false }, { remoteUrl, timeoutMs: options.timeoutMs })
+    } catch (error) {
+      remote = { status: 'offline_unknown', error: String(error?.code || error?.message || error), checkedAtMs: now, source: 'network', cacheFresh: false, ...(cached?.remoteHead ? { cachedRemoteHead: cached.remoteHead, cachedCheckedAtMs: cached.checkedAtMs } : {}) }
+    }
+    if (remote.remoteHead) {
+      cache.entries[cacheKey] = remote
+      await writeUpdateCache(home, cache).catch(() => {})
+    }
+  }
+  const conditions = []
+  if (!local.ok) conditions.push('install_drifted')
+  if (workingTreeModified) conditions.push('working_tree_modified')
+  if (remote.status === 'remote_update_available') conditions.push('remote_update_available')
+  if (['local_ahead', 'diverged', 'branch_mismatch', 'remote_default_unknown', 'remote_relation_unknown'].includes(remote.status)) conditions.push(remote.status)
+  if (remote.status === 'offline_unknown') conditions.push('offline_unknown')
+  if (!conditions.length) conditions.push('current')
+  const status = conditions.includes('working_tree_modified') ? 'working_tree_modified'
+    : conditions.includes('install_drifted') ? 'install_drifted'
+      : conditions.includes('remote_update_available') ? 'remote_update_available'
+        : conditions.includes('local_ahead') ? 'local_ahead'
+          : conditions.includes('diverged') ? 'diverged'
+            : conditions.includes('branch_mismatch') ? 'branch_mismatch'
+              : conditions.includes('remote_default_unknown') ? 'remote_default_unknown'
+                : conditions.includes('remote_relation_unknown') ? 'remote_relation_unknown'
+        : conditions.includes('offline_unknown') ? 'offline_unknown' : 'current'
+  const upgradeRecommended = !local.ok || remote.status === 'remote_update_available'
+  return { status, conditions, local, remote, workingTreeModified, safeToUpgrade: remote.status === 'remote_update_available' && !workingTreeModified, upgradeRecommended, bootstrapRecommended: false }
 }
 
 async function packageSkillNames(sourceDir) {

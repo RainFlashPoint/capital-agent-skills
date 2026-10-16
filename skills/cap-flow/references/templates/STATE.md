@@ -59,6 +59,20 @@ delivery-status: NOT_DELIVERED | CODE_DELIVERED | ENV_PENDING | ENV_VERIFIED | E
 delivery-head: <最近一次已通过 record_task_delivery 登记的完整 Git SHA；尚未登记则留空>
 deferred-only: false   # true 表示核心验收已通过，下面只剩可独立拆分的延期项；不得再用 gated 阻塞当前 Task
 follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
+context-checkpoint: none | .cap/context/checkpoint.json
+context-manifest: none | <已验证的不可变 manifest 路径>
+context-checkpoint-digest: none | <checkpoint.json 的 SHA-256 语义摘要>
+context-previous-manifest: none | <当前 manifest 所承接的旧 manifest 路径>
+context-previous-digest: none | <旧 manifest 的 checkpoint 摘要>
+context-pressure: low | medium | high | critical | unknown
+context-recovery-event: <observed unique host compaction/resume event | none>
+context-recovery-receipt: none | .cap/context/recovery-<id>.json
+# Optional current runtime telemetry; omit both when unavailable:
+# context-used-tokens: <current observed used tokens>
+# context-window-tokens: <provider context window>
+provider-compaction: not-requested | requested | running | succeeded | failed | unavailable
+provider-compaction-kind: none | codex-app-server | responses-api | anthropic | other
+provider-compaction-event: none | <不含 payload 的宿主事件/turn/item 引用>
 
 ## Harness actions
 
@@ -118,6 +132,7 @@ follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
 - [ ] understand：PROFILE.md 已建立 / 已确认无漂移
 - [ ] define：spec.md 已获批（含 AI 工作的 eval 标准，若适用）
 - [ ] context：task-context.md 已基于当前任务与代码 HEAD 刷新
+- [ ] context：中高压力/阶段交接时语义检查点已校验，P0–P4 与当前 Task/Commit 一致（未触发写 N/A）
 - [ ] git：分支意图 Gate 已通过，当前分支与本任务匹配
 - [ ] plan：plan.md 已拆分（阶段含依赖、任务含三字段）
 - [ ] implement：tests written (red) — 测试先行且确认失败

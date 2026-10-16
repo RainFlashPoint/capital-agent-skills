@@ -8,6 +8,7 @@ import { parseJson, readJson } from '../ontology/json.mjs'
 
 export const fail = code => { throw new Error(code) }
 export const stageName = name => ({ map:'understand',shape:'define',build:'implement',verify:'test' }[name] || name)
+export const resolveExecutionStage = (options = {}, fallback = '') => stageName(options.stage || ({build:'implement',test:'test',package:'release'}[options.action]) || fallback)
 export function field(text, name) {
  const lines=String(text).split(/\r?\n/).filter(line=>line.startsWith(`${name}:`)).map(line=>line.slice(name.length+1).trim())
  if(lines.length>1)fail('execution_state_duplicate_field')

@@ -5,36 +5,43 @@ description: Capital Agent 研发工作的统一入口。用于实现功能、�
 
 # Capital Agent 轻量研发入口
 
-这是研发唯一公开入口。目标是先用少量上下文完成确定性分流，再按风险加载必要协议；轻量不代表跳过门禁。
+研发唯一公开入口：按风险加载协议，门禁不减。
 
-## 1. 启动：先取 compact 状态
+## 1. 绑定包与 compact 状态
 
-研发前检查 Capital Agent MCP，从当前仓运行。`scripts/...` 指 package 根；Skill 目录同名启动器兼容相对解析：
+从**本次加载文件的绝对路径**定位 `scripts/cap-package.mjs`；安装可能只有 `cap` 软链：
 
 ```text
-node scripts/cap-status.mjs <repo> --compact --mcp-runtime <loaded|missing|unknown>
+node <loaded-cap-directory>/scripts/cap-package.mjs resolve skills/cap-flow/SKILL.md
+node <loaded-cap-directory>/scripts/cap-package.mjs run scripts/cap-status.mjs <repo> --compact --mcp-runtime <loaded|missing|unknown>
 ```
 
-`--compact` 返回选择下一动作所需的 Git、安装、平台、Task、Action、Outbox、边界、纠偏和工作流字段。`outputMode=compact` 时按本文件路由；`outputMode=full-fallback` 表示发现阻断、纠偏、未知 blocker 或异常同步状态，结果已自动保留完整证据，必须加载并遵循 `../cap-flow/SKILL.md`，不得自行裁剪。
+解析器按真实位置返回唯一包根、资源路径和摘要。下文路径相对此包：读取用 `resolve`，Node 用 `run`。升级重载；失败修当前安装，**禁止递归搜索其他 clone/worktree 或替用旧门禁**。
 
-第一次状态检查把 canonical Git root 锁定为本会话唯一可写主仓。`.cap`、历史文档、另一个 clone/worktree 中的绝对路径只能校验，不能反向选择仓库。
+研发前检查宿主 Capital Agent MCP。`--compact` 返回路由状态；`outputMode=full-fallback`（阻断、纠偏、未知 blocker、异常同步）必须加载完整 `skills/cap-flow/SKILL.md`。
 
-安装状态优先处理：`installation.upgradeRecommended=true` 时先升级本地 Skills 并重跑状态；`bootstrapRecommended=true` 时初始化安装清单。升级完成但当前会话已加载旧 Skill 时，提示新任务验证，不把内存中的旧说明冒充新版本。
+首次检查锁定 canonical Git root 为唯一可写主仓；`.cap`、历史、其他 clone/worktree 路径只能校验，不能选仓。
 
-## 2. 不可跳过的本地门禁
+先处理安装：`installation.upgradeRecommended=true` 先升级并重跑；`bootstrapRecommended=true` 初始化清单。已加载旧 Skill 的会话提示新任务验证，不能冒充新版本。
 
-所有阶段都先读当前仓的 `.cap/STATE.md`、`.cap/task-context.md` 和存在的 plan/verify/review 证据，核对 branch、HEAD、工作树、Task 与未完成门禁。新任务或事实变化时，按以下文件执行：
+## 2. 本地门禁
 
-- `../cap-flow/references/task-reconnaissance.md`：代码与历史侦察、task-context 新鲜度；
-- `../cap-flow/references/progress-protocol.md`：状态与阶段推进；
-- `../cap-flow/references/complexity-routing.md`：L1–L4 分类；
-- 当前阶段 Skill：`../cap-understand`、`../cap-define`、`../cap-plan`、`../cap-implement`、`../cap-test`、`../cap-review` 或 `../cap-release`。
+各阶段先读 `.cap/STATE.md`、`.cap/task-context.md` 及已有 plan/verify/review，核对 branch、HEAD、工作树、Task、未完成门禁。新任务或事实变化按以下文件执行：
 
-用户语言与内部阶段：项目了解=`understand`，需求确认=`define`，开发计划=`plan`，编码实现=`implement`，测试验证=`test`，代码评审=`review`，发布上线=`release`。不要要求用户记内部名。
+- `skills/cap-flow/references/task-reconnaissance.md`：代码/历史侦察、task-context 新鲜度；
+- `skills/cap-flow/references/progress-protocol.md`：状态与阶段推进；
+- `skills/cap-flow/references/complexity-routing.md`：L1–L4 分类；
+- 当前阶段 Skill 的 `SKILL.md`：`skills/cap-understand`、`skills/cap-define`、`skills/cap-plan`、`skills/cap-implement`、`skills/cap-test`、`skills/cap-review` 或 `skills/cap-release`。
 
-L1/L2 且无风险触发时，只加载上述必要 reference 与当前阶段 Skill。L3/L4，或涉及安全、权限、支付、数据库迁移、外部副作用、MCP/发布、跨项目、复杂并发、回滚困难时，加载完整 `../cap-flow/SKILL.md`。分类未知时一律升级到完整协议；不得为了省 Token 猜测低风险。
+阶段映射：项目了解=`understand`，需求确认=`define`，开发计划=`plan`，编码实现=`implement`，测试验证=`test`，代码评审=`review`，发布上线=`release`；用户无需记内部名。
 
-任务跨越多个依赖阶段时维护 `.cap/spec.md`、`.cap/plan.md` 和 `.cap/STATE.md`；每次进入 plan/implement/test/review/release 前运行 task-context 门禁。工作区出现任务前脏文件时先确认归属，禁止覆盖用户改动。
+L1/L2 无风险时只加载必要 reference 和当前阶段 Skill。L3/L4、安全、权限、支付、数据库迁移、外部副作用、MCP/发布、跨项目、复杂并发或难回滚，加载完整 `skills/cap-flow/SKILL.md`。分类未知走完整协议，不猜低风险。
+
+跨阶段维护 `.cap/spec.md`、`.cap/plan.md`、`.cap/STATE.md`；plan/implement/test/review/release 前运行 task-context 门禁。既有脏文件先确认归属，禁止覆盖。
+
+长会话按 `skills/cap-flow/references/context-compaction.md`；`contextGate` 未过按 `nextActions` 补齐重跑，无遥测仍检测阶段/语义变化。
+
+可见压缩/恢复事件触发恢复，**恢复必须先于继续读取业务代码或执行研发动作**：同源运行 `scripts/cap-context-checkpoint.mjs resume <repo> --event <unique-visible-event>`，读 hot 及所需 warm。没有可信压缩回调时不能承诺每次自动监听；摘要不是收据或 Provider 成功。审阅来源后用 `scripts/cap-context-checkpoint.mjs prepare <repo> --checkpoint <path> --budget-tokens <hot-budget>` 预检/恢复/发布，可附 `--event`。详见 reference，沿用授权。
 
 ## 3. 状态分流
 
@@ -48,25 +55,25 @@ L1/L2 且无风险触发时，只加载上述必要 reference 与当前阶段 Sk
 
 `repository.harnessMode=local-only` 的工具/Skills 仓只做本地维护验证；local-only 必须在读取平台凭据前拒绝候选 Push/Harness 动作。`harnessMode=server` 才能进入平台候选 Test/Review。
 
-每次启动向用户简报：模式、仓库/分支、Task、当前阶段、阻断或 Action、Outbox 数和下一动作；随后在没有人工门禁时继续工作，不以“状态已检查”结束。
+简报模式、仓库/分支、Task、阶段、阻断/Action、Outbox 数及下一步；无人工门禁则继续。
 
-模型可见输出也走保守压缩：本地测试、构建、打包优先用 `scripts/cap-execute.mjs run --compact`；PASS 只返回 Gate、哈希、字节数与 Artifact，非 PASS 自动 `full-fallback` 到脱敏头尾诊断，canonical receipt/bundle 与退出码不变。Git 先读短状态、路径、统计和补丁健康，失败、冲突、评审、安全或发布时再展开相关 patch；不得为省 Token 隐藏证据。
+测试、构建、打包优先用 `scripts/cap-execute.mjs run --compact`：PASS 返回 Gate、哈希、字节数、Artifact；非 PASS `full-fallback` 返回脱敏头尾，canonical receipt/bundle、退出码不变。Git 先读短状态、路径、统计、补丁健康；失败、冲突、评审、安全、发布展开 patch，不能隐藏证据。
 
 ## 4. 平台、Task 与离线边界
 
-团队模式先按 `../harvest-experience/SKILL.md` 注入经验。调用 `create_or_attach_task` 前使用 `scripts/cap-task-request.mjs` 脱敏，只发送意图、代码范围和验证边界；敏感风险拒绝最多以同一脱敏结果重试一次，仍失败则记 `task_creation_blocked` 并停止编码。
+团队模式先按 `skills/harvest-experience/SKILL.md` 注入经验。调用 `create_or_attach_task` 前使用 `scripts/cap-task-request.mjs` 脱敏，只发送意图、代码范围和验证边界；敏感风险拒绝最多以同一脱敏结果重试一次，仍失败则记 `task_creation_blocked` 并停止编码。
 
-MCP 已加载但远端暂时失败时，明确说明离线原因、影响与恢复方式；本轮应发送的结构化元数据可用 `scripts/cap-outbox.mjs enqueue` 写入 `.cap/outbox.jsonl`。只重放当前用户明确发起的当前 Task；历史 Task/Session 或无归属事件必须标记“等待历史元数据补报授权”，未获授权时保留且不阻塞当前主线。禁止把本地 PASS 补报成 Server Gate PASS，禁止上传代码正文或秘密。
+MCP 已加载但远端失败时报告离线原因、影响、恢复方式；本轮结构化元数据用 `scripts/cap-outbox.mjs enqueue` 写 `.cap/outbox.jsonl`。只重放用户明确发起的当前 Task；历史 Task/Session、无归属事件标记“等待历史元数据补报授权”，保留且不阻塞主线。禁止把本地 PASS 报成 Server Gate PASS，禁止上传代码正文或秘密。
 
 当前会话根本没加载 MCP 时不能写 Outbox 伪装离线团队流程，必须走 `mode=restart_required`。显式本地模式也不写 Outbox。
 
 ## 5. 实现、Push 与 Harness
 
-编码由当前 Skills Session 或受控 Provider 完成，提交真实 Artifact/Commit/Delivery。任何状态摘要都必须按当前 HEAD、源码 fingerprint 与最新执行结果重验；旧 PASS、可编辑摘要或历史 Delivery 不能覆盖新失败。
+当前 Skills Session 或受控 Provider 编码，提交真实 Artifact/Commit/Delivery。摘要按当前 HEAD、源码 fingerprint、最新结果重验；旧 PASS、摘要或历史 Delivery 不能覆盖新失败。
 
-进入 Server Test/Review 前，当前精确 Commit 必须在上游可见。`reconciliation.pushRequired=true` 时只请求一次精确授权，说明远程、分支、Commit；授权只覆盖该 Task/仓库/分支/Commit，任一变化即失效。授权后使用 `scripts/cap-push-candidate.mjs` 完成 Push、远端 ref 回读、候选 Delivery 登记和 canonical Task 复核。候选失败不写 Outbox。
+Server Test/Review 前精确 Commit 须在上游可见。`reconciliation.pushRequired=true` 请求一次精确授权，列远程、分支、Commit；仅限该 Task/仓库/分支/Commit，变化即失效。授权后用 `scripts/cap-push-candidate.mjs` Push、回读 ref、登记候选 Delivery、复核 canonical Task；失败不写 Outbox。
 
-进入测试或评审时加载 `../cap-flow/references/harness-action-protocol.md`：
+进入测试或评审时加载 `skills/cap-flow/references/harness-action-protocol.md`：
 
 - 测试：Server 创建/返回 Test Action，再用 `get_task_action` / `wait_task_action` 续接；macOS/Linux 运行 `scripts/cap-local-test-provider.mjs <repo> <action-id>`，本机 Provider 不可用时明确阻塞。原生 Windows 不调用该脚本，只等待 Server/Linux Runner。
 - 评审：Review Action 只读，客户端不能自签 PASS。
@@ -76,8 +83,8 @@ MCP 已加载但远端暂时失败时，明确说明离线原因、影响与恢�
 
 ## 6. 收口
 
-提交前至少执行：目标测试、`bash scripts/validate-skills`（若本仓适用）、`git diff --check`，并核对改动文件未越过 task-context 范围。行为变更同步 CHANGELOG 与版本元数据。
+提交前执行目标测试、`bash scripts/validate-skills`（适用时）、`git diff --check`，核对 task-context 范围；行为变更同步 CHANGELOG、版本。
 
-团队改动按 `../harvest-experience/SKILL.md` 只回写结构化摘要与路径，不传代码和秘密；本地模式生成并校验 `.cap/experience.md`。严格 Retire 必须记录可验证知识处置，完成态不得直接移入 stale；细节按当前阶段 Skill 执行。
+团队按 `skills/harvest-experience/SKILL.md` 回写摘要、路径，不传代码/秘密；本地生成并校验 `.cap/experience.md`。严格 Retire 记录可验证知识处置，完成态不直接移入 stale；按当前阶段 Skill 执行。
 
-向用户只声称证据实际证明的结果：本地证据不等于 Server Gate，提交不等于已推送，分支推送不等于已合并或已发布。
+只报告已证实结果：本地证据≠Server Gate，提交≠推送，分支推送≠合并/发布。

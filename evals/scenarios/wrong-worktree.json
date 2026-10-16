@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "wrong-worktree",
+  "title": "Reject a sibling worktree after session-root lock",
+  "category": "repository_boundary",
+  "runner": "node_test",
+  "testFile": "scripts/test-task-context-guard.mjs",
+  "testNamePattern": "rejects a self-consistent sibling worktree"
+}

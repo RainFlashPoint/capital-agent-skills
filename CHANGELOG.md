@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.13.0
+
+- 建立公开版本发布契约：以 `plugin.json` 为单一事实源，确定性校验 marketplace、README、CHANGELOG、Tag、Commit 与 GitHub Release；新增 Tag workflow，在完整门禁通过后才创建 Release。
+- 安装状态新增远端默认分支只读检查、短超时与 TTL 缓存，明确区分 `current`、`remote_update_available`、`install_drifted`、`working_tree_modified`、`offline_unknown`；工作区有改动时自动升级失败关闭。
+- 增加公开 CI：快速 PR 门禁、拆分的 Node/Python 全量回归、Linux/macOS/Windows 原生可执行范围矩阵，以及独立的完整 Release Check，避免单个不透明长任务。
+- 新增可运行的纯本地端到端 fixture 与确定性 Agent/eval 框架，首批覆盖旧 Commit 证据串用、错误 worktree、漏回归门禁、高风险独立评审、上下文恢复后旧授权失效和历史规则复用；live model 结果明确为 `not-run`。
+- README 重排为公开状态与证据、安装、风险门禁、本地/私有平台边界、测试评测、架构案例和当前摘要；新增 CONTRIBUTING、SECURITY、发布、评测及私有平台素材占位文档。历史版本详情只保留在本 CHANGELOG。
+- 发布收口修复四项独立复核缺口：缺失 Git Tag 或未通过 GitHub API 回读的非草稿 Release 失败关闭；远端缓存只复用 remote HEAD 并始终相对当前本地 HEAD 重算；eval 场景要求真实命名测试至少执行一项；本地与 CI 发布门禁分别检查未跟踪候选和 Commit 范围的 whitespace 错误。
+- 发布复审进一步收紧：稳定版本必须同时是 GitHub 最新公开非草稿、非 prerelease Release；更新只在当前分支匹配远端默认分支且本地可证明落后时允许快进，ahead/diverged/feature/未知关系均失败关闭；未知 eval ID 与空选择集拒绝执行；CHANGELOG 当前版本位于末节时也能正确提取发布说明。
+- 发布复审真实环境回归补强：未 fetch 的远端 Commit 使用隔离临时 Git 图谱证明 fast-forward，且不污染安装副本；跳过或 TODO 的命名测试不能计作 eval PASS；公开发布契约明确拒绝 prerelease manifest，避免稳定 Release 元数据错配。
+- 最终复审补强：瞬时离线/超时不写入 remote HEAD TTL 缓存，恢复网络后的下一次检查立即重试；稳定发布版本严格限定为 `x.y.z`，build metadata 与包含空标识的非法 SemVer 均失败关闭。
+
+- 修复真实跨会话回测发现的早期阶段恢复缺口：`understand` / `define` 及对应旧阶段名现可通过统一 `prepare` 的任务上下文预检并绑定可见恢复收据；授权变化仍阻断旧检查点，未知阶段仍拒绝。
+
+- 增加跨人员/Task 的历史规则一致性检查，复用既有知识、Task、需求和 Git 引用；区分兼容、不同范围、明确授权变更、未决冲突与未核实来源。status/阶段/执行前检查当前意图及候选绑定与逐项处置，未决规则提示来源、差异和影响；不建第二知识库，不以历史先后决定规则优先级，也不自动废弃旧知识。
+
+- 后续试用修复：公开入口按真实加载路径绑定唯一 package root，内部资源缺失不再搜索旧 clone/worktree；兼容启动器共享同源解析。
+- 独立复核补强：允许 create/delete-only 的合法调查范围；前驱所有原子必须保留，防止已撤销授权经“删除历史→重加原 ID”跨快照复活。
+- 来源覆盖新增语义类别与保护下限，授权/禁止/身份/安全/失效边界强制 P0；普通实施细节默认 P2，P0 膨胀给出审阅建议，不自动降级或删除谱系。
+- 增加统一 `prepare` 入口，汇总预检、保留前驱、按需重放当前热原子并发布精确绑定收据，避免快照更新后的手工重复绑定；收据核对完整热原子内容与 warm 引用，不能只匹配 ID。
+- 公开入口直接暴露可见压缩恢复纪律；提供显式宿主恢复事件输入供 status/阶段/执行门共同阻断。未接入宿主回调时仍不能监听不可见的内部压缩，不冒充自动恢复。
+
+- 修复试用中的四个缺口：拒绝空检查点并按原始任务上下文、STATE 和 spec/plan 清单核对语义覆盖；执行入口和 manifest 发布前均运行完整调查门，旧脏区仅可按 Task/基线/用户授权引用精确认领；可见压缩恢复生成热原子重放收据并绑定新 manifest；调查缺项汇总报告，减少逐项试错与清单重建。旧活动检查点须按新清单刷新后才能继续，无法观测的宿主内部压缩仍不冒充已恢复。
+- 已发布检查点换快照必须保留前驱及 P0 转换校验；同快照的 Provider 生命周期重绑定保留前驱 manifest 游标。Provider 成功必须与 STATE 观察事件及恢复收据一致，不能由 manifest 自报成功。
+- 补齐实际会话漏执行检查点的落地缺口：status、POSIX/Node Context Guard 和本地执行入口共享只读检测，缺失/过期/身份与源码变化/语义纠正/压力升级时返回自动补齐动作，阶段入口失败关闭。manifest 新增当前阶段、Session、源码和语义输入绑定；无遥测时使用 unknown，恢复请求不冒充成功。
+- 授权边界与 spec/plan 全量纳入语义输入绑定；命令的 action 与执行阶段使用同一解析器，Provider 恢复精确匹配事件。STATE 来源采用显式游标投影，避免发布检查点指针后自失效，仍保留授权、决策与 Provider 状态的漂移检测。
+- 在 `cap-flow` 内新增生产级混合上下文裁剪协议：Provider 原生 compaction 负责机器态续接，独立的可审计语义检查点负责意图、授权、证据、信任、Commit 绑定和决策谱系。
+- 新增 P0–P4 保护等级、动态优先级、hot/warm/cold/dropped 分层与 55%/70%/82% 默认压力触发；P0 热预算溢出失败关闭，不以 Token 节省换取语义漂移。
+- 新增 `cap-context-checkpoint.mjs` 和行为回归，稳定阻止 P0 丢失、未知事实无证据升格、本地/Server 证据混淆、旧 Commit 证据串用、授权失效条件丢失、决策谱系断裂及摘要自证。
+- Codex adapter 接入 `thread/compact/start` 能力边界：Provider payload 保持 opaque，不写入 `.cap`；STATE 只保存检查点路径、摘要、压力和能力状态。
+- 轻入口长会话与 HANDOFF 同步接线；manifest 生成/校验绑定快照、前驱、日志、来源 hashes 和预算计划。结构校验与 SHA 不替代用户原始授权或 Server/runtime 回执；宿主未暴露压缩能力时不声称释放已加载 Token。
+
 ## 0.12.6
 
 - 修复宿主按 `skills/cap/SKILL.md` 所在目录解析 `scripts/...` 时无法执行 package 根 CLI 的问题；使用跨平台兼容启动器替代目录软链接，并增加真实进程级回归测试，覆盖状态输出与标准输入转发。

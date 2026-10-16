@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, probeRemoteMcp, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
+import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallationState, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, installationNeedsAttention, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, probeRemoteMcp, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
 import { buildMcpHttpHeaders } from './mcp-http-headers.mjs'
 
 test('parses setup modes and validates server URL', () => {
@@ -226,6 +227,169 @@ test('installation manifest records source commit, version and managed file hash
   const ontologyDrift = await inspectInstallManifest(home, source)
   assert.equal(ontologyDrift.reason, 'file_manifest_drift')
   assert.deepEqual(ontologyDrift.changedFiles, ['ontology/README.md', 'skills/cap/SKILL.md'])
+})
+
+test('installation state classifies locally known remote updates and caches the result', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'cap-update-state-'))
+  const source = join(home, 'source')
+  await mkdir(join(source, 'skills', 'cap'), { recursive: true })
+  await mkdir(join(source, '.claude-plugin'), { recursive: true })
+  await writeFile(join(source, 'skills', 'cap', 'SKILL.md'), '# cap\n')
+  await writeFile(join(source, '.claude-plugin', 'plugin.json'), '{"version":"1.0.0"}\n')
+  execFileSync('git', ['init', '-q'], { cwd: source })
+  execFileSync('git', ['config', 'user.email', 'fixture@example.test'], { cwd: source })
+  execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: source })
+  execFileSync('git', ['add', '.'], { cwd: source })
+  execFileSync('git', ['commit', '-qm', 'init'], { cwd: source })
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: source })
+  const initialHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' }).trim()
+  await writeFile(join(source, 'remote-change.txt'), 'remote\n')
+  execFileSync('git', ['add', '.'], { cwd: source })
+  execFileSync('git', ['commit', '-qm', 'remote change'], { cwd: source })
+  const remoteHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' }).trim()
+  execFileSync('git', ['reset', '--hard', '-q', initialHead], { cwd: source })
+  execFileSync('git', ['remote', 'add', 'origin', 'https://example.test/org/repo.git'], { cwd: source })
+  await writeInstallManifest(home, source)
+  let calls = 0
+  const resolver = async () => { calls += 1; return { remoteRef: 'refs/heads/main', remoteHead } }
+  const first = await inspectInstallationState(home, source, { remoteResolver: resolver, now: 1000, ttlMs: 10_000 })
+  assert.equal(first.status, 'remote_update_available')
+  assert.deepEqual(first.conditions, ['remote_update_available'])
+  assert.equal(first.safeToUpgrade, true)
+  execFileSync('git', ['reset', '--hard', '-q', remoteHead], { cwd: source })
+  await writeInstallManifest(home, source)
+  const caughtUp = await inspectInstallationState(home, source, { remoteResolver: resolver, now: 2000, ttlMs: 10_000 })
+  assert.equal(caughtUp.status, 'current')
+  assert.equal(caughtUp.remote.source, 'cache')
+  execFileSync('git', ['checkout', '-qb', 'feature-current', remoteHead], { cwd: source })
+  await writeInstallManifest(home, source)
+  const featureCurrent = await inspectInstallationState(home, source, { remoteResolver: resolver, now: 2500, ttlMs: 10_000 })
+  assert.equal(featureCurrent.status, 'branch_mismatch')
+  assert.equal(featureCurrent.safeToUpgrade, false)
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: source })
+  await writeFile(join(source, 'local-change.txt'), 'local\n')
+  execFileSync('git', ['add', '.'], { cwd: source })
+  execFileSync('git', ['commit', '-qm', 'local change'], { cwd: source })
+  await writeInstallManifest(home, source)
+  const ahead = await inspectInstallationState(home, source, { remoteResolver: resolver, now: 3000, ttlMs: 10_000 })
+  assert.equal(ahead.status, 'local_ahead')
+  assert.equal(ahead.remote.source, 'cache')
+  assert.equal(ahead.safeToUpgrade, false)
+  assert.equal(calls, 1)
+
+  execFileSync('git', ['checkout', '-qb', 'feature', initialHead], { cwd: source })
+  await writeInstallManifest(home, source)
+  const feature = await inspectInstallationState(home, source, { remoteResolver: resolver, now: 4000, ttlMs: 10_000 })
+  assert.equal(feature.status, 'branch_mismatch')
+  assert.equal(feature.safeToUpgrade, false)
+
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: source })
+  execFileSync('git', ['reset', '--hard', '-q', initialHead], { cwd: source })
+  await writeFile(join(source, 'diverged.txt'), 'local divergence\n')
+  execFileSync('git', ['add', '.'], { cwd: source })
+  execFileSync('git', ['commit', '-qm', 'local divergence'], { cwd: source })
+  await writeInstallManifest(home, source)
+  const diverged = await inspectInstallationState(home, source, { remoteResolver: resolver, now: 5000, ttlMs: 10_000 })
+  assert.equal(diverged.status, 'diverged')
+  assert.equal(diverged.safeToUpgrade, false)
+})
+
+test('installation state proves a real unfetched remote commit is a fast-forward without mutating the installed clone', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cap-real-remote-state-'))
+  const remote = join(root, 'remote.git')
+  const seed = join(root, 'seed')
+  const source = join(root, 'source')
+  const updater = join(root, 'updater')
+  const home = join(root, 'home')
+  execFileSync('git', ['init', '--bare', '-q', remote])
+  execFileSync('git', ['init', '-q', seed])
+  execFileSync('git', ['config', 'user.email', 'fixture@example.test'], { cwd: seed })
+  execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: seed })
+  await mkdir(join(seed, 'skills', 'cap'), { recursive: true })
+  await mkdir(join(seed, '.claude-plugin'), { recursive: true })
+  await writeFile(join(seed, 'skills', 'cap', 'SKILL.md'), '# cap\n')
+  await writeFile(join(seed, '.claude-plugin', 'plugin.json'), '{"version":"1.0.0"}\n')
+  execFileSync('git', ['add', '.'], { cwd: seed })
+  execFileSync('git', ['commit', '-qm', 'init'], { cwd: seed })
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: seed })
+  execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: seed })
+  execFileSync('git', ['push', '-q', '-u', 'origin', 'main'], { cwd: seed })
+  execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], { cwd: remote })
+  execFileSync('git', ['clone', '-q', remote, source])
+  execFileSync('git', ['clone', '-q', remote, updater])
+  execFileSync('git', ['config', 'user.email', 'fixture@example.test'], { cwd: updater })
+  execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: updater })
+  await writeInstallManifest(home, source)
+  await writeFile(join(updater, 'remote-change.txt'), 'remote\n')
+  execFileSync('git', ['add', '.'], { cwd: updater })
+  execFileSync('git', ['commit', '-qm', 'remote change'], { cwd: updater })
+  execFileSync('git', ['push', '-q', 'origin', 'main'], { cwd: updater })
+  const remoteHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: updater, encoding: 'utf8' }).trim()
+  assert.throws(() => execFileSync('git', ['cat-file', '-e', `${remoteHead}^{commit}`], { cwd: source, stdio: 'ignore' }))
+
+  const state = await inspectInstallationState(home, source, { now: 1000, ttlMs: 10_000, timeoutMs: 10_000 })
+  assert.equal(state.status, 'remote_update_available')
+  assert.equal(state.safeToUpgrade, true)
+  assert.throws(() => execFileSync('git', ['cat-file', '-e', `${remoteHead}^{commit}`], { cwd: source, stdio: 'ignore' }))
+})
+
+test('transient offline update checks are retried instead of cached for the full TTL', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'cap-transient-update-state-'))
+  const source = join(home, 'source')
+  await mkdir(join(source, 'skills', 'cap'), { recursive: true })
+  await mkdir(join(source, '.claude-plugin'), { recursive: true })
+  await writeFile(join(source, 'skills', 'cap', 'SKILL.md'), '# cap\n')
+  await writeFile(join(source, '.claude-plugin', 'plugin.json'), '{"version":"1.0.0"}\n')
+  execFileSync('git', ['init', '-q'], { cwd: source })
+  execFileSync('git', ['config', 'user.email', 'fixture@example.test'], { cwd: source })
+  execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: source })
+  execFileSync('git', ['add', '.'], { cwd: source })
+  execFileSync('git', ['commit', '-qm', 'init'], { cwd: source })
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: source })
+  execFileSync('git', ['remote', 'add', 'origin', 'https://example.test/org/repo.git'], { cwd: source })
+  await writeInstallManifest(home, source)
+  const localHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' }).trim()
+  let calls = 0
+  const resolver = async () => {
+    calls += 1
+    if (calls === 1) throw Object.assign(new Error('timeout'), { code: 'timeout' })
+    return { remoteRef: 'refs/heads/main', remoteHead: localHead }
+  }
+  const first = await inspectInstallationState(home, source, { remoteResolver: resolver, now: 1000, ttlMs: 10_000 })
+  const recovered = await inspectInstallationState(home, source, { remoteResolver: resolver, now: 2000, ttlMs: 10_000 })
+  assert.equal(first.status, 'offline_unknown')
+  assert.equal(recovered.status, 'current')
+  assert.equal(recovered.remote.source, 'network')
+  assert.equal(calls, 2)
+})
+
+test('Doctor treats unsafe Git relations as attention states even when the install manifest is locally consistent', () => {
+  assert.equal(installationNeedsAttention({ status: 'current', local: { ok: true }, workingTreeModified: false }), false)
+  assert.equal(installationNeedsAttention({ status: 'offline_unknown', local: { ok: true }, workingTreeModified: false }), false)
+  for (const status of ['remote_update_available', 'local_ahead', 'diverged', 'branch_mismatch', 'remote_default_unknown', 'remote_relation_unknown']) {
+    assert.equal(installationNeedsAttention({ status, local: { ok: true }, workingTreeModified: false }), true, status)
+  }
+})
+
+test('installation state keeps drift, dirty worktree and offline unknown distinct', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'cap-update-safety-'))
+  const source = join(home, 'source')
+  await mkdir(join(source, 'skills', 'cap'), { recursive: true })
+  await mkdir(join(source, '.claude-plugin'), { recursive: true })
+  await writeFile(join(source, 'skills', 'cap', 'SKILL.md'), '# cap\n')
+  await writeFile(join(source, '.claude-plugin', 'plugin.json'), '{"version":"1.0.0"}\n')
+  execFileSync('git', ['init', '-q'], { cwd: source })
+  execFileSync('git', ['config', 'user.email', 'fixture@example.test'], { cwd: source })
+  execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: source })
+  execFileSync('git', ['add', '.'], { cwd: source })
+  execFileSync('git', ['commit', '-qm', 'init'], { cwd: source })
+  execFileSync('git', ['remote', 'add', 'origin', 'https://example.test/org/repo.git'], { cwd: source })
+  await writeInstallManifest(home, source)
+  await writeFile(join(source, 'skills', 'cap', 'SKILL.md'), '# changed\n')
+  const state = await inspectInstallationState(home, source, { remoteResolver: async () => { throw Object.assign(new Error('timeout'), { code: 'timeout' }) }, now: 1000, ttlMs: 1 })
+  assert.equal(state.status, 'working_tree_modified')
+  assert.deepEqual(state.conditions, ['install_drifted', 'working_tree_modified', 'offline_unknown'])
+  assert.equal(state.safeToUpgrade, false)
 })
 
 test('MCP wrapper keeps the user key out of child process arguments', async () => {
