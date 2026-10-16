@@ -7,8 +7,17 @@ cd "$ROOT"
 # 发布验证永远以纯本地模式运行，任何测试若意外触发平台路径都应失败。
 export CAPITAL_AGENT_MODE=local
 
+echo '== Version and release contract =='
+node scripts/release-contract.mjs check --phase worktree
+
 echo '== Skills structure and policy =='
 bash scripts/validate-skills
+
+echo '== Deterministic Agent eval =='
+node scripts/eval-cap.mjs
+
+echo '== Public local end-to-end fixture =='
+node examples/e2e-local/run.mjs
 
 echo '== Node behavior and adversarial regression =='
 node --test scripts/test-*.mjs
@@ -17,6 +26,18 @@ echo '== Python behavior regression =='
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 echo '== Patch hygiene =='
-git diff --check
+if [[ -n "${CAP_RELEASE_DIFF_BASE:-}" ]]; then
+  git diff --check "$CAP_RELEASE_DIFF_BASE" HEAD
+else
+  git diff --check HEAD
+  while IFS= read -r -d '' path; do
+    status=0
+    git diff --no-index --check -- /dev/null "$path" >/dev/null || status=$?
+    if (( status > 1 )); then
+      git diff --no-index --check -- /dev/null "$path" || true
+      exit "$status"
+    fi
+  done < <(git ls-files --others --exclude-standard -z)
+fi
 
 echo 'RELEASE CHECK: PASS'

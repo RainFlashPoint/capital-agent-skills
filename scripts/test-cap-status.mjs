@@ -590,16 +590,17 @@ test('matching local remote and delivered heads require no reconciliation', () =
   assert.equal(result.pushRequired, false)
 })
 
-test('status exposes an automatic Skill upgrade action when install manifest drifts', async () => {
+test('status exposes install drift but refuses automatic upgrade while the package worktree is modified', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-skill-drift-'))
   const sourceRoot = fileURLToPath(new URL('..', import.meta.url))
   await mkdir(join(home, '.capital-agent'), { recursive: true })
   await writeFile(join(home, '.capital-agent', 'install-manifest.json'), JSON.stringify({ schemaVersion: 1, sourceRoot, sourceCommit: 'old', version: '0.0.0', files: [] }))
   const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
-  assert.equal(result.installation.upgradeRecommended, true)
-  assert.equal(result.workflow.upgradeRecommended, true)
-  assert.equal(result.workflow.action, '升级本地 Skills')
-  assert.match(result.reasons.join(','), /skill_upgrade_/)
+  assert.equal(result.installation.status, 'working_tree_modified')
+  assert.ok(result.installation.conditions.includes('working_tree_modified'))
+  assert.equal(result.installation.safeToUpgrade, false)
+  assert.equal(result.installation.upgradeRecommended, false)
+  assert.notEqual(result.workflow.action, '升级本地 Skills')
 })
 
 test('status keeps an unmanaged install usable while exposing bootstrap guidance', async () => {

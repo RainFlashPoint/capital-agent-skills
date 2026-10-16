@@ -1,4 +1,4 @@
-import { fileURLToPath } from 'node:url'
+import { runPackageScript } from './cap-package.mjs'
 
 const ALLOWED_SCRIPTS = new Set([
   'cap-execute.mjs',
@@ -12,7 +12,5 @@ const ALLOWED_SCRIPTS = new Set([
 
 export async function forwardToPackageScript(scriptName) {
   if (!ALLOWED_SCRIPTS.has(scriptName)) throw new Error(`unsupported_cap_script: ${scriptName}`)
-  const target = new URL(`../../../scripts/${scriptName}`, import.meta.url)
-  process.argv[1] = fileURLToPath(target)
-  await import(target.href)
+  await runPackageScript(`scripts/${scriptName}`)
 }

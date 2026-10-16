@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } f
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { baselineDigest } from './cap-worktree-baseline.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const guard = join(root, 'skills/cap-flow/scripts/cap-context-guard')
@@ -157,6 +158,34 @@ test('PROFILE alone cannot unlock planning', () => {
   assert.match(result.stderr, /缺少 \.cap\/task-context\.md/)
 })
 
+test('both entries report every reconnaissance defect in one pass', () => {
+  const repo = fixture(); writeContext(repo)
+  const path = join(repo, '.cap/task-context.md')
+  writeFileSync(path, readFileSync(path, 'utf8').replace(/^- (index-fingerprint|worktree-fingerprint|untracked-fingerprint):.*\n/gm, '').replace('- `test/payment.test.js` — 支付测试入口', '- no test path'))
+  for (const result of [run(repo), spawnSync(process.execPath, [join(root, 'scripts/cap-runtime.mjs'), 'context', repo], { env: portableEnv(), encoding: 'utf8' })]) {
+    assert.equal(result.status, 1)
+    for (const missing of ['index', 'worktree', 'untracked', 'Tests and environment']) assert.ok(result.stderr.includes(missing), result.stderr)
+  }
+})
+
+test('malformed modify paths fail closed even alongside valid inspect-only paths', () => {
+  const repo = fixture(); writeContext(repo)
+  const path = join(repo, '.cap/task-context.md')
+  writeFileSync(path, readFileSync(path, 'utf8').replace('- modify: `src/payment-service.js`', '- modify: payment-service.js、README'))
+  const result = run(repo)
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /modify_pattern_invalid/)
+})
+
+test('implementation cannot infer a safe empty modify surface from inspect-only entries', () => {
+  const repo = fixture(); writeContext(repo)
+  const path = join(repo, '.cap/task-context.md')
+  writeFileSync(path, readFileSync(path, 'utf8').replace('- modify: `src/payment-service.js` — 新渠道实现\n', ''))
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /task_context_modify_pattern_missing/)
+})
+
 test('fresh repository evidence unlocks implementation', () => {
   const repo = fixture(); writeContext(repo)
   const result = run(repo, '--intent', '接入新的支付渠道', '--stage', 'implement')
@@ -216,6 +245,38 @@ test('pre-existing dirty files in the planned modify surface block a new Task', 
   assert.equal(result.status, 1)
   assert.match(result.stderr, /未归属改动重叠/)
   assert.match(result.stderr, /src\/payment-service\.js/)
+})
+
+test('globstar modify scope includes files directly under its prefix', () => {
+  const repo = fixture()
+  appendFileSync(join(repo, 'src/payment-service.js'), '// existing dirty code\n')
+  execFileSync(process.execPath, [baselineScript, 'capture', repo, 'task_new'], { cwd: repo })
+  const branch = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()
+  writeFileSync(join(repo, '.cap/STATE.md'), `task-id: task_new\nbranch: ${branch}\nworktree: ${repo}\n`)
+  writeContext(repo)
+  const path = join(repo, '.cap/task-context.md')
+  writeFileSync(path, readFileSync(path, 'utf8').replace('`src/payment-service.js` — 新渠道实现', '`src/**/*.js` — 新渠道实现'))
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /preexisting_dirty_overlap/)
+})
+
+test('precisely adopted dirty files require matching Task, baseline and cited user authority', () => {
+  const repo = fixture()
+  appendFileSync(join(repo, 'src/payment-service.js'), '// prior work\n')
+  const baseline = JSON.parse(execFileSync(process.execPath, [baselineScript, 'capture', repo, 'task_new'], { encoding: 'utf8' }))
+  const branch = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()
+  writeFileSync(join(repo, '.cap/STATE.md'), `task-id: task_new\nbranch: ${branch}\nworktree: ${repo}\n`)
+  writeContext(repo)
+  const path = join(repo, '.cap/task-context.md')
+  const original = readFileSync(path, 'utf8')
+  const declaration = `\n## Dirty ownership\n- task-id: task_new\n- baseline-digest: ${baselineDigest(baseline.payload)}\n- authority: user-message:fixture-ownership\n- adopted: \`src/payment-service.js\`\n`
+  writeFileSync(path, original + declaration)
+  assert.equal(run(repo).status, 0)
+  writeFileSync(path, original + declaration.replace('user-message:fixture-ownership', 'model:guessed'))
+  assert.match(run(repo).stderr, /task_context_dirty_adoption_invalid/)
+  writeFileSync(path, original + declaration.replace(baselineDigest(baseline.payload), 'a'.repeat(64)))
+  assert.match(run(repo).stderr, /task_context_dirty_adoption_invalid/)
 })
 
 test('pre-existing dirty files outside the planned modify surface remain allowed', () => {

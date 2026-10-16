@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "history-experience-reuse",
+  "title": "Reuse an explicitly compatible historical rule",
+  "category": "history_reuse",
+  "runner": "node_test",
+  "testFile": "scripts/test-history-rules.mjs",
+  "testNamePattern": "explicitly authorized rule replacement proceeds"
+}

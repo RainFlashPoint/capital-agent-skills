@@ -7,9 +7,12 @@ import { pathToFileURL } from 'node:url'
 
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
-import { inspectPreexistingDirtyOverlap } from './cap-worktree-baseline.mjs'
+import { inspectPreexistingDirtyOverlap, plannedModifyPatterns } from './cap-worktree-baseline.mjs'
+import { inspectSemanticContext } from './cap-context-gate.mjs'
+import { inspectHistoryRules } from './cap-history-rules.mjs'
+import { sanitizeRepositoryUrl } from './client-delivery.mjs'
 
-const validStages = new Set(['', 'plan', 'implement', 'test', 'review', 'release'])
+const validStages = new Set(['', 'understand', 'define', 'plan', 'implement', 'test', 'review', 'release'])
 const MAX_RETIREMENT_SCAN = 1000
 const MAX_RECOVERY_BYTES = 256 * 1024
 
@@ -23,8 +26,8 @@ async function exists(path) {
 
 function field(markdown = '', name = '') {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return String(markdown).match(new RegExp(`^- ${escaped}:\\s*(.*)$`, 'mi'))?.[1]?.trim()
-    || String(markdown).match(new RegExp(`^${escaped}:\\s*(.*)$`, 'mi'))?.[1]?.replace(/\s+#.*$/, '').trim()
+  return String(markdown).match(new RegExp(`^- ${escaped}:[ \\t]*(.*)$`, 'mi'))?.[1]?.trim()
+    || String(markdown).match(new RegExp(`^${escaped}:[ \\t]*(.*)$`, 'mi'))?.[1]?.replace(/\s+#.*$/, '').trim()
     || ''
 }
 
@@ -45,10 +48,10 @@ function fail(scope, code, detail) {
   throw error
 }
 
-export async function inspectBoundary(repoCandidate = '.') {
+export async function inspectBoundary(repoCandidate = '.', { environment = process.env } = {}) {
   const repo = await canonicalRepo(repoCandidate)
-  const session = await inspectSessionRoot({ repoRoot: repo, environment: process.env, capture: false, requireExisting: true })
-  if (session.blocked) fail('cap-guard', session.code || 'session_root_mismatch', session.reason || '会话仓库边界不一致')
+  const session = await inspectSessionRoot({ repoRoot: repo, environment, capture: false, requireExisting: true })
+  if (session.blocked) fail('cap-guard', session.code || 'session_root_mismatch', `本会话锁定仓库，拒绝切换；${session.reason || '会话仓库边界不一致'}`)
   const state = await readFile(join(repo, '.cap', 'STATE.md'), 'utf8').catch(() => '')
   if (!state) return { ok: true, repo, state: false, branch: git(repo, ['branch', '--show-current']) }
   const branch = git(repo, ['branch', '--show-current'])
@@ -80,33 +83,35 @@ function hasPath(sectionText = '') {
   return /^- `[^`]+`/m.test(sectionText)
 }
 
-export async function inspectTaskContext(repoCandidate = '.', { stage = '', intent = '' } = {}) {
+export async function inspectTaskContext(repoCandidate = '.', { stage = '', intent = '', checkSemantic = true, environment = process.env } = {}) {
   if (!validStages.has(stage)) fail('cap-context', 'unknown_stage', `未知阶段：${stage}`)
-  const boundary = await inspectBoundary(repoCandidate)
+  const boundary = await inspectBoundary(repoCandidate, { environment })
   const repo = boundary.repo
   const contextPath = join(repo, '.cap', 'task-context.md')
   if (!await exists(contextPath)) fail('cap-context', 'task_context_missing', '缺少 .cap/task-context.md')
   const context = (await readFile(contextPath, 'utf8')).replace(/\r\n/g, '\n')
+  const blockers = []
+  const add = (code, detail) => blockers.push({ code, detail })
   const headings = ['## Entry points', '## Call chain and data flow', '## Similar implementations', '## History usage', '## Tests and environment', '## Evidence sources', '## External operation boundary', '## Impact surface', '## Profile drift']
-  for (const heading of headings) if (section(context, heading) === null) fail('cap-context', 'required_section_missing', `缺少必填段：${heading}`)
+  for (const heading of headings) if (section(context, heading) === null) add('required_section_missing', `缺少必填段：${heading}`)
   const recorded = {
     intent: field(context, 'intent'), branch: field(context, 'branch'), head: field(context, 'head'),
     index: field(context, 'index-fingerprint'), worktree: field(context, 'worktree-fingerprint'), untracked: field(context, 'untracked-fingerprint'),
   }
-  for (const [name, value] of Object.entries(recorded)) if (!value) fail('cap-context', `${name}_missing`, `task-context 缺少 ${name}`)
-  if (field(context, 'profile-used-as') !== 'index-only') fail('cap-context', 'profile_not_index_only', 'PROFILE 必须标记为 index-only')
+  for (const [name, value] of Object.entries(recorded)) if (!value) add(`${name}_missing`, `task-context 缺少 ${name}`)
+  if (field(context, 'profile-used-as') !== 'index-only') add('profile_not_index_only', 'PROFILE 必须标记为 index-only')
   const branch = git(repo, ['branch', '--show-current'])
   let head = ''
   try { head = git(repo, ['rev-parse', '--verify', 'HEAD']) } catch { head = 'working-tree' }
-  if (recorded.branch !== branch) fail('cap-context', 'branch_changed', `记录=${recorded.branch}，当前=${branch}`)
-  if (recorded.head !== head) fail('cap-context', 'head_changed', `记录=${recorded.head}，当前=${head}`)
+  if (recorded.branch && recorded.branch !== branch) add('branch_changed', `分支已变化：记录=${recorded.branch}，当前=${branch}`)
+  if (recorded.head && recorded.head !== head) add('head_changed', `HEAD 已变化：记录=${recorded.head}，当前=${head}`)
   const fingerprints = await inspectContextFingerprint(repo)
-  if (recorded.index !== fingerprints.index) fail('cap-context', 'index_fingerprint_changed', '暂存区与调查时不一致')
-  if (recorded.worktree !== fingerprints.worktree) fail('cap-context', 'worktree_fingerprint_changed', '未暂存改动与调查时不一致')
-  if (recorded.untracked !== fingerprints.untracked) fail('cap-context', 'untracked_fingerprint_changed', '未跟踪文件与调查时不一致')
-  if (intent && recorded.intent !== intent) fail('cap-context', 'intent_changed', `记录=${recorded.intent}`)
+  if (recorded.index && recorded.index !== fingerprints.index) add('index_fingerprint_changed', 'index fingerprint 已变化；暂存区与调查时不一致')
+  if (recorded.worktree && recorded.worktree !== fingerprints.worktree) add('worktree_fingerprint_changed', 'worktree fingerprint 已变化；未暂存改动与调查时不一致')
+  if (recorded.untracked && recorded.untracked !== fingerprints.untracked) add('untracked_fingerprint_changed', 'untracked fingerprint 已变化；未跟踪文件与调查时不一致')
+  if (intent && recorded.intent !== intent) add('intent_changed', `记录=${recorded.intent}`)
   for (const heading of ['## Entry points', '## Tests and environment', '## Evidence sources']) {
-    if (!hasPath(section(context, heading))) fail('cap-context', 'path_evidence_missing', `${heading} 没有真实路径`)
+    if (!hasPath(section(context, heading))) add('path_evidence_missing', `${heading} 没有真实路径（没有测试或配置路径 / 代码证据）`)
   }
   const history = section(context, '## History usage')
   const historyCandidates = field(history, 'candidates')
@@ -114,30 +119,46 @@ export async function inspectTaskContext(repoCandidate = '.', { stage = '', inte
   const historyReason = field(history, 'reason')
   const historyPlan = field(history, 'plan-impact')
   const historyVerify = field(history, 'verification-impact')
-  if (!historyCandidates || !historyOutcome || !historyReason || !historyPlan || !historyVerify) {
-    fail('cap-context', 'history_usage_incomplete', 'History usage 缺少 candidates/outcome/reason/plan-impact/verification-impact')
-  }
+  for (const [key, value] of Object.entries({ candidates: historyCandidates, outcome: historyOutcome, reason: historyReason, 'plan-impact': historyPlan, 'verification-impact': historyVerify })) if (!value) add('history_usage_incomplete', `History usage 缺少 ${key}`)
   if (!['direct_adopted', 'modified_adopted', 'not_used', 'rejected'].includes(historyOutcome)) {
-    fail('cap-context', 'history_usage_outcome_invalid', `History usage outcome 非法：${historyOutcome}`)
+    add('history_usage_outcome_invalid', `History usage outcome 非法：${historyOutcome}`)
   }
   if (historyCandidates === 'none' && historyOutcome !== 'not_used') {
-    fail('cap-context', 'history_usage_without_candidate', 'History usage candidates=none 时 outcome 必须为 not_used')
-  }
-  for (const key of ['environment', 'authorization', 'minimum-impact', 'recovery', 'invalidates-on']) {
-    if (!field(context, key)) fail('cap-context', 'external_boundary_incomplete', `External operation boundary 缺少 ${key}`)
-  }
-  if (!/^- (?:modify|inspect-only|out-of-scope): `[^`]+`/m.test(section(context, '## Impact surface'))) {
-    fail('cap-context', 'impact_surface_missing', 'Impact surface 没有带路径的范围证据')
+    add('history_usage_without_candidate', 'History usage candidates=none 时 outcome 必须为 not_used')
   }
   const state = await readFile(join(repo, '.cap', 'STATE.md'), 'utf8').catch(() => '')
   const taskId = field(state, 'task-id')
-  if (taskId) {
+  let remote = ''
+  try { remote = sanitizeRepositoryUrl(git(repo, ['remote', 'get-url', 'origin'])) } catch {}
+  const historyRules = inspectHistoryRules(context, { repo: remote || repo, taskId })
+  blockers.push(...historyRules.errors)
+  for (const key of ['environment', 'authorization', 'minimum-impact', 'recovery', 'invalidates-on']) {
+    if (!field(section(context, '## External operation boundary') || '', key)) add('external_boundary_incomplete', `External operation boundary 缺少 ${key}`)
+  }
+  if (!/^- (?:modify|create|delete|inspect-only|out-of-scope): `[^`]+`/m.test(section(context, '## Impact surface'))) {
+    add('impact_surface_missing', 'Impact surface 没有带路径的范围证据')
+  }
+  let validScope = true
+  try {
+    const patterns = plannedModifyPatterns(context)
+    if (stage === 'implement' && !patterns.length) { validScope = false; add('task_context_modify_pattern_missing', '编码阶段需要明确的 modify/create/delete 路径') }
+  } catch (error) { validScope = false; add(error.message, 'Impact surface 修改路径格式无效') }
+  if (taskId && validScope) {
+    try {
     const dirtyOwnership = await inspectPreexistingDirtyOverlap(repo, taskId, context)
     if (dirtyOwnership.overlap.length) {
-      fail('cap-context', 'preexisting_dirty_overlap', `计划修改路径在本 Task 开始前已存在未归属改动：${dirtyOwnership.overlap.join(', ')}；请先续接原任务、提交明确基线或使用干净 worktree`)
+      add('preexisting_dirty_overlap', `计划修改路径与本 Task 开始前未归属改动重叠：${dirtyOwnership.overlap.join(', ')}；核实已有授权并记录精确归属，或续接原任务/使用干净 worktree`)
     }
+    } catch (error) { add(error.message, '任务前脏区归属记录无效') }
   }
-  return { ok: true, repo, stage, intent: recorded.intent, fingerprints }
+  const contextGate = checkSemantic ? await inspectSemanticContext(repo, { stage, environment }) : null
+  if (contextGate && !contextGate.passed) add(contextGate.reason, JSON.stringify(contextGate))
+  if (blockers.length) {
+    const error = new Error(blockers.map(item => `${item.code}: ${item.detail}`).join('\n'))
+    Object.assign(error, { scope: 'cap-context', code: blockers[0].code, blockers, contextGate, historyRules })
+    throw error
+  }
+  return { ok: true, repo, stage, intent: recorded.intent, fingerprints, contextGate, historyRules }
 }
 
 export async function prepareNext(capCandidate = '.cap') {
@@ -221,7 +242,7 @@ async function main(argv = process.argv.slice(2)) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   main().then(code => { process.exitCode = code }).catch(error => {
-    process.stderr.write(`${error.scope || 'cap-runtime'}: BLOCKED — ${error.code || 'runtime_error'}: ${error.message}\n`)
+    process.stderr.write(process.argv.includes('--json') ? `${JSON.stringify({ ok: false, code: error.code || 'runtime_error', blockers: error.blockers || [{ code: error.code, detail: error.message }] })}\n` : `${error.scope || 'cap-runtime'}: BLOCKED — ${error.code || 'runtime_error'}: ${error.message}\n`)
     process.exitCode = 1
   })
 }

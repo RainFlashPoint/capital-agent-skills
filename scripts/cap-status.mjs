@@ -7,13 +7,14 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
-import { checkPlatformHandshake, normalizeServerUrl, inspectInstallManifest } from './setup-lib.mjs'
+import { checkPlatformHandshake, normalizeServerUrl, inspectInstallationState } from './setup-lib.mjs'
 import { flushPendingDeliveries, readHarnessMode, sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { inspectOutbox } from './cap-outbox.mjs'
 import { activateLocalFallback, isLocalFallbackActive, revokeLocalFallback } from './local-fallback.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { inspectLocalExecution, executionNextActions } from '../runtime/execution/local-flow.mjs'
+import { inspectSemanticContext } from './cap-context-gate.mjs'
 
 const STAGES = ['understand', 'define', 'plan', 'implement', 'test', 'review', 'release', 'done']
 const LEGACY_STAGE = { map: 'understand', shape: 'define', build: 'implement', verify: 'test' }
@@ -296,10 +297,21 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const configPath = join(homeDir, '.config/capital-agent/env')
   const configText = await readFile(configPath, 'utf8').catch(() => '')
   const config = Object.fromEntries(configText.split(/\r?\n/).map(line => line.match(/^([A-Z0-9_]+)=(.*)$/)).filter(Boolean).map(match => [match[1], match[2]]))
-  const installProbe = await inspectInstallManifest(homeDir, packageRoot)
-  const installation = installProbe.reason === 'manifest_missing'
+  const installProbe = await inspectInstallationState(homeDir, packageRoot, { offline })
+  const installation = installProbe.status === 'unmanaged'
     ? { status: 'unmanaged', upgradeRecommended: false, bootstrapRecommended: true, reason: 'manifest_missing', changedFiles: [], sourceRoot: packageRoot, nextActions: [{ kind: 'bootstrap_local_skills', label: '初始化本地 Skills 安装清单', reason: 'manifest_missing', requiresUser: false }] }
-    : { status: installProbe.ok ? 'current' : 'drifted', upgradeRecommended: !installProbe.ok, reason: installProbe.reason || '', changedFiles: installProbe.changedFiles || [], sourceRoot: installProbe.current?.sourceRoot || installProbe.recorded?.sourceRoot || '' }
+    : {
+        status: installProbe.status,
+        conditions: installProbe.conditions || [],
+        upgradeRecommended: installProbe.upgradeRecommended === true && installProbe.safeToUpgrade === true,
+        updateAvailable: installProbe.remote?.status === 'remote_update_available',
+        safeToUpgrade: installProbe.safeToUpgrade === true,
+        bootstrapRecommended: false,
+        reason: installProbe.local?.reason || installProbe.status || '',
+        changedFiles: installProbe.local?.changedFiles || [],
+        sourceRoot: installProbe.local?.current?.sourceRoot || installProbe.local?.recorded?.sourceRoot || '',
+        remote: installProbe.remote,
+      }
   const explicitLocal = text(environment.CAPITAL_AGENT_MODE || config.CAPITAL_AGENT_MODE).toLowerCase() === 'local'
   const mcpRuntimeState = normalizeMcpRuntime(mcpRuntime)
   let serverUrl = ''
@@ -391,6 +403,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     ? { stage: 'implement', action: '通过 MCP 确认最终候选与 Test Action', reason: '尚未取得 Server canonical projection，不能称为正在测试验证', gated: true }
     : localNext
   const localStage = canonicalStage(field(stateText, 'stage'))
+  const contextGate = !boundary.blocked && !restartRequired && !switchingTask && gitRoot
+    ? await inspectSemanticContext(gitRoot, { stage: localStage, environment })
+    : { required: false, passed: false, reason: 'context_waiting_for_task_boundary', nextActions: [] }
   const remoteWorkflowStage = remoteTask ? canonicalWorkflowStage(remoteTask, localStage) : ''
   const remoteDoneBlocked = remoteTask?.status === 'done' && reviewGate.required && reviewGate.independentBlocked
   const nextBase = localOnly
@@ -404,6 +419,8 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
     : nextFromPlatformTask(remoteTask, guardedLocalNext)
   const next = installation.upgradeRecommended
     ? { ...nextBase, stage: localStage || nextBase.stage || 'understand', action: installation.reason === 'manifest_missing' ? '初始化本地 Skills' : '升级本地 Skills', reason: `检测到 Skills ${installation.reason || '漂移'}，模型应先执行对应模式的 ${installation.reason === 'manifest_missing' ? '初始化' : '升级'} 并重新检查`, remediation: installation.reason === 'manifest_missing' ? '先按当前模式运行本地安装，再重新运行状态检查' : '先升级本地 Skills，再重新运行状态检查', nextActions: [{ kind: installation.reason === 'manifest_missing' ? 'bootstrap_local_skills' : 'upgrade_local_skills', label: installation.reason === 'manifest_missing' ? '初始化本地 Skills 并重新检查' : '升级本地 Skills 并重新检查', reason: installation.reason || 'drift', requiresUser: false, stage: localStage || nextBase.stage || 'understand', action: installation.reason === 'manifest_missing' ? 'bootstrap_local_skills' : 'upgrade_local_skills' }], upgradeRecommended: true, upgradeReason: installation.reason || 'drift' }
+    : contextGate.required && !contextGate.passed
+    ? { stage: localStage || nextBase.stage, action: contextGate.reason.startsWith('history_rule_') ? '核对历史规则与本次需求' : '完成语义检查点', reason: contextGate.reason, gated: true, nextActions: contextGate.nextActions, remediation: contextGate.remediation }
     : nextBase
   const followUpBaseCommit = switchingTask ? text(remoteTask?.baseCommit || remoteTask?.taskContract?.baseCommit) : ''
   const deliveredHead = followUpBaseCommit || field(stateText, 'delivery-head')
@@ -497,6 +514,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       } : { source: platform === false ? 'server_unavailable' : 'server_unobserved', taskId: '', stage: '', status: '', currentCommit: '', currentGate: '', action: null, gatesReady: false },
     },
     reconciliation,
+    contextGate,
     boundary,
     correction,
     nextActions: next.nextActions || installation.nextActions || [],
@@ -634,9 +652,13 @@ export function compactCapStatus(result = {}) {
     schemaVersion: 1,
     outputMode: 'compact',
     mode: result.mode || '',
+    contextGate: result.contextGate || null,
     installation: {
       status: installation.status || '',
+      conditions: installation.conditions || [],
       upgradeRecommended: installation.upgradeRecommended === true,
+      updateAvailable: installation.updateAvailable === true,
+      safeToUpgrade: installation.safeToUpgrade === true,
       bootstrapRecommended: installation.bootstrapRecommended === true,
       reason: installation.reason || '',
       sourceRoot: installation.sourceRoot || '',
@@ -743,12 +765,18 @@ export function compactCapStatus(result = {}) {
     },
     reasons: result.reasons || [],
   })
-  // `false` means a rejected probe while an omitted value means unobserved.
+  // These explicit `false` values are safety-relevant decisions, while an
+  // omitted value means the compact projection did not observe the decision.
+  if (installation.safeToUpgrade === false) compact.installation.safeToUpgrade = false
   if (platform.connected === false) compact.platform.connected = false
   return compact
 }
 
 /** Stable comparison surface used by local full/compact A/B tests. */
+function contextDecision(gate) {
+  if (!gate) return null
+  return { required: gate.required === true, passed: gate.passed === true, reason: gate.reason || '', stage: gate.stage || '', pressure: gate.pressure || 'unknown', manifest: gate.manifest || '', digest: gate.digest || '', errors: gate.errors || [], nextActions: (gate.nextActions || []).map(nextActionSummary), remediation: gate.remediation || '' }
+}
 export function statusDecisionSignature(result = {}) {
   const installation = result.installation || {}
   const platform = result.platform || {}
@@ -758,7 +786,8 @@ export function statusDecisionSignature(result = {}) {
   const workflow = result.workflow || {}
   return {
     mode: result.mode || '',
-    installation: { status: installation.status || '', upgradeRecommended: installation.upgradeRecommended === true, bootstrapRecommended: installation.bootstrapRecommended === true, reason: installation.reason || '', changedFileCount: Array.isArray(installation.changedFiles) ? installation.changedFiles.length : Number(installation.changedFileCount || 0) },
+    contextGate: contextDecision(result.contextGate),
+    installation: { status: installation.status || '', conditions: installation.conditions || [], upgradeRecommended: installation.upgradeRecommended === true, updateAvailable: installation.updateAvailable === true, safeToUpgrade: installation.safeToUpgrade === true, bootstrapRecommended: installation.bootstrapRecommended === true, reason: installation.reason || '', changedFileCount: Array.isArray(installation.changedFiles) ? installation.changedFiles.length : Number(installation.changedFileCount || 0) },
     platform: { configured: platform.configured === true, connected: platform.connected ?? null, serverUrl: platform.serverUrl || '', mcpRuntime: platform.mcpRuntime || 'unknown', localFallback: platform.localFallback === true, handshake: platform.handshake ? { ok: platform.handshake.ok === true, reason: platform.handshake.reason || '', status: platform.handshake.status || 0 } : null, runtime: platform.runtime || null, pendingDeliveries: { total: Number(platform.pendingDeliveries?.total || 0), sent: Number(platform.pendingDeliveries?.sent || 0), pending: Number(platform.pendingDeliveries?.pending || 0), confirmed: Number(platform.pendingDeliveries?.confirmed || 0) }, outbox: { totalPending: Number(outbox.totalPending || 0), pending: Number(outbox.pending || 0), historicalPending: Number(outbox.historicalPending || 0), retainedHistoricalPending: Number(outbox.retainedHistoricalPending || 0), unscopedPending: Number(outbox.unscopedPending || 0), retainedUnscopedPending: Number(outbox.retainedUnscopedPending || 0), ready: Number(outbox.ready || 0), blocked: Number(outbox.blocked || 0), oldestCreatedAt: outbox.oldestCreatedAt || '', next: outbox.next ? { id: outbox.next.id || '', type: outbox.next.type || '', localTaskRef: outbox.next.localTaskRef || '' } : null } },
     repository: { root: result.repository?.root || '', remote: result.repository?.remote || '', branch: result.repository?.branch || '', head: result.repository?.head || '', upstream: result.repository?.upstream || '', upstreamHead: result.repository?.upstreamHead || '', dirty: result.repository?.dirty === true, harnessMode: result.repository?.harnessMode || '', harnessEligible: result.repository?.harnessEligible === true, sessionRootBlocked: result.repository?.sessionRoot?.blocked === true },
     task: { id: task.id || '', previousId: task.previousId || '', sessionId: task.sessionId || '', previousSessionId: task.previousSessionId || '', requiresNewSession: task.requiresNewSession === true, remoteStatus: task.remoteStatus || '', remoteStage: task.remoteStage || '', gatesReady: task.gatesReady === true, currentCommit: task.currentCommit || '', currentGate: task.currentGate || '', currentAction: actionSummary(task.currentAction), blocker: blockerSummary(task.blocker), nextAction: actionSummary(task.nextAction), executionMode: task.executionMode || '', verificationCommands: task.verificationCommands || [], parentTaskId: task.parentTaskId || '', retirementStatus: task.retirementStatus || '', historyArtifactRoot: task.historyArtifactRoot || '', localExecution: task.localExecution ? { stage: task.localExecution.stage || '', status: task.localExecution.status || '', nextAction: task.localExecution.nextAction || '', gated: task.localExecution.gated === true, executionRequired: task.localExecution.executionRequired === true, executionGate: task.localExecution.executionGate || '' } : null, serverDelivery: task.serverDelivery ? { source: task.serverDelivery.source || '', taskId: task.serverDelivery.taskId || '', stage: task.serverDelivery.stage || '', status: task.serverDelivery.status || '', currentCommit: task.serverDelivery.currentCommit || '', currentGate: task.serverDelivery.currentGate || '', action: actionSummary(task.serverDelivery.action), gatesReady: task.serverDelivery.gatesReady === true } : null },

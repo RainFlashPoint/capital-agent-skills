@@ -1,243 +1,41 @@
 # capital-agent-skills
 
-一套面向 Coding Agent 的结构化研发与经验飞轮。它把需求理解、开发计划、编码实现、独立验证、代码评审和发布交付串成可恢复的研发主线，并将每次交付中验证过的经验沉淀为团队可复用的知识。
+把 Coding Agent 的需求、实现、测试、评审、发布和经验复用变成一条可恢复、可验证、可移植的研发主线。
 
-它解决的不只是“让 Agent 写代码”，而是让 Agent 的研发过程可控、交付结果可信、工程经验能够持续积累。
+<!-- release-version: 0.13.0 -->
 
-> **状态**：v0.12.6，持续演进中。Skills 可以脱离 Cap Server 独立运行，支持 Windows、macOS、Linux，以及 Codex、Claude Code 和 Cursor，不锁定单一模型、平台或公司环境。
+[![CI](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml)
+[![Release Check](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## v0.12.6 更新
+## 公开状态与证据
 
-- 修复部分宿主从 `cap` Skill 目录解析 `scripts/...` 时 CLI 静默不执行的问题；兼容入口不依赖目录软链接，可在 Windows、macOS 和 Linux 使用。
+当前候选版本：`v0.13.0`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
 
-## v0.12.5 更新
+公开证据分为三层：
 
-- 修复本地/非团队环境误等待 Server Test/Review Action 的问题；`local-only` 仓库和未配置完整团队连接的机器均按本地验证流程运行。
-
-## v0.12.4 更新
-
-- 经验索引保留代码路径、入口、符号和不变量的受限投影；下一次任务可按当前代码锚点召回历史经验，不再只能按泛标题关键词匹配。
-- `task-context` 强制记录历史候选是否采用、为什么采用或拒绝，以及它如何改变计划和验证；POSIX 与 Node/Windows 入口保持一致。
-- 远程平台仍是团队知识权威，本地只维护脱敏历史投影，不新增传统知识搜索系统。
-- Retire 会把经验原稿绑定到当前 Task 和完整 Delivery Commit，`pending-sync` 只接受真正可重放的同 Commit Outbox 载荷；未处理知识债务不再因新任务关键词不同而消失。
-- history index 侦察单次最多读取 1000 项并报告截断，配合 `knowledge-audit` 控制长期 Git 知识增长成本。
-- index 与 stale manifest 在召回前按 Task、artifact root、experience path 和快照指纹失败关闭校验；archive/stale 目录同样采用流式有界枚举，伪造元数据不能挤占真实候选。
-
-## v0.12.3 更新
-
-- 严格 Retire 增加可验证的知识处置：中心同步、待补报、本地保留或明确无可复用经验；脱敏历史索引进 Git，原始快照保持本地忽略。
-- Evolution 改为有耐久证明保护的 50 条活动窗口，新增只读 `knowledge-audit`，历史侦察会暴露 pending/local/needs-harvest 状态。
-- Task 切换阻止未退场的完成态；tracked `.cap` 活动态迁移必须显式确认并通过临时 Git index 原子完成。
-
-## v0.12.2 更新
-
-- Codex 的 Capital Agent MCP 改为可选启动：平台暂时不可达时仍可进入会话和普通对话。
-- 可选启动不等于默认本地。团队配置下每个新研发任务仍主动检查 MCP 并尝试平台握手；缺少工具时进入选择门，禁止静默长期本地化。
-- “本次本地继续”绑定当前运行会话、分支和 Task；新会话或 MCP 恢复加载后自动失效。升级会迁移旧 `required=true`，Doctor 会把未迁移配置判为失败。
-
-## v0.12.1 更新
-
-- `cap-execute run --compact` 在测试、构建和打包成功时只向模型返回 Gate、哈希、字节数与证据位置；默认输出和 `--json` 保持兼容。
-- 失败、超时、输出超限或源码漂移自动返回脱敏头尾诊断，不以 Token 节省换取排障信息。
-- 常规 Git 检查先使用短状态、路径、统计与补丁健康，诊断、评审、安全或发布场景再展开相关 patch。
-
-## v0.12.0 更新
-
-- `cap-status --compact` 只返回模型选择下一动作所需的状态；异常、纠偏或未知协议会自动 `full-fallback`，不牺牲门禁。
-- 公开入口改为按复杂度和阶段加载：普通 L1/L2 任务不再一次性注入整套流程，高风险和未知分类仍走完整协议。
-- 本地 mock full/compact A/B 固化决策等价与体积门槛，防止以后为了省 Token 误删安全信号。
-
-## v0.11.4 更新
-
-- Codex 团队模式改用携带动态 `x-user-key` 的原生 Streamable HTTP MCP，安装器会迁移旧版或错误的 STDIO 配置。
-- Doctor 真实验证平台身份、Task 写能力和 MCP 工具列表；密钥不写入项目、Codex 配置或命令行参数。
-- 安装源码的版本、Commit 或文件漂移会自动产生 `upgrade_local_skills` 动作；隔离验证已确认旧版能被发现且升级后收敛为 `current`。
-- 受控 Push 候选交付、远程 ref 精确回读和本机 Test Provider 能力声明已补齐，失败候选不写 Outbox。
-
-## v0.10.0 更新
-
-新增本地 [Ontology 语义底座](ontology/README.md)：从真实 `.cap` 读取状态和证据声明，将知识按机构、项目、渠道、产品和协议版本隔离，并提供可解释的冲突、权限与验证裁决。详情见 [需求与验收矩阵](docs/specs/ontology-foundation.md)。当前交付是本地语义内核，未替代 Server 鉴权或自动实现 CI/CD。
-
-## v0.9.7 更新
-
-- 新增无需手工填写源码目录的升级命令：从 `~/.capital-agent/install-manifest.json` 自动读取已安装源码位置。
-- 团队模式与本地模式分别提供升级和 Doctor 命令，避免把本地安装误升级到团队模式。
-
-## v0.9.6 更新
-
-- 收紧独立复核报告协议：由主流程写入固定机器头部并重新绑定 Commit、指纹和源码未变证据。
-- 非标准字段、缺失指纹或只有自然语言“已完成”的报告会保持阻断，不能冒充 Review PASS。
-
-## v0.9.5 更新
-
-- L3/L4 或命中支付、安全、权限、跨仓、MCP、状态机等高风险信号时，评审前自动启动 1 个全新上下文的只读复核 Agent。
-- 独立复核绑定 source/base Commit 与工作区指纹，报告与主评审隔离；启动失败、证据过期或运行时不支持隔离时不伪造 PASS。
-- L1/L2 简单改动保持原有短路径，不额外启动 Agent。
-
-## v0.9.4 更新
-
-- 跨项目切换会原子复制已审阅交接摘要；摘要缺失或落地失败时不改变原主仓。
-- 新 Task 会记录目标仓原有脏路径，计划修改范围与旧改动重叠时主动阻断，避免混合提交。
-- 旧项目已跟踪 `.cap` 活动态时不再静默移入 ignored 目录，避免一次 Task 切换制造大量 Git 删除。
-
-## v0.9.3 更新
-
-- 将项目本地 `.cap` 纳入所有研发阶段的必选前置：锁定 Git 根目录，核对任务、分支、工作树、计划、评审、验证和未完成门禁。
-- 明确双模式闭环：团队/Server 模式使用 `enrich_context` / `record_experience`；显式本地模式不调用 MCP，改用并校验本地 `.cap/experience.md`。
-- 交付前统一复核实际改动、diff、验证结果和 `.cap` 证据，减少上下文串台、重复调查和经验丢失。
-
-## v0.9.1 更新
-
-- 支持在同一聊天中显式切换到另一个独立项目继续开发，同时保留唯一可写主仓和误提交保护。
-- 跨项目只传递带来源项目、Commit 和待验证状态的业务交接摘要；目标项目重新建立 Task、Session、代码事实和验证证据。
-- 同一项目的不同 clone/worktree 仍需新会话，旧项目的 Gate、Delivery 和 Outbox 不会串到新项目。
-
-## v0.9.0 更新
-
-- 新增 Windows 10/11 原生 PowerShell 安装、升级和 Doctor 入口，不要求 WSL。
-- Windows 支持 Skill/MCP 配置、Git 交付、团队 Task 与知识闭环；关键阶段门禁提供纯 Node 入口。
-- Windows 本机独立 Test Provider 暂不启用，可信 Test/Review 交给 Server/Linux Runner；macOS/Linux 的本机 Provider 与现有全量门禁保持不变。
-
-## v0.8.1 更新
-
-- 会话首次进入仓库会锁定 canonical Git root；切换到另一个独立项目必须显式执行交接切换，同一项目的 worktree 或绝对路径仍不能导航主仓。
-- 入口、阶段门禁和 Git Commit 三层共同阻断跨目录读写与误提交；B 目录即使拥有与自身完全一致的遗留 STATE，也不能覆盖 A 会话的仓库身份。
-- 没有稳定会话 ID 的宿主保持原有可移植行为，继续使用 branch/worktree STATE 边界，不影响既有安装和本地模式。
-
-## v0.8.0 更新
-
-这一版本把“任务总结”升级为真正面向下一次 Agent 的经验原稿：
-
-- 每个完成任务形成可逐字审计的 `.cap/experience.md`，不再从规格、STATE 或调用链自动猜经验。
-- 原稿同时沉淀召回线索、根因、决策规则、实现锚点、不变量、验证配方和失效信号，让后续 Agent 能直接用于定位、实现与验收。
-- 只有调用链、宽泛结论、缺少同 Commit 证据或不可观察验证结果时明确阻断，不用低质量内容凑沉淀数量。
-- 本地模式同样生成并归档经验原稿，下一任务可先从历史索引自动命中再读取精确原稿；团队模式在此基础上同步中心知识库，本地与团队使用同一质量标准。
-
-## v0.7.3 更新
-
-这一版本建立了结构化经验的确定性 Server 载荷；v0.8.0 进一步补齐可审计原稿与 AI 可用质量契约：
-
-- 从规格、决策、验证和评审证据确定性生成结构化经验，不再依赖模型二次萃取。
-- 证据不完整时明确阻断沉淀，不产生看似成功、实际不可召回的 draft。
-- 外发前限制证据路径并脱敏敏感值；经验是否发布仍由同 Task、同 Commit 的 Server Gate 决定。
-
-## v0.7.2 更新
-
-这一版本让客户端展示与平台真实状态保持一致：
-
-- 平台可用时，阶段、状态和下一动作以 Server canonical projection 为准，并纠正本地游标。
-- 只有最终候选 Commit 与对应 Test Action 同时成立时，才显示“平台正在测试验证”。
-- Server 已幂等接收普通 Delivery 时，客户端自动清理对应 Outbox，不再重复补报。
-
-## v0.7.1 更新
-
-这一版本把经验闭环从“能够召回”收紧为“能够证明被采用”：
-
-- Task 冻结快照与本轮实际注入都提供同一知识 ID，只有交集才能记为采用。
-- 经验晋级只相信同一 Task、同一 Commit 的 Server Gate，客户端自报 PASS 不再直接发布。
-- 升级与 Doctor 会识别并隔离旧 Codex Skill，避免新旧流程在同一客户端混用。
-
-## v0.6.5 更新
-
-这一版本建立了经验闭环的服务端契约；v0.7.1 进一步补齐真实客户端 ID 传递和可信发布门禁：
-
-- 完整结构化经验直接进入知识库，不再被不必要的模型二次萃取阻断。
-- 沉淀与离线重放共享稳定幂等身份，重复请求不会重复累计经验和指标。
-- 后续任务只对实际采用的知识精确归因，并绑定来源 Task、冻结知识快照与最终 Gate 结果。
-- 服务端具备“第一次踩坑、第二次精确召回并首轮通过”的证据模型；真实 MCP 客户端链路由 v0.7.1 补齐。
-
-## v0.6.4 更新
-
-这一版本重点收紧了 Skills 的真实可用性和交付边界：
-
-- **本地使用更稳**：没有 Cap Server 也能完整运行研发主线，新仓库尚未产生首个 Commit 时也可以直接开始。
-- **安装诊断更可信**：Doctor 会检查各客户端实际注册的 Skills 与 MCP，明确暴露旧路径或连接问题，不再出现“看起来正常、实际不可用”。
-- **团队交付边界更清楚**：业务项目继续使用独立 Test / Review Gate；Skills 和工具仓只保留本地维护证据，不会误触发业务测试任务。
-- **使用方式保持不变**：仍然只需描述研发目标；本地模式和团队增强模式使用同一套流程，可以按团队需要平滑升级。
-
-具体修复和兼容性说明见 [CHANGELOG](CHANGELOG.md)。
-
-## 它解决什么问题
-
-普通 Coding Agent 已经能快速生成代码，但真实研发还面临几个更难的问题：
-
-- **过程容易失控**：需求、计划、实现、测试和评审散落在对话中，长任务容易偏航，换会话后难以继续。
-- **结果缺少可信证据**：Agent 既写代码又给自己判定通过，本地测试、代码评审与真实 Commit 之间缺少稳定绑定。
-- **经验无法形成复利**：一次任务中发现的好方法和踩过的坑，往往随着会话结束而消失，下个人还会重新摸索。
-- **工具之间难以迁移**：流程绑定某个 CLI、模型或专有能力后，团队很难形成统一研发方式。
-
-Capital Agent Skills 在 Coding Agent 之上补齐研发流程、可信门禁、持久状态和知识积累层，让 Agent 从“代码生成工具”走向可协作、可验证、可持续改进的研发执行者。
-
-当前仓库同时维护一层轻量 `ontology/` 语义契约：它从 Skills 提取研发实体、关系、状态、策略和证据，供本地 Agent 消费，并作为未来 Server/Platform 投影的稳定中间层。Ontology 与 Skills 一起版本管理，但不替代 Skills；`.cap/` 保存这些概念在具体项目和任务中的实例。
-
-## 核心能力
-
-### 完整的 Agent 研发主线
-
-研发只需描述目标，系统会根据任务复杂度组织项目了解、需求确认、开发计划、编码实现、测试验证、代码评审和发布上线。简单任务走轻量路径，复杂任务保留完整阶段与门禁。
-
-### 与真实代码版本绑定的可信交付
-
-本地模式会把测试、评审和发布证据随研发状态保存；接入 Cap Server 后，编码、测试和评审进一步职责分离，由独立 Test / Review Harness 针对精确 Commit 产出可信 Gate。出现问题时，修复产生新 Commit，并重新进入验证闭环。需要连续处理不同项目时，可显式切换唯一可写主仓；目标项目重新建立 Task、Session 和验证事实，来源项目只通过带来源 Commit 的交接摘要提供业务线索。
-
-团队模式下，统一 Task 是唯一业务真值：普通开发 Commit 只记录过程，最终候选 Commit 才进入 Test → Review；客户端直接展示当前 Commit、阻塞原因、处理动作与最终证据，不再从历史 Action 猜测状态。Provider 健康由实时心跳和容量推导，过期执行器不会继续显示为可用。
-
-### 可恢复的持久研发状态
-
-需求、计划、阶段游标和验证证据保存在仓库文件中，而不是依赖不断膨胀的聊天上下文。任务可以跨会话、跨 Agent 接力，也能在中断后从明确阶段继续。
-
-### 跨会话、跨团队的经验飞轮
-
-会话开始时注入与当前任务相关的历史经验，完成后沉淀经过验证的问题、解法和证据。个人经验由此进入团队知识库，在后续项目中被再次检索、采用和校正。
-
-### 开放且可移植
-
-流程由纯文件 Skill 和清晰协议组成，核心研发主线不依赖 Cap Server，支持 Codex、Claude Code、Cursor 及其它兼容 CLI。个人、开源团队和其他公司都可以只使用本地能力，也可以接入自己的 Git、CI、测试和发布环境。
-
-## 两种使用模式
-
-Cap Server 是可选的团队增强层，不是运行 Skills 的前置条件。
-
-| 能力 | 本地模式（无 Cap Server） | 团队增强模式（接入 Cap Server） |
+| 证据 | 能证明什么 | 不能证明什么 |
 |---|---|---|
-| 结构化研发主线 | 支持 | 支持 |
-| `.cap/` 持久状态与跨会话接力 | 支持 | 支持 |
-| 本地测试、代码评审和发布流程 | 支持 | 支持 |
-| 可审计的本地经验原稿与任务归档 | 支持 | 支持 |
-| 自有 Git / CI / 测试环境 | 可直接接入 | 可直接接入 |
-| 统一 Task 与团队看板 | — | 支持 |
-| 跨成员中心知识库 | — | 支持 |
-| 独立 Test / Review Harness Gate | — | 支持 |
-| 经验归因与效果统计 | — | 支持 |
-| 线上运行版本、Schema 与存储模式证明 | — | 支持 |
+| `bash scripts/release-check` | 当前工作区的结构、Node/Python 回归、eval、fixture 和补丁卫生 | GitHub 上已经运行或已经发布 |
+| GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
+| Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
-没有 Server 时，测试和评审结论属于本地研发证据；接入 Server 后，才能获得绑定同一 Commit 的独立 Provider Gate。两种模式使用同一套研发阶段和文件协议，后续可以平滑升级，不需要重建流程。
+截至 2026-10-16 的只读审计显示：公开 `main` manifest 为 `0.12.6`，最新远端语义版本 Tag 为 `v0.12.4`，最新 GitHub Release 为 `v0.12.1`。本仓已准备一致性检查和 Tag 发布 workflow；在维护者实际 push/tag 前，这些历史差异仍是事实，不能用本地绿色结果替代。
 
-判断团队模式是否真正完成，不看 Session 是否结束，也不看 Agent 自己说“已通过”，只看当前候选 Commit 的必需 Server Gate 是否全部通过。平台不可用时会明确降级为本地证据，不冒充团队可信交付。
+可复现入口：
 
-## 工作方式
-
-完整的端到端状态边界见[研发流程总览](docs/研发流程总览.md)，中断、离线和验证阻塞的处理步骤见[故障恢复手册](docs/故障恢复手册.md)。
-
-```text
-描述研发目标
-    ↓
-理解项目与确认需求
-    ↓
-计划 → 实现 → 独立测试 → 独立评审
-    ↓                       ↑
-    └──── 发现问题 → 修复新 Commit ────┘
-    ↓
-发布交付 + 沉淀可复用经验
+```bash
+node scripts/release-contract.mjs check --phase worktree
+node scripts/eval-cap.mjs --markdown
+node examples/e2e-local/run.mjs
+bash scripts/release-check
 ```
 
-本地模式下，整个流程由 Git、项目命令和 `.cap/` 文件驱动。MCP 可用时，Skills 会进一步自动创建或绑定统一 Task，关联真实 Commit、独立验证证据和经验记录。两种模式下代码正文都只通过 Git 交付。
+## 快速安装
 
-## 安装
+### 本地模式（推荐先试）
 
-### 本地模式：没有 Cap Server
-
-克隆仓库后运行本地安装命令，不需要配置 MCP、平台地址或个人凭据：
+本地模式不需要 Cap Server、账号或 MCP：
 
 ```bash
 git clone https://github.com/RainFlashPoint/capital-agent-skills.git
@@ -245,7 +43,7 @@ cd capital-agent-skills
 bash scripts/setup.sh --local
 ```
 
-Windows 10/11 使用 PowerShell（需要 Git for Windows、Node.js 18+；完整需求树与任务退场操作另需 Python 3，可通过 `py -3` 调用）：
+Windows 10/11：
 
 ```powershell
 git clone https://github.com/RainFlashPoint/capital-agent-skills.git
@@ -253,7 +51,9 @@ Set-Location capital-agent-skills
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --local
 ```
 
-升级和诊断：
+安装后完全退出并重新打开 Codex、Claude Code 或 Cursor，再在任意 Git 仓库中直接描述开发任务。已有客户端不会可靠地热加载新 Skill。
+
+升级与诊断：
 
 ```bash
 bash scripts/setup.sh --local --upgrade
@@ -265,105 +65,132 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --lo
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --local --doctor
 ```
 
-已有本地模式安装时，也可以在任意目录直接运行下面的自动定位命令（不需要重新 `git clone`，也不需要填写源码路径）：
+安装清单位于 `~/.capital-agent/install-manifest.json`。状态检查会区分：
 
-macOS / Linux：
+- `current`：本地安装、源码、工作树和已知远端状态一致；
+- `remote_update_available`：发现远端默认分支已有新 Commit，并在隔离临时图谱中证明可快进；
+- `local_ahead` / `diverged`：本地默认分支领先或已与远端分叉，不会自动 pull；
+- `branch_mismatch`：当前位于 feature 等非远端默认分支，不会把默认分支更新错误地拉进当前分支；
+- `remote_default_unknown` / `remote_relation_unknown`：无法证明默认分支或祖先关系，升级失败关闭；
+- `install_drifted`：安装清单与本地源码版本、Commit 或文件摘要不一致；
+- `working_tree_modified`：源码目录有改动，自动升级会拒绝执行，避免 `pull` 混入或覆盖现场；
+- `offline_unknown`：缓存过期且远端离线/超时，不阻塞普通研发，也不冒充 `current`。
 
-```bash
-CAPITAL_AGENT_SRC="$(node -e 'const fs=require("fs");const p=process.env.HOME+"/.capital-agent/install-manifest.json";console.log(JSON.parse(fs.readFileSync(p,"utf8")).sourceRoot)')" && bash "$CAPITAL_AGENT_SRC/scripts/setup.sh" --local --upgrade && bash "$CAPITAL_AGENT_SRC/scripts/setup.sh" --local --doctor
-```
+远端检查使用短超时和 TTL 缓存，不会在每个普通任务中无限等待网络；缓存只保存成功观察到的 remote HEAD，超时或离线结果不会占用完整 TTL，网络恢复后的下一次检查会重试。若 `ls-remote` 返回的新 Commit 尚未存在于安装副本，祖先关系只在自动清理的临时 bare 仓中取证，不改安装副本的 refs、对象库或工作树。只有当前分支与远端默认分支一致、且本地 HEAD 可证明是远端 HEAD 的祖先时，`safeToUpgrade` 才为 true；升级显式拉取该默认分支并要求 `--ff-only`。
 
-Windows PowerShell：
+### 团队增强模式
 
-```powershell
-$src = (Get-Content "$HOME\.capital-agent\install-manifest.json" | ConvertFrom-Json).sourceRoot; powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$src\scripts\setup.ps1" --local --upgrade; powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$src\scripts\setup.ps1" --local --doctor
-```
-
-安装或升级后，请完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务使用新版本。已打开的会话不会可靠地热加载 Skill；现有 Git 分支和工作区改动不会丢失。
-
-安装后直接在任意 Git 项目中描述研发任务，Skills 会以显式本地模式运行。平台握手、中心知识注入、Task、MCP、独立 Harness、Delivery 和 Outbox 会主动跳过，不影响项目了解、需求确认、计划、实现、本地验证、评审和发布流程；完成任务仍会生成并归档本地 `.cap/experience.md`。
-
-### 团队增强模式：接入 Cap Server
-
-有 Cap Server 时，推荐使用一键安装器。它会打开浏览器完成授权，并自动配置 Codex、Claude Code、Cursor 与 Capital Agent MCP；macOS/Linux 同时配置本机 Test Provider：
+已有私有 Cap Server 的团队可运行：
 
 ```bash
-bash /path/to/capital-agent-skills/scripts/setup.sh --server "https://your-server"
+bash scripts/setup.sh --server "https://your-server"
 ```
-
-Windows 团队模式需要 Node.js 20.18.1+，本机不启用独立 Test Provider，Test/Review Gate 由 Server/Linux Runner 执行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --server "https://your-server"
 ```
 
-升级和诊断：
+团队模式需要服务方提供地址和访问权限。Server/Platform 源码、托管服务和账号不包含在本开源仓库中；详见[本地与私有平台边界](#本地模式与私有-serverplatform-边界)。
+
+## Cap 能拦住什么
+
+Cap 不替 Agent 做所有判断；它把容易被聊天摘要、旧证据或仓库串台掩盖的风险变成显式门禁：
+
+- 错仓库、错分支、错 worktree 或旧 Task 继续写入；
+- 需求、计划、测试面或外部操作边界缺失；
+- 旧 Commit 的 PASS 被串到新 Commit；
+- 本地 PASS 被描述成 Server Gate PASS；
+- 高风险改动缺少 fresh-context 独立复核；
+- 上下文恢复后继续沿用已失效授权；
+- 历史经验与本次规则冲突却未说明范围和决策；
+- 发布版本、Tag、Release、README 与 CHANGELOG 互相漂移；
+- 工作区有改动时自动 `pull`，或离线时错误显示“已是最新”。
+
+简单任务走短路径；发布、安全、数据、外部接口和大范围改动保留完整调查、计划、验证、评审和交付证据。
+
+## 本地模式与私有 Server/Platform 边界
+
+| 能力 | 本地开源 Skills | 私有 Server/Platform |
+|---|---:|---:|
+| 结构化研发主线与 `.cap/` 状态 | ✓ | ✓ |
+| 本地测试、评审、发布门禁 | ✓ | ✓ |
+| 本地经验原稿与历史索引 | ✓ | ✓ |
+| 统一团队 Task / 看板 | — | ✓ |
+| 中心知识库与跨成员归因 | — | ✓ |
+| 独立 Test / Review Harness Gate | — | ✓ |
+| 托管运行状态与组织权限 | — | ✓ |
+
+本地证据永远只称 `local-observed`。只有私有 Server 针对同一 Task、同一 Commit 返回独立 Action/Gate，才能称为团队 Gate。
+
+本仓不会发布私有 Server 源码、内部地址、凭据或客户数据。可公开的产品截图/录屏需要维护者另行提供并脱敏；当前只维护[素材占位与拍摄边界](docs/private-platform-evidence.md)，不虚构未提供的界面。
+
+## 测试与评测
+
+### CI 拆分
+
+- `Fast PR gate`：版本契约、结构 lint 和关键可信边界回归；
+- `Node regression`：全部 `scripts/test-*.mjs`；
+- `Python regression`：全部 `scripts/test_*.py`；
+- `Portability`：Linux、macOS、Windows 的真实 Node/CLI 可执行范围；
+- `Release Check`：每周与手动触发的完整 Linux 发布门禁；
+- `Publish Release`：仅 `v*` Tag 触发，先校验版本/Commit，再创建 GitHub Release。
+
+Windows runner 不执行 Bash-only 门禁，也不把模拟结果宣传成原生平台验证。
+
+### 本地端到端 fixture
 
 ```bash
-bash scripts/setup.sh --upgrade
-bash scripts/setup.sh --doctor
+node examples/e2e-local/run.mjs
 ```
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --upgrade
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 --doctor
-```
+它在临时 Git 仓库中真实覆盖 `current → remote_update_available → working_tree_modified`，不访问私有 Server，也不修改用户项目。
 
-已有团队模式安装时，可在任意目录自动读取安装清单并升级：
-
-macOS / Linux：
+### Agent/eval 基础框架
 
 ```bash
-CAPITAL_AGENT_SRC="$(node -e 'const fs=require("fs");const p=process.env.HOME+"/.capital-agent/install-manifest.json";console.log(JSON.parse(fs.readFileSync(p,"utf8")).sourceRoot)')" && bash "$CAPITAL_AGENT_SRC/scripts/setup.sh" --upgrade && bash "$CAPITAL_AGENT_SRC/scripts/setup.sh" --doctor
+node scripts/eval-cap.mjs --markdown
 ```
 
-Windows PowerShell：
+当前确定性核心场景覆盖：旧 Commit 证据串用、错误 worktree、漏回归门禁、高风险独立评审、恢复后旧授权失效、历史规则复用。报告明确写出 `liveModel: not-run`；更多真实模型、宿主压缩和私有 Harness 评测见 [eval 文档](docs/evals.md)，没有运行的数据不会被填成成绩。
 
-```powershell
-$src = (Get-Content "$HOME\.capital-agent\install-manifest.json" | ConvertFrom-Json).sourceRoot; powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$src\scripts\setup.ps1" --upgrade; powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$src\scripts\setup.ps1" --doctor
-```
-
-安装器会幂等更新受管理配置，保留已有个人规则和其它 MCP Server；同时检查并选择兼容的 Node.js 运行时。Codex MCP 使用可选启动，因此平台暂时不可达不会阻止普通对话；但团队配置下每个新研发任务仍会主动检查 MCP 并尝试平台握手，不会因为启动可选就默认为本地。安装或升级后建议完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，再新建任务让 MCP 生效。若团队配置已经存在、但当前会话没有加载 Capital Agent MCP，Skills 会让用户选择“重启后使用团队模式”或“本次明确改用本地模式继续”；本地继续只绑定当前运行会话 + 分支 + Task，不会修改机器配置，新会话会重新尝试团队模式。需要手工连接自建 Server 时，参见 [MCP 接入说明](skills/harvest-experience/references/setup-mcp.md)。
-
-平台地址和个人身份只保存在研发机器配置中。开源仓库不内置公司地址、个人凭据或项目代码。
-
-## 怎么用
-
-安装后正常描述研发任务即可：
+## 架构与案例
 
 ```text
-实现订单退款功能
-修复登录偶发失效的问题
-给这次改动补测试并做代码评审
-把已经通过评审的版本发布到测试环境
+用户目标
+  ↓
+cap（唯一公开入口）
+  ↓
+项目了解 → 需求确认 → 开发计划 → 编码实现 → 测试验证 → 代码评审 → 发布上线
+  ↓                         ↑
+.cap/ 持久状态、证据、检查点、历史经验
+  ↓
+本地 Git/CI，或可选的私有 Server/Platform
 ```
 
-Git 仓库中的实现、修复、重构、测试、评审和发布请求会自动进入 Cap；纯问答、讨论和调研不会创建平台 Task。
+核心结构：
 
-没有 Cap Server 时，“自动进入 Cap”表示启动本地研发主线，不会尝试创建远程 Task，也不会阻塞工作。团队未来接入 Server 后，继续使用相同命令即可获得中心知识库和可信 Gate 增强。
+- `skills/cap-flow`：Orient → Route → Handoff 编排、需求树和共享方法论；
+- 7 个流程 Skill：understand / define / plan / implement / test / review / release；
+- `roles/` 与 `cap-test/checks/`：按改动面加载视角与验证方法，不增加流程阶段；
+- `.cap/`：任务状态、规格、计划、执行、验证、评审、经验与语义检查点；
+- `ontology/`：本地语义投影，不替代 Server 鉴权或 Gate；
+- `scripts/`：跨平台确定性门禁、安装、状态、发布和 eval 工具。
 
-需要显式启动时，Codex 使用 `$cap`，Claude Code 使用 `/cap`。也可以使用 `/cap 需求`、`/cap 计划`、`/cap 开发`、`/cap 测试`、`/cap 评审`、`/cap 发布` 等直白表达，不需要记忆内部 Skill 名称。
+更完整的流程与恢复案例：
 
-维护或发布 Skills 前运行完整本地门禁：
+- [研发流程总览](docs/研发流程总览.md)
+- [故障恢复手册](docs/故障恢复手册.md)
+- [Ontology 语义底座](ontology/README.md)
+- [本地效率升级说明](docs/local-efficiency-upgrade.md)
 
-```bash
-bash scripts/release-check
-```
+## 当前版本摘要
 
-该命令在显式本地模式下统一执行结构检查、Node/Python 行为回归、并发与安全边界测试以及补丁检查；任一失败都不得升级版本或打标签。
+`v0.13.0` 候选包含：优先级感知的语义检查点与恢复、历史规则一致性检查、唯一 package source 绑定、远端更新缓存/离线语义、统一版本发布契约、公开 CI、可运行本地 fixture 和确定性 eval 框架。
 
-安装或升级会在 `~/.capital-agent/install-manifest.json` 记录源码 Commit、插件版本和受管理文件哈希。Doctor 会比较当前运行源码与安装清单；如果显示“源码 Commit 漂移”“文件内容漂移”或“运行副本与源码目录不一致”，先运行升级命令，再完全退出并重新打开客户端。
+历史版本与完整变更只维护在 [CHANGELOG.md](CHANGELOG.md)。发布步骤见 [docs/releasing.md](docs/releasing.md)。
 
-## 演进方向
+## 维护与安全
 
-- [x] 建立覆盖需求、实现、验证、评审和发布的 Agent 研发主线
-- [x] 建立与真实 Commit 绑定的独立测试和评审机制
-- [x] 建立跨会话、跨项目、跨团队积累的工程经验飞轮
-- [x] 建立统一 Task、候选 Commit、独立 Gate 与运行版本证明的业务真值链路
-- [ ] 完善人类与 Agent 协作效能的可观测体系
-- [ ] 持续衡量知识积累对研发质量和效率的提升
-- [ ] 扩展更多执行环境、验证能力和交付目标
-
-## License
-
-MIT。见 [LICENSE](LICENSE)。
+- 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)
+- 安全报告：[SECURITY.md](SECURITY.md)
+- License：[MIT](LICENSE)

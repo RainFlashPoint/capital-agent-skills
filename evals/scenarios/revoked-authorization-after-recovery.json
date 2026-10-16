@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "revoked-authorization-after-recovery",
+  "title": "Invalidate an old authorization after context recovery",
+  "category": "authorization_recovery",
+  "runner": "node_test",
+  "testFile": "scripts/test-context-preparation.mjs",
+  "testNamePattern": "cannot reuse a checkpoint after authorization changes"
+}

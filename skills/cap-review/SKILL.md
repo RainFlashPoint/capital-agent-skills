@@ -132,6 +132,8 @@ description: >
 
 ### Step 2 — Scope-Drift + Plan-Completion 审计
 
+按 `cap-flow/references/history-rule-consistency.md` 复核 task-context 的历史规则对照：原始来源是否适用、变更决策是否明确、实现与边界回归是否遵循已确认规则。未处置冲突不得 Review PASS；历史规则不因新 Task 的范围差异自动全局废弃。
+
 在审代码质量**之前**,先回答两个问题:**只做了该做的吗?该做的都做了吗?**
 
 **2a. 确定 stated intent(意图)**,按优先级取来源:

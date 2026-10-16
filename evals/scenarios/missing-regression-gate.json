@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "missing-regression-gate",
+  "title": "Keep Node and Python regression suites in the release gate",
+  "category": "regression_coverage",
+  "runner": "file_contains",
+  "path": "scripts/release-check",
+  "patterns": ["node --test scripts/test-*.mjs", "python3 -m unittest discover"]
+}

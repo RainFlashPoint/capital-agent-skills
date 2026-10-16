@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fast-gate:
+    name: Fast PR gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Version and release contract
+        run: node scripts/release-contract.mjs check --phase worktree
+      - name: Skills structure
+        run: bash scripts/validate-skills
+      - name: Critical trust regressions
+        run: node --test scripts/test-release-contract.mjs scripts/test-setup.mjs scripts/test-cap-status-compact.mjs scripts/test-eval-cap.mjs scripts/test-e2e-local.mjs
+      - name: Commit-range patch hygiene
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base="$BASE_SHA"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          git diff --check "$base" HEAD
+
+  node-regression:
+    name: Node regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --test scripts/test-*.mjs
+
+  python-regression:
+    name: Python regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+  portability:
+    name: Portability (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Native Node and CLI contract
+        run: node --test scripts/test-setup.mjs scripts/test-release-contract.mjs scripts/test-cap-status-compact.mjs scripts/test-windows-support.mjs

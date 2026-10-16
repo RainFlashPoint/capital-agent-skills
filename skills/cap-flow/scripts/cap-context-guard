@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-set -u
-
+set -eu
+# The portable Node guard owns validation and aggregated diagnostics on all hosts.
 repo_candidate="${CAP_REPO_ROOT:-.}"
 expected_intent=""
 stage=""
-
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --intent) expected_intent="${2:-}"; shift 2 ;;
@@ -12,106 +11,6 @@ while [ "$#" -gt 0 ]; do
     *) repo_candidate="$1"; shift ;;
   esac
 done
-
-fail() { printf 'cap-context: BLOCKED — %s\n' "$1" >&2; exit 1; }
-git_root="$(git -C "$repo_candidate" rev-parse --show-toplevel 2>/dev/null || true)"
-[ -n "$git_root" ] || fail "目标路径不在 Git 仓库中：$repo_candidate"
-repo="$(cd "$git_root" 2>/dev/null && pwd -P)" || fail "无法解析 canonical Git root：$git_root"
 script_dir="$(cd "$(dirname "$0")" && pwd -P)"
 package_root="$(cd "$script_dir/../../.." && pwd -P)"
-session_check="$(node "$package_root/scripts/cap-session-root.mjs" verify "$repo" 2>&1)" || fail "$session_check"
-context="$repo/.cap/task-context.md"
-state="$repo/.cap/STATE.md"
-field() { sed -n "s/^- $1:[[:space:]]*//p" "$context" | head -1 | sed 's/[[:space:]]*$//'; }
-state_field() { [ -f "$state" ] && sed -n "s/^$1:[[:space:]]*//p" "$state" | head -1 | sed 's/[[:space:]]*$//' || true; }
-section_has_path() {
-  awk -v heading="$1" '
-    $0 == heading { active=1; next }
-    active && /^## / { exit }
-    active && /^- `[^`]+`/ { found=1 }
-    END { exit found ? 0 : 1 }
-  ' "$context"
-}
-history_field() {
-  awk -v key="$1" '
-    $0 == "## History usage" { active=1; next }
-    active && /^## / { exit }
-    active && $0 ~ "^- " key ":[[:space:]]*" {
-      sub("^- " key ":[[:space:]]*", "", $0)
-      sub("^[[:space:]]+", "", $0)
-      sub("[[:space:]]+$", "", $0)
-      print $0
-      exit
-    }
-  ' "$context"
-}
-
-[ -f "$context" ] || fail "缺少 .cap/task-context.md；先按 task-reconnaissance.md 调查当前代码"
-
-for heading in "## Entry points" "## Call chain and data flow" "## Similar implementations" "## History usage" "## Tests and environment" "## Evidence sources" "## External operation boundary" "## Impact surface" "## Profile drift"; do
-  grep -qF "$heading" "$context" || fail "task-context 缺少必填段：$heading"
-done
-
-intent="$(field intent)"; recorded_branch="$(field branch)"; recorded_head="$(field head)"
-recorded_index="$(field index-fingerprint)"; recorded_worktree="$(field worktree-fingerprint)"; recorded_untracked="$(field untracked-fingerprint)"
-[ -n "$intent" ] || fail "task-context 缺少 intent"
-[ -n "$recorded_branch" ] || fail "task-context 缺少 branch"
-[ -n "$recorded_head" ] || fail "task-context 缺少 head"
-[ -n "$recorded_index" ] || fail "task-context 缺少 index-fingerprint"
-[ -n "$recorded_worktree" ] || fail "task-context 缺少 worktree-fingerprint"
-[ -n "$recorded_untracked" ] || fail "task-context 缺少 untracked-fingerprint"
-[ "$(field profile-used-as)" = "index-only" ] || fail "PROFILE 必须标记为 index-only，不能代替代码事实"
-
-current_branch="$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-current_head="$(git -C "$repo" rev-parse --verify HEAD 2>/dev/null || true)"
-[ -n "$current_head" ] || current_head="working-tree"
-[ "$recorded_branch" = "$current_branch" ] || fail "分支已变化：记录=${recorded_branch} 当前=${current_branch}；重新调查代码"
-[ "$recorded_head" = "$current_head" ] || fail "HEAD 已变化：记录=${recorded_head} 当前=${current_head}；刷新 task-context"
-fingerprints="$(node "$package_root/scripts/cap-context-fingerprint.mjs" "$repo" 2>/dev/null)" || fail "无法计算 index/worktree/untracked fingerprint"
-set -- $fingerprints
-current_index="${1:-}"; current_worktree="${2:-}"; current_untracked="${3:-}"
-[ "$recorded_index" = "$current_index" ] || fail "index fingerprint 已变化；暂存区与调查时不一致，刷新 task-context"
-[ "$recorded_worktree" = "$current_worktree" ] || fail "worktree fingerprint 已变化；未暂存改动与调查时不一致，刷新 task-context"
-[ "$recorded_untracked" = "$current_untracked" ] || fail "untracked fingerprint 已变化；未跟踪文件与调查时不一致，刷新 task-context"
-
-if [ -n "$expected_intent" ] && [ "$intent" != "$expected_intent" ]; then
-  fail "任务意图已变化；刷新 task-context（记录=${intent}）"
-fi
-
-section_has_path "## Entry points" || fail "Entry points 没有真实代码路径"
-section_has_path "## Tests and environment" || fail "Tests and environment 没有测试或配置路径"
-section_has_path "## Evidence sources" || fail "Evidence sources 没有仓库路径或知识引用"
-history_candidates="$(history_field candidates)"
-history_outcome="$(history_field outcome)"
-history_reason="$(history_field reason)"
-history_plan="$(history_field plan-impact)"
-history_verify="$(history_field verification-impact)"
-[ -n "$history_candidates" ] || fail "History usage 缺少 candidates"
-[ -n "$history_outcome" ] || fail "History usage 缺少 outcome"
-[ -n "$history_reason" ] || fail "History usage 缺少 reason"
-[ -n "$history_plan" ] || fail "History usage 缺少 plan-impact"
-[ -n "$history_verify" ] || fail "History usage 缺少 verification-impact"
-case "$history_outcome" in
-  direct_adopted|modified_adopted|not_used|rejected) ;;
-  *) fail "History usage outcome 非法：$history_outcome" ;;
-esac
-if [ "$history_candidates" = "none" ] && [ "$history_outcome" != "not_used" ]; then
-  fail "History usage candidates=none 时 outcome 必须为 not_used"
-fi
-for key in environment authorization minimum-impact recovery invalidates-on; do
-  grep -qE "^- ${key}:[[:space:]]*[^[:space:]]" "$context" || fail "External operation boundary 缺少 ${key}"
-done
-grep -qE '^- (modify|inspect-only|out-of-scope): `[^`]+`' "$context" || fail "Impact surface 没有带路径的范围证据"
-task_id="$(state_field task-id)"
-if [ -n "$task_id" ]; then
-  overlap_result="$(node "$package_root/scripts/cap-worktree-baseline.mjs" check "$repo" "$task_id" 2>&1)"
-  overlap_status=$?
-  [ "$overlap_status" -eq 0 ] || fail "计划修改路径与本 Task 开始前的未归属改动重叠；请先续接原任务、提交明确基线或使用干净 worktree。$overlap_result"
-fi
-
-case "$stage" in
-  plan|implement|test|review|release|'') ;;
-  *) fail "未知阶段：$stage" ;;
-esac
-
-printf 'cap-context: PASS — intent/branch/HEAD/index/worktree/untracked/代码证据均新鲜%s\n' "${stage:+，允许进入 $stage}"
+exec node "$package_root/scripts/cap-runtime.mjs" context "$repo_candidate" --stage "$stage" --intent "$expected_intent"

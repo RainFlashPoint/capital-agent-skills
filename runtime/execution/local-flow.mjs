@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { digest, canonical } from '../ontology/schema.mjs'
 import { inspectContextFingerprint } from '../../scripts/cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from '../../scripts/cap-session-root.mjs'
-import { fail, field, stageName, git, repoRoot, safePath, jsonFile, textFile, atomicJson, executionContract, versions, commandFor, argvCheck, timeoutCheck, observeCommand } from './local-support.mjs'
+import { fail, field, stageName, resolveExecutionStage, git, repoRoot, safePath, jsonFile, textFile, atomicJson, executionContract, versions, commandFor, argvCheck, timeoutCheck, observeCommand } from './local-support.mjs'
 export { executionContract } from './local-support.mjs'
 
 const hashPattern=/^[a-f0-9]{64}$/
@@ -40,7 +40,6 @@ export function compactExecutionResult(run={}) {
  if(fallback){const diagnostic=executionDiagnostic(run.stdout,run.stderr);projected.diagnostic={...diagnostic,status:receipt.status||diagnostic.status||''}}
  return projected
 }
-function actionStage(action){return {build:'implement',test:'test',package:'release'}[action]}
 // Stable, model-facing recovery contract.  These are recommendations for the
 // local workflow, not permissions or an execution policy.  A model can carry
 // them out without asking the user to memorise cap-execute flags.
@@ -75,7 +74,7 @@ function makeEnvelope(f,options,stage,contract,command) {
 }
 export async function buildLocalEnvelope(repoPath='.',options={}) {
  const f=await facts(repoPath,{...options,checkSession:true})
- const stage=stageName(options.stage||actionStage(options.action)||f.stage),contract=executionContract(stage)
+ const stage=resolveExecutionStage(options,f.stage),contract=executionContract(stage)
  if(!contract.action)fail('execution_stage_uses_artifacts')
  if(options.action&&options.action!==contract.action)fail('execution_action_stage_mismatch')
  if(options.constraints&&!same(options.constraints,contract.constraints))fail('execution_constraints_not_supported')
@@ -105,7 +104,7 @@ function verifyBundle(bundle,request,expected) {
 }
 export async function runLocalAction(repoPath='.',options={}) {
  const initial=await facts(repoPath,{...options,checkSession:true}),repo=initial.identity.repo
- const stage=stageName(options.stage||actionStage(options.action)||initial.stage),contract=executionContract(stage)
+ const stage=resolveExecutionStage(options,initial.stage),contract=executionContract(stage)
  if(!contract.action)fail('execution_stage_uses_artifacts')
  if(options.action&&options.action!==contract.action)fail('execution_action_stage_mismatch')
  if(options.constraints&&!same(options.constraints,contract.constraints))fail('execution_constraints_not_supported')

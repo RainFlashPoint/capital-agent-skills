@@ -26,18 +26,23 @@ description: >
 - `references/harness-action-protocol.md`：Test/Review/Patch 的可信执行边界；STATE 是游标，不是 Gate 证明。
 
 任一阶段被直接调用时也必须遵守这两条契约。没有新鲜 `task-context.md` 时，不得直接进入计划或编码。
+召回历史知识或 Task 后，按 `references/history-rule-consistency.md` 对照本次需求；复用原始知识，只记录当前比较证据。未决规则冲突不能靠新检查点放行，明确批准的规则变更不重复询问。
 准备进入 `plan / implement / test / review / release` 时，必须运行确定性 Context Guard；POSIX 沿用 `scripts/cap-context-guard`，原生 Windows 通过 package 根 `scripts/cap-runtime.mjs context` 执行同一契约。失败就留在当前阶段刷新代码调查，不能只靠模型自判“应该没问题”。
 
-## 第三条硬契约：上下文预算（单会话多阶段强制）
+## 第三条硬契约：上下文预算与语义保护（单会话多阶段强制）
 
 持久真相在 `.cap/` 纯文件里，不在会话上下文里——所以每过一个阶段就**回收上下文**，绝不只增不减：
 
 - **按需读要点**：reference / playbook / 角色卡只取当前决策需要的段落，不无脑读全文；确需全文才读全文。
 - **角色卡一次一张**：进 implement / review 时一次只装载一张活跃角色卡，用完即弃，绝不预载全部角色。
-- **阶段间回收**：写完 `## HANDOFF` 并落 STATE 后，该阶段的临时输入（角色卡、大 reference、原始 diff / 证据）视为**已丢弃**；下一阶段只从 `.cap/STATE.md` + 真正需要的文件重建最小上下文，绝不把上一阶段的上下文整包带过去。
+- **阶段间重建**：写完 `## HANDOFF` 并落 STATE 后，后续不主动重放已完成阶段的临时输入；只有运行时提供真实 compaction/隔离才会释放已加载上下文。下一阶段只从 `.cap/STATE.md`、当前检查点和真正需要的文件重建最小上下文。
 - **读过即在，不重复读盘**：本会话已读入的文件（SKILL / reference / 角色卡 / `.cap/*`）默认已在上下文。后文（及各阶段）反复出现的“先加载并执行 X”“各阶段沿用”只表示“确保该纪律生效”，**不等于重新读盘**：若该文件本会话已读且磁盘未变，直接沿用已读内容，**不得再次 `read` / `sed` 读第二遍**；只有从未读过、或文件确已变更，才真正读盘。
 
-有子 agent 隔离（Claude）就 fan-out 让大材料留在子上下文；无隔离（如 Codex）时上述纪律**强制**执行（serial-and-evict），否则单会话累积到数百 KB 会让下一轮请求在上游网关 504 超时。展开见文末「上下文预算」与 `references/runtime-adapters/codex.md` 的 Context budget 段。
+有子 agent 隔离（Claude）就 fan-out 让大材料留在子上下文；无隔离（如 Codex）时按单元顺序处理并避免主动重放原始材料，但这本身不会清除已经加载的 Token。长会话或阶段边界按文末「上下文预算」和 `references/context-compaction.md` 建立检查点；运行时是否能压缩依宿主能力而定。
+
+长会话达到中高压力、发生阶段交接或 Provider 原生压缩前，加载并执行 [`references/context-compaction.md`](references/context-compaction.md)：用 P0–P4 语义原子生成 `.cap/context/checkpoint.json`，保留 Task/仓库/分支/Commit、授权、证据来源、未知项与 supersedes 谱系，并用 package 根 `scripts/cap-context-checkpoint.mjs` 校验。Provider 的 compact payload 是不透明机器状态，原样交给 Provider；语义检查点是独立审计面，不能替代 STATE、源码证据或 Server Gate。检查点校验失败或 P0 超预算时失败关闭，禁止靠丢弃关键语义继续压缩。
+
+语义检查点纪律由 package 根 `scripts/cap-context-gate.mjs` 在 status、POSIX/Node Context Guard 和本地执行入口共享检测。已有 Task 与任务调查在进入 plan/implement/test/review/release 时必须有绑定当前阶段、Session、源码及语义输入的检查点；缺失、过期或恢复未完成时按 `contextGate.nextActions` 自动补齐并重跑，不停下来向用户请求同义授权。没有 runtime 遥测时依靠阶段与语义事件触发，不伪造压力比例。
 
 ## 本地 Ontology 语义投影
 
@@ -353,7 +358,7 @@ git -C <target-repo> status --porcelain             # 含未跟踪
 
 > **装载角色卡 = 把 `references/roles/<role>.md` 的内容作为该阶段的视角输入**(纯文件,任何 caller 都能读),
 > 不是起一个独立人格。验证项同理:`cap-test/checks/<name>.md` 是厚 playbook,不是技能。
-> **多角色时一次只装一张、用完即弃**(见「上下文预算」):有子 agent 隔离就 fan-out,没有(如 Codex)就 serial-and-evict,绝不把多张角色卡同时堆进主上下文。
+> **多角色时一次只加载一张**(见「上下文预算」):有子 agent 隔离就 fan-out,没有(如 Codex)就逐单元顺序处理，避免主动重放已完成单元的原始材料；只有运行时支持压缩时才会真正释放已加载上下文。
 
 进入 `cap-review` 前还要按 [`references/complexity-routing.md`](references/complexity-routing.md) 的独立复核策略判定：L3/L4 或命中高风险信号时，自动启动**恰好 1 个全新上下文的只读复核 Agent**，契约见 [`references/independent-review.md`](references/independent-review.md)。该证据与多角色评审、Server Review Action 相互独立，缺失时不能宣称 Review/Release PASS；L1/L2 未命中风险信号则明确记录 `not-required`，不增加额外成本。共享 STATE 仍由主流程单写者维护。
 
@@ -406,6 +411,17 @@ independent-review-source-commit: <完整 SHA | working-tree | none>
 independent-review-base-commit: <完整 SHA | none>
 independent-review-context-fingerprint: <index/worktree/untracked 指纹 | none>
 independent-review-launch-attempt: 0 | 1
+context-checkpoint: <repo-relative path | none>
+context-manifest: <validated immutable manifest path | none>
+context-checkpoint-digest: <sha256 | none>
+context-previous-manifest: <preceding immutable manifest path | none>
+context-previous-digest: <preceding checkpoint digest | none>
+context-pressure: low | medium | high | critical | unknown
+provider-compaction: not-requested | requested | running | succeeded | failed | unavailable
+provider-compaction-kind: none | codex-app-server | responses-api | anthropic | other
+provider-compaction-event: <event reference | none>
+context-recovery-event: <visible event reference | none>
+context-recovery-receipt: <validated receipt path | none>
 changed-files:
 - <path>
 branch-intent:
@@ -532,10 +548,11 @@ Review 通过且已有有效 Commit 时，若 MCP 提供 `split_deferred_accepta
 |---|---|
 | 按需读、读要点 | reference / playbook 只取当前决策需要的段落或要点,不无脑读全文;确需全文才读全文 |
 | 角色卡一次一张 | 进 implement / review 时**一次只装载一张活跃角色卡**,用完即弃,不预载全部角色 |
-| 阶段间回收 | 一个阶段写完 `## HANDOFF` 并落 STATE 后,该阶段的临时输入(角色卡、大 reference、原始 diff / 证据)视为**已丢弃**;下一阶段只从 `.cap/STATE.md` + 该阶段真正需要的文件**重建最小上下文**,绝不把上一阶段的上下文整包带过去 |
+| 阶段间重建 | 一个阶段写完 `## HANDOFF` 并落 STATE 后,将临时输入标记为**无需主动重放**;模型上下文是否实际释放取决于运行时。下一阶段从 `.cap/STATE.md` + 当前检查点 + 真正需要的文件重建最小上下文 |
 | 并行读只取要点 | 并行读文件用于收集少量定向证据,不用于把整棵 `references/` 读进上下文 |
+| 中高压力检查点 | 默认 55% 刷新检查点、70% 做 hot/warm/cold 规划、82% 在校验通过后请求 Provider 原生压缩；阈值和事件触发见 `references/context-compaction.md` |
 
-> 持久真相在 `.cap/` 纯文件里,不在会话上下文里。STATE 交接的设计初衷就是"无上下文重放"——把它当**会话内**的阶段边界也一样用:每过一个阶段,上下文清零重建,而不是累加。运行时若没有子 agent 隔离(如 Codex),这条纪律是**强制**的,见 `references/runtime-adapters/codex.md` 的 Context budget 段。
+> 持久真相在 `.cap/` 纯文件里,不在会话上下文里。阶段边界要求后续只重放最小必要材料,但不代表模型能主动删除已经加载的 Token；只有宿主提供真实 compaction/隔离时才会释放运行时上下文。语义检查点只保护重建所需的最小事实，不把可编辑摘要升级成新的权威源。
 
 ## 一次完整入口的动作清单
 

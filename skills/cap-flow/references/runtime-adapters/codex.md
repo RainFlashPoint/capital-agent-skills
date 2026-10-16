@@ -1,6 +1,7 @@
 # Codex runtime adapter
 
-> updated: 2026-08-25
+> updated: 2026-10-13
+> distilled-from: session:semantic-context-compaction-2026-10-13, OpenAI App Server compaction contract
 
 This adapter is data, not a skill. It defines how the cap playbooks map their portable contracts onto Codex runtimes without depending on Claude-only APIs.
 
@@ -39,7 +40,7 @@ Codex may expose different orchestration tools across environments. Treat them a
 
 1. If a true sub-agent tool is available, fan out only to independent units that write disjoint files.
 2. If only `multi_tool_use.parallel` is available, use it for read-only evidence gathering, not as a replacement for independent writing agents.
-3. If no multi-agent tool is available, do not simply accumulate. Simulate isolation with **serial-and-evict**: process one unit at a time, loading only that unit's inputs (one role card, that unit's gathered evidence), write its output file (`review/<role>.md`, `verify/<name>-report.md`), then treat those inputs as dropped before loading the next unit. Never hold more than one role card plus one unit's evidence in context at once. The per-unit output file is the durable artifact — do not re-read prior units to continue. Peak context must stay ≈ one unit, not the sum of all units.
+3. If no multi-agent tool is available, process one unit at a time, loading only that unit's inputs (one role card, that unit's gathered evidence), then write its output file (`review/<role>.md`, `verify/<name>-report.md`). Do not intentionally replay completed units' raw inputs; this limits future prompt assembly but does not evict already-loaded tokens unless the runtime compacts. The per-unit output file is the durable artifact — re-read prior units only when the current decision needs them.
 4. The orchestrator remains the only writer for shared state files such as `.cap/STATE.md`.
 
 ### Fresh-context independent review
@@ -67,20 +68,30 @@ Rules:
 - In headless mode, never prompt. Mark the item `needs-human`, use the safe default, and keep the gate blocked when risk acceptance would be required.
 - Do not run two active feedback channels at once. If `web-review` Live mode is waiting on `/wait`, defer terminal questions until that wait returns.
 
-## Context budget (mandatory — no sub-agent isolation here)
+## Context budget and native compaction
 
 Claude keeps large per-role / per-stage material out of the main window by fanning out to isolated sub-agents; only summaries return. Codex sessions usually lack that isolation, so a single session walking multiple stages accumulates every stage's material with nothing evicted, growing to hundreds of KB. Oversized replayed context is what makes the next turn hang at the upstream gateway. Compensate explicitly:
 
 - **Read on demand, targeted.** Pull the specific section or a summary a decision needs, not the whole reference file — read the full file only when the task genuinely needs all of it.
 - **One role card at a time.** Never preload the full `references/roles/` set; load the active card, use it, drop it, then load the next.
-- **Evict at stage boundaries.** After a stage writes its `## HANDOFF` and STATE, treat that stage's transient inputs (role cards, large references, raw diffs / evidence) as dropped. The durable truth lives in `.cap/` files; the next stage rebuilds only what it needs from `STATE.md`, it does not carry the previous stage's context forward.
+- **Rebuild at stage boundaries.** After HANDOFF and STATE, do not actively replay completed-stage raw inputs. Rebuild from STATE, the checkpoint and needed sources; actual eviction requires runtime compaction or isolation.
 - **Parallel reads gather facts, not trees.** `multi_tool_use.parallel` is for a few targeted read-only lookups, not for slurping an entire `references/` tree into context.
 
 The cap-flow `## 上下文预算` section states the same discipline runtime-agnostically; on Codex it is not optional.
 
+When pressure reaches the triggers in `../context-compaction.md`, maintain the provider-neutral semantic checkpoint in parallel with Codex's native machine state. For Codex App Server, `thread/compact/start` is a request: its immediate `{}` response is not completion or a compact payload. Record the request/event reference and wait for the matching `turn/*` / `item/*` terminal notification; only a successful terminal event advances provider status to `succeeded`. For the Responses API, the compacted response item is provider-owned opaque state and must be passed through unchanged. Do not decode, edit, summarize, merge, or store provider compact payloads in `.cap/`. If the runtime owns compaction internally and exposes no hook, the Skill cannot force eviction: prepare the checkpoint at high pressure and rebuild minimal context at the next safe stage/new-task boundary.
+
+Native compaction is not evidence. After a matching success terminal event, validate `manifest.json` including its checkpoint digest, predecessor digest/transition, atom-log and source hashes, identity, budget plan, and provider event reference; only then reload P0/P1 atoms. On failure, timeout, missing terminal notification, or any manifest mismatch, keep the prior context and do not claim compaction succeeded. Re-read warm evidence from its authoritative artifact when the current action needs it. A Codex-generated summary cannot certify a Gate, expand authorization, turn `unknown` into confirmed, or relabel local evidence as Server evidence.
+
 ## Handoff adapter
 
+Status, stage guards and local execution share the deterministic context detector. On a host-provided native compaction/resume event, record its unique reference as `context-recovery-event`, restore the validated hot atoms and needed warm sources, then publish a newly bound immutable manifest. Without token telemetry keep pressure `unknown`; stage and semantic/source changes still trigger detection. This does not install a native runtime hook or make an opaque automatic compaction auditable.
+
 Stage playbooks produce a machine-readable `## HANDOFF` block. The cap-flow driver is the canonical writer of `.cap/STATE.md`.
+
+Codex 给出可见的压缩总结或明确恢复通知时，按 `context-compaction.md` 的恢复入口先记录唯一事件并读取热原子；成功返回不等于宿主 API 压缩成功。新 manifest 必须绑定恢复 receipt，执行入口还必须通过完整的 task-context/脏区归属门禁。看不到的原生压缩不伪造事件；下次可见恢复或安全阶段交接时处理。
+
+公开 `cap` 入口直接声明此规则，内部资源与执行器从该入口真实路径绑定同一个 package root；安装目录不保证公开内部 Skills，禁止因路径读取失败而搜索旧 clone 替代。原始来源审阅后，使用 `cap-context-checkpoint.mjs prepare` 一次完成预检、前驱验证、必要重放与发布。宿主适配器确实观察到事件时可传 `CAPITAL_AGENT_CONTEXT_RESUME_EVENT`，status/阶段/执行入口在匹配恢复前保持阻断；这只是显式适配接口，本仓不会安装 Codex 内部回调，也不承诺监听不可见的自动压缩。
 
 ```markdown
 ## HANDOFF
@@ -91,6 +102,15 @@ active-roles: [...]
 complexity: L1 | L2 | L3 | L4
 independent-review: required | satisfied | not-required | unavailable | failed | stale | invalid
 independent-review-evidence: <review/independent.md | none>
+context-checkpoint: <repo-relative path | none>
+context-manifest: <validated immutable manifest path | none>
+context-checkpoint-digest: <sha256 | none>
+context-recovery-event: <unique visible resume event | none>
+context-recovery-receipt: <validated local receipt path | none>
+context-pressure: low | medium | high | critical | unknown
+provider-compaction: not-requested | requested | running | succeeded | failed | unavailable
+provider-compaction-kind: none | codex-app-server | responses-api | anthropic | other
+provider-compaction-event: <event reference | none>
 changed-files:
 - <path>
 branch-intent:

@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process'
 import { link, lstat, mkdir, open, readFile, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 
 function git(repo, args, encoding = 'utf8') {
@@ -121,28 +121,48 @@ function globRegex(pattern = '') {
   let source = '^'
   for (let index = 0; index < pattern.length; index += 1) {
     const char = pattern[index]
-    if (char === '*' && pattern[index + 1] === '*') { source += '.*'; index += 1 }
+    if (char === '*' && pattern[index + 1] === '*' && pattern[index + 2] === '/') { source += '(?:.*/)?'; index += 2 }
+    else if (char === '*' && pattern[index + 1] === '*') { source += '.*'; index += 1 }
     else if (char === '*') source += '[^/]*'
     else if (char === '?') source += '[^/]'
     else source += char.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')
   }
-  return new RegExp(`${source}$`)
+  return new RegExp(`${source}$`, process.platform === 'win32' ? 'i' : '')
 }
 
 export function plannedModifyPatterns(taskContext = '') {
   const body = String(taskContext)
   const start = body.search(/^## Impact surface\s*$/m)
-  if (start < 0) return []
+  if (start < 0) throw new Error('task_context_impact_surface_missing')
   const tail = body.slice(start).replace(/^## Impact surface\s*\r?\n?/, '')
   const next = tail.search(/^## /m)
   const section = next >= 0 ? tail.slice(0, next) : tail
-  const raw = [...section.matchAll(/^- modify:\s*`([^`]+)`/gm)].map(match => match[1])
+  const raw = []
+  for (const line of section.split(/\r?\n/).filter(line => /^- (?:modify|create|delete):/.test(line))) {
+    const value = line.replace(/^- (?:modify|create|delete):\s*/, '').split(/\s+[—–]\s+/)[0]
+    if (!/^`[^`]+`(?:\s*,\s*`[^`]+`)*$/.test(value)) throw new Error('task_context_modify_pattern_invalid')
+    raw.push(...[...value.matchAll(/`([^`]+)`/g)].map(match => match[1]))
+  }
   const normalized = raw.map(normalizePattern)
   if (normalized.some((pattern, index) => !pattern && raw[index])) throw new Error('task_context_modify_pattern_invalid')
   return normalized.filter(Boolean)
 }
 
+export const baselineDigest = baseline => createHash('sha256').update(JSON.stringify(baseline)).digest('hex')
+
+// This declaration indexes existing human authority; it is not an authorization signature.
+function adoptedPaths(context, baseline, overlap) {
+  const section = String(context).split(/^## Dirty ownership\s*$/m)[1]?.split(/^## /m)[0] || ''
+  if (!section.trim()) return []
+  const field = key => section.match(new RegExp(`^- ${key}: *([^\\n\\r]+)`, 'm'))?.[1]?.trim()
+  if (field('task-id') !== baseline.taskId || field('baseline-digest') !== baselineDigest(baseline) || !/^user-message:\S+$/.test(field('authority') || '')) throw new Error('task_context_dirty_adoption_invalid')
+  const paths = [...section.matchAll(/^- adopted: `([^`]+)`\s*$/gm)].map(match => match[1])
+  if (!paths.length || paths.some(path => normalizePattern(path) !== path || !baseline.dirtyPaths.some(item => item.path === path))) throw new Error('task_context_dirty_adoption_invalid')
+  return overlap.filter(path => paths.includes(path))
+}
+
 export async function inspectPreexistingDirtyOverlap(repoCandidate = '.', taskId = '', taskContext = '') {
+  const patterns = plannedModifyPatterns(taskContext)
   const repo = await canonicalRepo(repoCandidate)
   const baselinePath = join(repo, '.cap', 'local-state', 'task-baselines', `${safeSegment(taskId)}.json`)
   const baseline = await readFile(baselinePath, 'utf8').then(JSON.parse).catch(error => {
@@ -153,14 +173,14 @@ export async function inspectPreexistingDirtyOverlap(repoCandidate = '.', taskId
   if (baseline.schema !== 1 || baseline.taskId !== taskId || comparablePath(baseline.repo) !== comparablePath(repo) || !Array.isArray(baseline.dirtyPaths)) {
     throw new Error('task_baseline_invalid')
   }
-  const patterns = plannedModifyPatterns(taskContext)
   const matchers = patterns.map(globRegex)
   const current = await inspectDirtyPaths(repo)
   const currentDirty = new Set(current.paths.map(item => item.path))
   const overlap = baseline.dirtyPaths
     .map(item => item.path)
     .filter(path => currentDirty.has(path) && matchers.some(matcher => matcher.test(path)))
-  return { checked: true, baselinePath, patterns, overlap: [...new Set(overlap)].sort() }
+  const adopted = adoptedPaths(taskContext, baseline, overlap)
+  return { checked: true, baselinePath, baselineDigest: baselineDigest(baseline), patterns, adopted, overlap: [...new Set(overlap.filter(path => !adopted.includes(path)))].sort() }
 }
 
 export async function removeTaskBaseline(path = '') {

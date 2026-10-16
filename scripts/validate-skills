@@ -19,7 +19,7 @@ contains_old_skill_name(){
 }
 
 echo "== 1. 关键共享文件/目录 =="
-for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/cross-project-handoff.md" "$REF/independent-review.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-worktree-baseline.mjs" "scripts/cap-runtime.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "scripts/setup.ps1" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
+for p in "$REF/role-routing.md" "$REF/distillation-loop.md" "$REF/context-compaction.md" "$REF/runtime-adapters/codex.md" "$REF/progress-protocol.md" "$REF/cross-project-handoff.md" "$REF/independent-review.md" "$REF/task-reconnaissance.md" "$REF/harness-action-protocol.md" "$ROOT/harvest-experience/references/experience-contract.md" "$ROOT/cap-flow/scripts/cap-context-guard" "scripts/cap-context-fingerprint.mjs" "scripts/cap-context-checkpoint.mjs" "scripts/cap-context-coverage.mjs" "scripts/cap-context-recovery.mjs" "scripts/test-context-compaction.mjs" "scripts/cap-worktree-baseline.mjs" "scripts/cap-runtime.mjs" "scripts/cap-session-root.mjs" "scripts/cap-history-recon.mjs" "scripts/cap-experience-payload.mjs" "scripts/setup.ps1" "$REF/roles" "$ROOT/cap-test/checks" "$REF/templates/STATE.md" "$REF/templates/PROFILE.md"; do
   [ -e "$p" ] && ok "$p" || err "缺失:$p"
 done
 for p in "$ROOT/cap/scripts/_forward.mjs" "$ROOT/cap/scripts/cap-status.mjs" "$ROOT/cap/scripts/cap-task-request.mjs" "$ROOT/cap/scripts/cap-task-state-switch.mjs" "$ROOT/cap/scripts/cap-execute.mjs" "$ROOT/cap/scripts/cap-outbox.mjs" "$ROOT/cap/scripts/cap-push-candidate.mjs" "$ROOT/cap/scripts/cap-local-test-provider.mjs"; do
@@ -105,7 +105,7 @@ grep -q 'switchSessionRoot' scripts/cap-session-root.mjs || err "会话根未提
 grep -q 'project_handoff_required' scripts/cap-session-root.mjs || err "跨项目切换未强制原子落地已审阅 handoff"
 grep -q 'tracked_cap_active_state' scripts/cap-task-state-switch.mjs || err "Task 切换未阻止 tracked .cap 移入 ignored local-state"
 grep -q 'preexisting_dirty_overlap' scripts/cap-runtime.mjs || err "Context Guard 未阻止目标仓旧脏改动混入新 Task"
-grep -q 'cap-session-root.mjs.*verify' "$ROOT/cap-flow/scripts/cap-context-guard" || err "Context Guard 未复核会话根"
+grep -q 'cap-runtime.mjs.*context' "$ROOT/cap-flow/scripts/cap-context-guard" && grep -q 'inspectSessionRoot' scripts/cap-runtime.mjs || err "Context Guard 未复核会话根"
 grep -q 'inspectSessionRoot' scripts/prepare-commit-msg.mjs || err "Git Commit Hook 未复核会话根"
 grep -q 'worktree.*verify-only' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未禁止 STATE worktree 反向解析目标仓"
 grep -q 'mode=restart_required' "$ROOT/cap/SKILL.md" || err "cap 未识别已配置但当前会话缺 MCP 的客户端选择门"
@@ -217,6 +217,22 @@ ok "显式本地运行模式检查完成"
 
 echo "== 4.3.4 P0 运行边界与发布门禁 =="
 [ -x scripts/release-check ] || err "缺少可执行的 scripts/release-check"
+[ -f scripts/release-contract.mjs ] || err "缺少版本发布单一事实源检查器"
+[ -f scripts/test-release-contract.mjs ] || err "缺少版本发布契约回归"
+[ -f scripts/eval-cap.mjs ] || err "缺少确定性 Agent eval runner"
+[ -f scripts/test-eval-cap.mjs ] || err "缺少 eval 框架回归"
+[ -f examples/e2e-local/run.mjs ] || err "缺少公开本地端到端 fixture"
+for workflow in .github/workflows/ci.yml .github/workflows/release-check.yml .github/workflows/release.yml; do
+  [ -f "$workflow" ] || err "缺少公开 workflow: $workflow"
+done
+grep -q 'release-contract.mjs check --phase worktree' scripts/release-check || err "完整发布门禁未校验版本契约"
+grep -q 'node scripts/eval-cap.mjs' scripts/release-check || err "完整发布门禁未运行确定性 eval"
+grep -q 'node examples/e2e-local/run.mjs' scripts/release-check || err "完整发布门禁未运行本地端到端 fixture"
+grep -q 'node-regression:' .github/workflows/ci.yml || err "公开 CI 未拆分 Node 回归"
+grep -q 'python-regression:' .github/workflows/ci.yml || err "公开 CI 未拆分 Python 回归"
+grep -q 'windows-latest' .github/workflows/ci.yml || err "公开 CI 未包含真实 Windows runner"
+grep -q 'release-contract.mjs check --phase tag' .github/workflows/release.yml || err "Tag 发布未绑定 manifest 版本"
+grep -q '<!-- release-version:' README.md || err "README 缺机器可校验的当前版本标记"
 grep -q 'effectiveMode.*local' scripts/post-commit.mjs || err "post-commit 未在持久 local 模式硬退出"
 grep -q 'outbox_lock_timeout' scripts/cap-outbox.mjs || err "Outbox 未实现跨进程写锁"
 grep -q 'outbox_symlink_not_allowed' scripts/cap-outbox.mjs || err "Outbox 未拒绝软链逃逸"
@@ -226,6 +242,41 @@ grep -q 'http_headers_helper' scripts/setup-lib.mjs || err "Codex 团队 MCP 未
 grep -q "'x-user-key'" scripts/mcp-http-headers.mjs || err "Codex MCP Header Helper 未输出用户身份"
 grep -q '团队模式禁止用可编辑 STATE 自证 Server Gate' "$REF/templates/hooks/pre-push" || err "团队 pre-push 仍允许 STATE 自签 Gate"
 ok "P0 运行边界与发布门禁检查完成"
+
+echo "== 4.3.5 可审计语义压缩边界 =="
+[ -f "$REF/history-rule-consistency.md" ] || err "缺少历史规则对照协议"
+[ -f scripts/cap-history-rules.mjs ] || err "缺少历史规则检查器"
+for entry in scripts/cap-runtime.mjs scripts/cap-context-gate.mjs; do
+  grep -q 'inspectHistoryRules' "$entry" || err "$entry 未接入历史规则对照"
+done
+for entry in "$ROOT/cap-flow/SKILL.md" "$REF/task-reconnaissance.md" "$ROOT/cap-define/SKILL.md" "$ROOT/cap-implement/SKILL.md" "$ROOT/cap-review/SKILL.md"; do
+  grep -q 'history-rule-consistency.md' "$entry" || err "$entry 未引用历史规则对照协议"
+done
+grep -q 'context-compaction.md' "$ROOT/cap-flow/SKILL.md" || err "cap-flow 未加载语义压缩协议"
+grep -q 'context-compaction.md' "$ROOT/cap/SKILL.md" || err "轻入口未路由长会话语义检查点"
+grep -q 'create-manifest' "$REF/context-compaction.md" || err "检查点协议未暴露 manifest 生成入口"
+grep -q 'transition' "$REF/context-compaction.md" || err "检查点协议未暴露转换校验入口"
+grep -q 'validate-manifest' "$REF/context-compaction.md" || err "检查点协议未暴露恢复校验入口"
+grep -q 'P0–P4' "$REF/context-compaction.md" || err "语义压缩协议未定义保护等级"
+grep -q 'thread/compact/start' "$REF/runtime-adapters/codex.md" || err "Codex adapter 未接入 Provider 原生压缩边界"
+grep -q 'opaque\|不透明' "$REF/runtime-adapters/codex.md" || err "Codex adapter 未声明 compact payload 不可改写"
+grep -q 'context-checkpoint-digest:' "$REF/templates/STATE.md" || err "STATE 未保存语义检查点摘要"
+grep -q 'context-manifest:' "$REF/templates/STATE.md" || err "STATE 未保存不可变 manifest 游标"
+[ -f scripts/cap-context-gate.mjs ] || err "缺少阶段入口语义检查点检测器"
+[ -f scripts/cap-context-preparation.mjs ] || err "缺少统一检查点恢复发布入口"
+[ -f "$ROOT/cap/scripts/cap-package.mjs" ] || err "缺少同源 package 解析入口"
+for entry in scripts/cap-status.mjs scripts/cap-runtime.mjs scripts/cap-execute.mjs; do
+  grep -q 'inspectSemanticContext' "$entry" || err "$entry 未共享语义检查点检测"
+done
+grep -q 'cap-runtime.mjs.*context' "$ROOT/cap-flow/scripts/cap-context-guard" || err "POSIX 阶段入口未共享 Node 调查与语义门禁"
+grep -q 'inspectTaskContext' scripts/cap-execute.mjs || err "本地执行入口未检查完整调查门"
+grep -q 'semantic_source_uncovered' scripts/cap-context-coverage.mjs || err "语义原始来源覆盖门禁缺失"
+grep -q 'context-recovery-receipt:' "$REF/templates/STATE.md" || err "STATE 未记录恢复重放收据"
+grep -q 'bind-entry' "$REF/context-compaction.md" || err "检查点协议未声明当前阶段绑定"
+grep -q 'protected_atom_missing' scripts/cap-context-checkpoint.mjs || err "语义检查点未阻止 P0 丢失"
+grep -q 'evidence_trust_escalation' scripts/cap-context-checkpoint.mjs || err "语义检查点未阻止证据升格"
+node --test scripts/test-context-compaction.mjs scripts/test-context-protection.mjs scripts/test-cap-package-source.mjs >/dev/null || err "语义压缩与安装来源行为回归未通过"
+ok "可审计语义压缩边界检查完成"
 
 echo "== 4.4 external integration safety invariants =="
 SERVER_ROLE="$REF/roles/server-dev.md"
