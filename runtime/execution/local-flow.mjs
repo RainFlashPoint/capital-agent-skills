@@ -102,6 +102,15 @@ function verifyBundle(bundle,request,expected) {
  if(!['passed','failed','timed_out','output_limit','spawn_failed'].includes(r.status)||!(r.exitCode===null||Number.isSafeInteger(r.exitCode))||!(r.signal===null||typeof r.signal==='string'&&r.signal.length>0)||!hashPattern.test(r.stdoutHash)||!hashPattern.test(r.stderrHash)||!hashPattern.test(e.commandHash))fail('execution_result_invalid')
  return gateFor(e,r)
 }
+function verifyCanonicalEvidence(evidence,pointer,expected) {
+ if(evidence.schemaVersion!==3)fail('execution_artifact_invalid')
+ if(evidence.status==='pending')fail('execution_pending_or_interrupted')
+ if(evidence.status!=='terminal'||evidence.envelopeHash!==digest(evidence.envelope)||pointer.requestHash!==evidence.envelopeHash)fail('execution_artifact_invalid')
+ if(evidence.receiptHash!==digest(evidence.receipt)||evidence.diagnosticHash!==digest(evidence.diagnostic))fail('execution_artifact_invalid')
+ if(evidence.envelope?.id!==pointer.id)fail('execution_request_invalid')
+ const bundle={schemaVersion:2,envelope:evidence.envelope,receipt:evidence.receipt,envelopeHash:evidence.envelopeHash,receiptHash:evidence.receiptHash}
+ return verifyBundle(bundle,evidence.envelope,expected)
+}
 export async function runLocalAction(repoPath='.',options={}) {
  const initial=await facts(repoPath,{...options,checkSession:true}),repo=initial.identity.repo
  const stage=resolveExecutionStage(options,initial.stage),contract=executionContract(stage)
@@ -120,7 +129,7 @@ export async function runLocalAction(repoPath='.',options={}) {
   await atomicJson(join(lock,'owner.json'),{schemaVersion:2,pid:process.pid,id:envelope.id,startedAt:envelope.startedAt},{exclusive:true})
   artifactDir=join(repo,'.cap/execution',envelope.id)
   try{await mkdir(artifactDir)}catch(e){if(e.code==='EEXIST')fail('execution_id_used');throw e}
-  await atomicJson(join(artifactDir,'request.json'),envelope,{exclusive:true})
+  await atomicJson(join(artifactDir,'gate.json'),{schemaVersion:3,status:'pending',envelope,envelopeHash:digest(envelope)},{exclusive:true})
   await atomicJson(join(repo,`.cap/execution/latest-${stage}.json`),{schemaVersion:2,id:envelope.id,requestHash:digest(envelope)})
   // The command runs with ordinary host permissions. This is observation, not authorization or an OS sandbox.
   const result=await observeCommand(selected.argv,{cwd:repo,env:options.env??process.env,timeoutMs})
@@ -130,11 +139,9 @@ export async function runLocalAction(repoPath='.',options={}) {
   const receipt={schemaVersion:2,authority:'local-observed',...initial.identity,envelopeId:envelope.id,envelopeHash:digest(envelope),finishedAt:new Date().toISOString(),exitCode:result.exitCode,signal:result.signal,status:result.status,stdoutHash:digest(result.stdout),stderrHash:digest(result.stderr),afterSnapshot:identityChanged?null:after.snapshot,runtime:{node:process.version,platform:process.platform,arch:process.arch}}
   const gate=gateFor(envelope,receipt)
   const diagnostic={...executionDiagnostic(result.stdout,result.stderr),status:result.status}
-  receipt.diagnosticPath='diagnostic.json';receipt.diagnosticHash=digest(diagnostic)
-  await atomicJson(join(artifactDir,'diagnostic.json'),diagnostic,{exclusive:true})
-  await atomicJson(join(artifactDir,'bundle.json'),{schemaVersion:2,envelope,receipt,envelopeHash:digest(envelope),receiptHash:digest(receipt)},{exclusive:true})
-  // Human-facing summaries are derivatives; readers recompute from bundle.json, never trust these PASS fields.
-  await atomicJson(join(artifactDir,'gate.json'),gate,{exclusive:true})
+  const evidence={schemaVersion:3,status:'terminal',envelope,receipt,diagnostic,envelopeHash:digest(envelope),receiptHash:digest(receipt),diagnosticHash:digest(diagnostic),gate}
+  // The embedded gate is only a human-facing derivative; readers recompute it from the hashed evidence.
+  await atomicJson(join(artifactDir,'gate.json'),evidence)
   return {envelope,receipt,gate,artifactDir,stdout:result.stdout,stderr:result.stderr,diagnostic}
  }finally {await rm(lock,{recursive:true,force:true})}
 }
@@ -151,7 +158,16 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
   const pointer=await jsonFile(repo,`.cap/execution/latest-${stage}.json`).catch(e=>{if(e.code==='ENOENT')return null;throw e})
   if(!pointer){const reason='execution_missing';return {required,stage,action,passed:false,reason,artifactDir:'',nextActions:executionNextActions(reason,{stage,action}),remediation:'发现或补齐本地执行命令'} }
   if(pointer.schemaVersion!==2||!idPattern.test(pointer.id)||!hashPattern.test(pointer.requestHash))fail('execution_index_invalid')
-  const dir=`.cap/execution/${pointer.id}`,request=await jsonFile(repo,`${dir}/request.json`)
+  const dir=`.cap/execution/${pointer.id}`,evidence=await jsonFile(repo,`${dir}/gate.json`).catch(e=>{if(e.code==='ENOENT')fail('execution_pending_or_interrupted');throw e})
+  if(evidence.schemaVersion===3) {
+   const request=evidence.envelope
+   if(request?.task!==f.identity.task||request?.session!==f.identity.session)return {required,stage,action,passed:false,reason:'execution_identity_changed',artifactDir:dir}
+   required=true
+   const gate=verifyCanonicalEvidence(evidence,pointer,{...f,stage})
+   const reason=gate.blockers[0]||'verified_local_evidence'
+   return {required,stage,action,passed:gate.passed,reason,artifactDir:dir,gate,nextActions:gate.nextActions,remediation:gate.remediation}
+  }
+  const request=await jsonFile(repo,`${dir}/request.json`)
   // Prior tasks never enroll a new task into mandatory execution.
   if(request.task!==f.identity.task||request.session!==f.identity.session)return {required,stage,action,passed:false,reason:'execution_identity_changed',artifactDir:dir}
   required=true

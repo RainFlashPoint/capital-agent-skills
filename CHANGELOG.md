@@ -5,12 +5,15 @@
 - 建立公开版本发布契约：以 `plugin.json` 为单一事实源，确定性校验 marketplace、README、CHANGELOG、Tag、Commit 与 GitHub Release；新增 Tag workflow，在完整门禁通过后才创建 Release。
 - 安装状态新增远端默认分支只读检查、短超时与 TTL 缓存，明确区分 `current`、`remote_update_available`、`install_drifted`、`working_tree_modified`、`offline_unknown`；工作区有改动时自动升级失败关闭。
 - 增加公开 CI：快速 PR 门禁、拆分的 Node/Python 全量回归、Linux/macOS/Windows 原生可执行范围矩阵，以及独立的完整 Release Check，避免单个不透明长任务。
+- CI 另设 `Semantic compaction gate` Job，直接展示上下文检查点与语义保护回归；全量 Node 回归与 Release Check 继续保留作为兜底。
 - 新增可运行的纯本地端到端 fixture 与确定性 Agent/eval 框架，首批覆盖旧 Commit 证据串用、错误 worktree、漏回归门禁、高风险独立评审、上下文恢复后旧授权失效和历史规则复用；live model 结果明确为 `not-run`。
 - README 重排为公开状态与证据、安装、风险门禁、本地/私有平台边界、测试评测、架构案例和当前摘要；新增 CONTRIBUTING、SECURITY、发布、评测及私有平台素材占位文档。历史版本详情只保留在本 CHANGELOG。
 - 发布收口修复四项独立复核缺口：缺失 Git Tag 或未通过 GitHub API 回读的非草稿 Release 失败关闭；远端缓存只复用 remote HEAD 并始终相对当前本地 HEAD 重算；eval 场景要求真实命名测试至少执行一项；本地与 CI 发布门禁分别检查未跟踪候选和 Commit 范围的 whitespace 错误。
 - 发布复审进一步收紧：稳定版本必须同时是 GitHub 最新公开非草稿、非 prerelease Release；更新只在当前分支匹配远端默认分支且本地可证明落后时允许快进，ahead/diverged/feature/未知关系均失败关闭；未知 eval ID 与空选择集拒绝执行；CHANGELOG 当前版本位于末节时也能正确提取发布说明。
 - 发布复审真实环境回归补强：未 fetch 的远端 Commit 使用隔离临时 Git 图谱证明 fast-forward，且不污染安装副本；跳过或 TODO 的命名测试不能计作 eval PASS；公开发布契约明确拒绝 prerelease manifest，避免稳定 Release 元数据错配。
 - 最终复审补强：瞬时离线/超时不写入 remote HEAD TTL 缓存，恢复网络后的下一次检查立即重试；稳定发布版本严格限定为 `x.y.z`，build metadata 与包含空标识的非法 SemVer 均失败关闭。
+- 修复语义检查点跨 Commit 线性谱系误判：已终止的历史中间 successor 可继续导向当前唯一活跃叶；边的类型、保护等级、权威来源与授权失效条件仍逐段校验，真实双活分叉继续失败关闭。
+- 收敛本地证据文件放大：相同语义 atoms 按内容寻址复用；每个新 execution action 只写一个可重验 canonical `gate.json`，并继续兼容读取历史四文件证据。
 
 - 修复真实跨会话回测发现的早期阶段恢复缺口：`understand` / `define` 及对应旧阶段名现可通过统一 `prepare` 的任务上下文预检并绑定可见恢复收据；授权变化仍阻断旧检查点，未知阶段仍拒绝。
 

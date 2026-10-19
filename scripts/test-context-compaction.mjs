@@ -132,6 +132,64 @@ test('multi-checkpoint supersedes history remains valid and cannot be erased', (
   assert.ok(codes(validateCheckpointTransition(second, erased)).includes('supersedes_lineage_removed'))
 })
 
+test('a historical inactive successor can lead to one active successor on the current Commit', () => {
+  const decisionA = atom({
+    id: 'decision-a', type: 'decision', protection: 'P1', priority: 80,
+    assertion: 'Decision A', recoverability: 'source-backed',
+  })
+  const previous = checkpoint([decisionA])
+  const nextCommit = 'b'.repeat(40)
+  const decisionB = atom({
+    id: 'decision-b', type: 'decision', protection: 'P1', priority: 85,
+    assertion: 'Decision B', recoverability: 'source-backed', status: 'superseded',
+    supersedes: ['decision-a'], sourceRefs: ['user-message:decision-b'],
+  })
+  const decisionC = atom({
+    id: 'decision-c', type: 'decision', protection: 'P1', priority: 90,
+    assertion: 'Decision C', recoverability: 'source-backed',
+    scope: { ...decisionA.scope, commit: nextCommit },
+    supersedes: ['decision-b'], sourceRefs: ['user-message:decision-c'],
+  })
+  const current = checkpoint([
+    { ...decisionA, status: 'superseded' },
+    decisionB,
+    decisionC,
+  ], { identity: { ...previous.identity, commit: nextCommit } })
+
+  const result = validateCheckpointTransition(previous, current)
+  assert.equal(result.valid, true, JSON.stringify(result.errors))
+})
+
+test('a historical inactive successor cannot hide two active current branches', () => {
+  const decisionA = atom({
+    id: 'decision-a', type: 'decision', protection: 'P1', priority: 80,
+    assertion: 'Decision A', recoverability: 'source-backed',
+  })
+  const previous = checkpoint([decisionA])
+  const nextCommit = 'b'.repeat(40)
+  const decisionB = atom({
+    id: 'decision-b', type: 'decision', protection: 'P1', priority: 85,
+    assertion: 'Decision B', recoverability: 'source-backed', status: 'superseded',
+    supersedes: ['decision-a'], sourceRefs: ['user-message:decision-b'],
+  })
+  const branch = id => atom({
+    id, type: 'decision', protection: 'P1', priority: 90,
+    assertion: `Decision ${id}`, recoverability: 'source-backed',
+    scope: { ...decisionA.scope, commit: nextCommit },
+    supersedes: ['decision-b'], sourceRefs: [`user-message:${id}`],
+  })
+  const current = checkpoint([
+    { ...decisionA, status: 'superseded' },
+    decisionB,
+    branch('decision-c'),
+    branch('decision-d'),
+  ], { identity: { ...previous.identity, commit: nextCommit } })
+
+  const result = validateCheckpointTransition(previous, current)
+  assert.equal(result.valid, false)
+  assert.ok(codes(result).includes('supersedes_target_ambiguous'))
+})
+
 test('atom log is parsed and latest complete revisions reproduce the checkpoint', () => {
   const value = checkpoint()
   assert.deepEqual(validateAtomLog(`${JSON.stringify(value.atoms[0])}\n`, value), [])
