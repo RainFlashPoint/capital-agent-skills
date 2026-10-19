@@ -30,14 +30,19 @@
 最小摘要结构：
 
 ```text
-source: <repo> @ <branch> / <full commit>
-target: <repo>
+source: <来源仓稳定身份：remote:<host>/<path>，无 origin 时为 local:<sha256>> @ <branch> / <full commit>
+target: <目标仓稳定身份：remote:<host>/<path>，无 origin 时为 local:<sha256>>
 intent: <为什么切换>
 confirmed: <来源仓已由具体文件/符号证明的事实 + 相对证据路径>
 to-verify: <目标仓必须重新核对的假设、接口和版本>
+scope: <目标仓允许参考的相对路径/符号范围>
 target-work: <只属于目标仓的预期修改与验收动作>
+invalidates-on: <来源 Commit、接口、范围或环境变化时失效>
 non-transferable: Task / Session / Gate / Delivery / Outbox / PASS
+summary-sha256: <去除本行后的规范化摘要文本 SHA-256；目标仓仅将其作为待核验完整性线索>
 ```
+
+`summary-sha256` 不是签名或平台凭证；缺失、错误或无法安全读取的摘要必须被报告为 invalid/跳过。`switch` 会用与召回端相同的解析器核对完整来源 Commit、当前来源分支/仓库身份和实际目标仓身份，任一不一致都在切换前失败。即使 hash 正确，目标仓也只能展示 `pending verification` 线索，不能把它升级为事实、授权、Gate、PASS 或平台知识。
 
 同一远程项目的不同 clone/worktree 仍视为同一项目，继续阻断；要切换这类 worktree，仍新建会话。只读查看另一个项目不需要切换主仓，但不得运行其脚本、Skill、Hook 或写入其 `.cap`。
 

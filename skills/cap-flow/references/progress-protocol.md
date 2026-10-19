@@ -2,6 +2,8 @@
 
 任何阶段都必须让用户知道“现在在哪里、正在做什么、完成标准是什么、随后去哪”。这不是可选文案，而是研发执行契约。
 
+新会话、可见恢复、长时间停顿、另一个会话可能已推进任务、状态查询或任何外部动作前，先执行 [`cross-session-truth.md`](cross-session-truth.md)：按事实领域刷新 Git、Server、Provider 与用户决定。旧聊天摘要、旧 STATE 和旧报告只能定位线索；相同源码树与同绑定测试证据可复用，不得机械重复全量门禁。
+
 ## 客户端握手（所有阶段之前）
 
 先检查当前宿主是否实际暴露 Capital Agent MCP 工具，再运行 package 根的 `scripts/cap-status.mjs <target-repo> --json --mcp-runtime <loaded|missing|unknown>`。结合 `create_or_attach_task` 的真实结果，第一条状态必须包含：平台连接、仓库、分支、Task ID、当前阶段、下一动作。
@@ -27,6 +29,8 @@ Codex 的 Capital Agent MCP 使用可选启动配置：平台暂时不可达时�
 Server/MCP 返回预检失败时，优先展示结构化 `reason/preflight.code/detail/remediation`。至少区分 `source_commit_not_remote`、`repo_auth_failed`、`repo_branch_missing`、`provider_not_healthy/provider_at_capacity`、`verification_commands_missing`；不得统一翻译成“环境问题”或“执行失败”。
 
 平台可用时，客户端只消费 Server 的 canonical projection：`currentCommit/currentGate/currentAction/blocker/nextAction`。平台状态与本地 STATE 冲突时，必须输出 `server_canonical_state_overrides_local_state` 并修正本地游标；Session finished、本地 PASS 或 Execution success 都不能越权把 Task 判定为 done。健康接口同时展示 `build.commit/schemaRevision/taskStoreMode`，无法证明运行版本时不得声称新逻辑已部署。
+
+状态结论还必须按领域读取当前外部真值：远端 Git、PR、Tag、Release 读取实时 ref 或 Provider API，CI 与部署读取对应系统，用户授权与禁止回到原始消息和 `Current truth and decisions`。无法刷新就报告 `unknown/unverified`；不得因旧会话曾说“未发布、已开启、已完成”而继续执行。`conflicts: unresolved:<摘要>` 时只暂停受影响的外部动作，不覆盖或猜测用户决定。
 
 阶段名称也属于 canonical projection，不从本地 STATE 猜。业务 Harness 只有在 Server 同时确认 `delivery_candidate=true` 与该候选的 Test Action 后，才可对外称为“平台正在测试验证”；此前统一显示“编码实现 / 等待形成最终候选”。直接探测不可用且 MCP 尚未返回 projection 时显示“等待 MCP 确认”，不复述本地 `test` 冒充平台阶段。`verify_only` Task 不受候选 Commit 条件约束，仍按 Server 验证阶段展示。
 

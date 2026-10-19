@@ -8,15 +8,15 @@ import { loadScenarios, runEvalSuite, runScenario } from './eval-cap.mjs'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 
-test('eval scenarios are uniquely identified and cover the six public trust risks', async () => {
+test('eval scenarios are uniquely identified and cover the seven public trust risks', async () => {
   const scenarios = await loadScenarios()
   assert.equal(new Set(scenarios.map(item => item.id)).size, scenarios.length)
-  assert.deepEqual(new Set(scenarios.map(item => item.category)), new Set(['stale_commit', 'repository_boundary', 'regression_coverage', 'independent_review', 'authorization_recovery', 'history_reuse']))
+  assert.deepEqual(new Set(scenarios.map(item => item.category)), new Set(['stale_commit', 'repository_boundary', 'regression_coverage', 'independent_review', 'authorization_recovery', 'history_reuse', 'solution_necessity']))
 })
 
 test('deterministic eval suite passes without inventing live model results', async () => {
   const report = await runEvalSuite()
-  assert.equal(report.summary.total, 6)
+  assert.equal(report.summary.total, 7)
   assert.equal(report.summary.failed, 0)
   assert.equal(report.summary.liveModelRuns, 0)
   assert.ok(report.results.every(item => item.deterministic && item.liveModel.status === 'not-run'))

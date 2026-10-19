@@ -1,11 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, mkdir, readFile, writeFile } from 'fs/promises'
 import { mkdirSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { execFileSync, spawnSync } from 'child_process'
 import { fileURLToPath } from 'url'
+import { handoffRepositoryIdentity } from './cap-history-recon.mjs'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const sessionRootScript = join(root, 'scripts/cap-session-root.mjs')
@@ -120,7 +122,19 @@ test('an explicit independent-project switch allows target commits and blocks th
   execFileSync(process.execPath, [sessionRootScript, 'capture', repoA], { cwd: repoA, env })
   const outgoing = join(repoA, '.cap/handoff/outgoing/project-switch.md')
   await mkdir(join(repoA, '.cap/handoff/outgoing'), { recursive: true })
-  await writeFile(outgoing, 'source: project-a @ main / fixture\ntarget: project-b\nintent: continue in target\nconfirmed: source commit exists\nto-verify: target behavior\ntarget-work: commit target file\nnon-transferable: Task / Session / Gate / Delivery / Outbox / PASS\n')
+  const fields = {
+    source: `${handoffRepositoryIdentity(repoA)} @ main / ${run(repoA, 'git', ['rev-parse', 'HEAD']).trim()}`,
+    target: handoffRepositoryIdentity(repoB),
+    intent: 'continue in target',
+    confirmed: 'source commit exists; evidence sample.txt',
+    'to-verify': 'target behavior',
+    scope: 'sample.txt; target.txt',
+    'target-work': 'commit target file',
+    'invalidates-on': 'source commit, contract or scope changes',
+    'non-transferable': 'Task / Session / Gate / Delivery / Outbox / PASS',
+  }
+  const body = `${Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join('\n')}\n`
+  await writeFile(outgoing, `${body}summary-sha256: ${createHash('sha256').update(body).digest('hex')}\n`)
   execFileSync(process.execPath, [sessionRootScript, 'switch', repoA, repoB, '--handoff', outgoing], { cwd: repoA, env })
 
   await writeFile(join(repoB, '.gitignore'), '.cap/\n')

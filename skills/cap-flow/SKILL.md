@@ -24,6 +24,7 @@ description: >
 - `references/progress-protocol.md`：阶段开始、执行中和交接都必须向用户明确说明当前动作与下一步。
 - `references/task-reconnaissance.md`：每个新任务必须基于当前仓库真实代码建立或刷新 `.cap/task-context.md`；`PROFILE.md` 只作索引，不能替代任务级代码调查。
 - `references/harness-action-protocol.md`：Test/Review/Patch 的可信执行边界；STATE 是游标，不是 Gate 证明。
+- `references/cross-session-truth.md`：会话恢复、状态查询和外部动作前刷新当前 Git、Server、Provider 与用户决定；旧摘要不作真值，相同绑定证据不重复跑。
 
 任一阶段被直接调用时也必须遵守这两条契约。没有新鲜 `task-context.md` 时，不得直接进入计划或编码。
 召回历史知识或 Task 后，按 `references/history-rule-consistency.md` 对照本次需求；复用原始知识，只记录当前比较证据。未决规则冲突不能靠新检查点放行，明确批准的规则变更不重复询问。

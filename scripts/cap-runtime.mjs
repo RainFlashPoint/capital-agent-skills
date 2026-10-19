@@ -26,9 +26,18 @@ async function exists(path) {
 
 function field(markdown = '', name = '') {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return String(markdown).match(new RegExp(`^- ${escaped}:[ \\t]*(.*)$`, 'mi'))?.[1]?.trim()
-    || String(markdown).match(new RegExp(`^${escaped}:[ \\t]*(.*)$`, 'mi'))?.[1]?.replace(/\s+#.*$/, '').trim()
-    || ''
+  const bullet = [...String(markdown).matchAll(new RegExp(`^- ${escaped}:[ \\t]*(.*)$`, 'gmi'))]
+    .map(match => match[1].trim())
+  const plain = [...String(markdown).matchAll(new RegExp(`^${escaped}:[ \\t]*(.*)$`, 'gmi'))]
+    .map(match => match[1].replace(/\s+#.*$/, '').trim())
+  return [...bullet, ...plain][0] || ''
+}
+
+function fieldCount(markdown = '', name = '') {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const bullet = [...String(markdown).matchAll(new RegExp(`^- ${escaped}:[ \\t]*(.*)$`, 'gmi'))].length
+  const plain = [...String(markdown).matchAll(new RegExp(`^${escaped}:[ \\t]*(.*)$`, 'gmi'))].length
+  return bullet + plain
 }
 
 async function canonicalRepo(candidate = '.') {
@@ -79,6 +88,10 @@ function section(markdown, heading) {
   return lines.slice(start + 1, end).join('\n')
 }
 
+function sectionCount(markdown, heading) {
+  return String(markdown).split('\n').filter(line => line === heading).length
+}
+
 function hasPath(sectionText = '') {
   return /^- `[^`]+`/m.test(sectionText)
 }
@@ -93,12 +106,19 @@ export async function inspectTaskContext(repoCandidate = '.', { stage = '', inte
   const blockers = []
   const add = (code, detail) => blockers.push({ code, detail })
   const headings = ['## Entry points', '## Call chain and data flow', '## Similar implementations', '## History usage', '## Tests and environment', '## Evidence sources', '## External operation boundary', '## Impact surface', '## Profile drift']
-  for (const heading of headings) if (section(context, heading) === null) add('required_section_missing', `缺少必填段：${heading}`)
+  for (const heading of headings) {
+    const count = sectionCount(context, heading)
+    if (count === 0) add('required_section_missing', `缺少必填段：${heading}`)
+    else if (count > 1) add('required_section_duplicate', `必填段必须唯一：${heading}`)
+  }
   const recorded = {
     intent: field(context, 'intent'), branch: field(context, 'branch'), head: field(context, 'head'),
     index: field(context, 'index-fingerprint'), worktree: field(context, 'worktree-fingerprint'), untracked: field(context, 'untracked-fingerprint'),
   }
   for (const [name, value] of Object.entries(recorded)) if (!value) add(`${name}_missing`, `task-context 缺少 ${name}`)
+  for (const name of ['intent', 'branch', 'head', 'index-fingerprint', 'worktree-fingerprint', 'untracked-fingerprint', 'profile-used-as']) {
+    if (fieldCount(context, name) > 1) add('critical_field_duplicate', `task-context 关键字段必须唯一：${name}`)
+  }
   if (field(context, 'profile-used-as') !== 'index-only') add('profile_not_index_only', 'PROFILE 必须标记为 index-only')
   const branch = git(repo, ['branch', '--show-current'])
   let head = ''
@@ -134,6 +154,27 @@ export async function inspectTaskContext(repoCandidate = '.', { stage = '', inte
   blockers.push(...historyRules.errors)
   for (const key of ['environment', 'authorization', 'minimum-impact', 'recovery', 'invalidates-on']) {
     if (!field(section(context, '## External operation boundary') || '', key)) add('external_boundary_incomplete', `External operation boundary 缺少 ${key}`)
+  }
+  const externalBoundary = section(context, '## External operation boundary') || ''
+  for (const key of ['environment', 'authorization', 'minimum-impact', 'recovery', 'invalidates-on']) {
+    if (fieldCount(externalBoundary, key) > 1) add('external_boundary_field_duplicate', `External operation boundary 字段必须唯一：${key}`)
+  }
+  const externalEnvironment = field(externalBoundary, 'environment')
+  const localOnly = /^(?:local(?:[ -]?only)?|none|not-applicable|仅本地)$/i.test(externalEnvironment)
+  if (!localOnly) {
+    const truthCount = sectionCount(context, '## Current truth and decisions')
+    const truth = section(context, '## Current truth and decisions')
+    if (truthCount === 0 || truth === null) add('current_truth_missing', '存在外部动作时缺少 Current truth and decisions')
+    else if (truthCount > 1) add('current_truth_duplicate', 'Current truth and decisions 必须唯一')
+    else {
+      const truthFields = ['observed-at', 'sources', 'user-decisions', 'external-state', 'conflicts', 'invalidates-on']
+      const values = Object.fromEntries(truthFields.map(key => [key, field(truth, key)]))
+      for (const key of truthFields) if (fieldCount(truth, key) > 1) add('current_truth_field_duplicate', `Current truth and decisions 字段必须唯一：${key}`)
+      for (const [key, value] of Object.entries(values)) if (!value) add('current_truth_incomplete', `Current truth and decisions 缺少 ${key}`)
+      if (values['observed-at'] && Number.isNaN(Date.parse(values['observed-at']))) add('current_truth_observed_at_invalid', 'Current truth and decisions observed-at 必须是 ISO-8601 时间')
+      if (values.conflicts && !/^(?:none|resolved:|unresolved:)/i.test(values.conflicts)) add('current_truth_conflict_status_invalid', 'conflicts 必须是 none、resolved:<摘要> 或 unresolved:<摘要>')
+      if (/^unresolved:/i.test(values.conflicts)) add('current_truth_conflict_unresolved', values.conflicts)
+    }
   }
   if (!/^- (?:modify|create|delete|inspect-only|out-of-scope): `[^`]+`/m.test(section(context, '## Impact surface'))) {
     add('impact_surface_missing', 'Impact surface 没有带路径的范围证据')

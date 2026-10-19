@@ -101,6 +101,7 @@ Codex 运行时的具体 fan-out / 降级规则见 `cap-flow/references/runtime-
 | 已 resolve 出 active 角色 + 验证项 | 读 `STATE.md` 的 `## Active roles`;若空则现做(§2) | 现场 resolve |
 | spec 已批准(SDD 前置) | `STATE.md` 中 spec 状态为 approved | 回 `cap-define` |
 | 历史规则对照已处置 | 有候选时遵循 `cap-flow/references/history-rule-consistency.md`，task-context 无未决/未核实项 | 先取证或澄清受影响规则；不把旧知识自动当成最新需求 |
+| 方案必要性已证明 | 迁移/升级/加固/环境适配或已有成功路径时，`task-context.md#Solution necessity` 已按 `cap-flow/references/solution-necessity.md` 记录必要差异 | 回侦察/plan；重新取证不等于重新实现 |
 
 > 入口铁律:**改动面→角色 + 验证项解析先做**(§2),再开始第一个任务。这样实现时就带着对的视角
 > (client-dev / server-dev / ...)和对的"完成后要跑什么验证"的预期。
@@ -246,6 +247,8 @@ git -C <repo> status --porcelain           # 含 untracked
 ### 3.7 连续执行（默认持续，不等待确认）
 用户授权执行 plan 后,默认持续执行当前 wave 和任务闭环,不在任务之间等待用户确认。**唯一**的停下理由:BLOCKED 无法自解、
 根因 3-strike 触顶(§4.3)、blast-radius 闸触发(§4.4)、或全部任务完成。
+
+执行中若首次需要改计划外的构建工具、基础镜像、源码导出/过滤、依赖安装、产物布局、执行拓扑或配置打包方式，先停下这一扩张，按 `solution-necessity.md` 补充实际失败证据与较小方案对照并回到 plan。不得因为新框架已经写了一部分、局部测试能通过，继续围绕它修补；这不阻止计划内任务和不受影响的纵切继续推进。
 
 ### 3.8 执行回合纪律（必须有实际动作）
 

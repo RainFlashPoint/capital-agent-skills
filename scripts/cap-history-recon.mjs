@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -40,6 +41,8 @@ const TERM_ALIASES = new Map([
   ['知识', ['knowledge']], ['注入', ['injection']], ['归因', ['attribution', 'evidence', 'proof']],
   ['支付', ['payment']], ['回调', ['callback']], ['协议', ['contract', 'protocol']],
 ])
+const HANDOFF_REQUIRED_FIELDS = new Set(['source', 'target', 'intent', 'confirmed', 'to-verify', 'scope', 'target-work', 'invalidates-on', 'non-transferable', 'summary-sha256'])
+const HANDOFF_NON_TRANSFERABLE_FIELDS = ['Task', 'Session', 'Gate', 'Delivery', 'Outbox', 'PASS']
 
 function fail(message) {
   process.stderr.write(`cap-history-recon: ${message}\n`)
@@ -48,6 +51,26 @@ function fail(message) {
 
 function git(repo, args) {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+}
+
+function normalizeHandoffRemote(value = '') {
+  const raw = String(value || '').trim()
+  const scp = !raw.includes('://') && raw.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/)
+  if (scp) return `${scp[1].toLowerCase()}/${scp[2]}`.replace(/\/+$/, '').replace(/\.git$/i, '')
+  try {
+    const parsed = new URL(raw)
+    if (!['http:', 'https:', 'ssh:', 'git:'].includes(parsed.protocol)) return ''
+    return `${parsed.host.toLowerCase()}${parsed.pathname}`.replace(/\/+$/, '').replace(/\.git$/i, '')
+  } catch { return '' }
+}
+
+export function handoffRepositoryIdentity(repo) {
+  let remote = ''
+  try { remote = normalizeHandoffRemote(git(repo, ['remote', 'get-url', 'origin'])) } catch {}
+  if (remote) return `remote:${remote}`
+  const commonDir = git(repo, ['rev-parse', '--git-common-dir']) || '.git'
+  const canonicalGitDir = realpathSync.native(resolve(repo, commonDir))
+  return `local:${createHash('sha256').update(canonicalGitDir).digest('hex')}`
 }
 
 function parseArgs(argv) {
@@ -238,6 +261,85 @@ function safeJson(capRoot, path) {
   } catch {
     return null
   }
+}
+
+function canonicalHandoffText(text) {
+  return `${text.split(/\r?\n/).filter(line => !/^summary-sha256:\s*/i.test(line)).join('\n').trim()}\n`
+}
+
+export function parseIncomingHandoff(capRoot, path, file, { expectedTarget = '' } = {}) {
+  const text = safeRead(capRoot, path)
+  if (!text || Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES) return { error: 'unreadable_or_oversized' }
+  const values = {}
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const match = line.match(/^([a-z][a-z0-9-]*):\s*(.*)$/i)
+    if (!match) return { error: 'unexpected_line' }
+    const key = match[1].toLowerCase()
+    if (!HANDOFF_REQUIRED_FIELDS.has(key)) return { error: 'unexpected_field' }
+    if (Object.hasOwn(values, key)) return { error: 'duplicate_field' }
+    values[key] = match[2].trim()
+  }
+  if ([...HANDOFF_REQUIRED_FIELDS].some(field => !values[field])) return { error: 'missing_field' }
+  const hash = values['summary-sha256']
+  if (!/^[0-9a-f]{64}$/i.test(hash)) return { error: 'invalid_summary_hash' }
+  const calculated = createHash('sha256').update(canonicalHandoffText(text)).digest('hex')
+  if (calculated !== hash.toLowerCase()) return { error: 'summary_hash_mismatch' }
+  const source = values.source.match(/^([^\s@]+)\s+@\s+([^\s/]+(?:\/[^\s/]+)*)\s+\/\s+([0-9a-f]{40}|[0-9a-f]{64})$/i)
+  if (!source) return { error: 'invalid_source_provenance' }
+  const sourceRepo = safeIndexText(source[1], 256)
+  const sourceBranch = safeIndexText(source[2], 256)
+  if (!sourceRepo || !sourceBranch || sourceRepo.includes('\\') || sourceRepo.startsWith('/') || sourceRepo.startsWith('.')
+      || /^[A-Za-z]:/.test(sourceRepo) || sourceRepo.includes('..')
+      || sourceBranch.split('/').some(part => !part || part === '.' || part === '..')) return { error: 'unsafe_source_provenance' }
+  for (const field of ['target', 'intent', 'confirmed', 'to-verify', 'scope', 'target-work', 'invalidates-on']) {
+    if (!safeIndexText(values[field], 2048)) return { error: `unsafe_${field}` }
+  }
+  if (expectedTarget && values.target !== expectedTarget) return { error: 'target_mismatch' }
+  if (!safeIndexText(values['non-transferable'], 2048)
+      || HANDOFF_NON_TRANSFERABLE_FIELDS.some(field => !new RegExp(`\\b${field}\\b`, 'i').test(values['non-transferable']))) {
+    return { error: 'non_transferable_contract_missing' }
+  }
+  if (values.scope.split(/[;,\n]/).some(value => {
+    const candidate = value.trim()
+    return candidate && (candidate.startsWith('/') || candidate.startsWith('\\') || candidate.includes('..') || /^[A-Za-z]:/.test(candidate))
+  })) return { error: 'scope_path_escape' }
+  return {
+    validatedText: text,
+    sourceRepo, sourceBranch, sourceCommit: source[3].toLowerCase(), targetProject: values.target, summaryHash: hash.toLowerCase(),
+    scope: values.scope, invalidatesOn: values['invalidates-on'], verification: 'pending',
+    knowledgeDisposition: 'handoff-pending-verification',
+    searchText: `${file} ${values.intent} ${values.confirmed} ${values['to-verify']} ${values.scope} ${values['target-work']} ${values['invalidates-on']}`,
+  }
+}
+
+function incomingHandoffCandidates(repo, scan = {}) {
+  const capRoot = join(repo, '.cap')
+  const incomingRoot = join(capRoot, 'handoff', 'incoming')
+  const candidates = []
+  const expectedTarget = handoffRepositoryIdentity(repo)
+  scan.cap_handoff_invalid_entries = 0
+  scan.cap_handoff_pending_verification = false
+  if (!safeCapPath(capRoot, incomingRoot, 'directory')) return candidates
+  const report = { entries: 0, truncated: false }
+  for (const entry of boundedDirectoryEntries(capRoot, incomingRoot, MAX_DIRECTORY_ENTRIES, report)) {
+    if (!entry.isFile() || entry.isSymbolicLink() || !/\.md$/i.test(entry.name)) continue
+    const file = `.cap/handoff/incoming/${entry.name}`
+    const parsed = parseIncomingHandoff(capRoot, join(incomingRoot, entry.name), file, { expectedTarget })
+    if (parsed.error) { scan.cap_handoff_invalid_entries += 1; continue }
+    scan.cap_handoff_pending_verification = true
+    candidates.push({
+      source_type: 'cap_handoff', file, sourceRepo: parsed.sourceRepo, sourceBranch: parsed.sourceBranch,
+      targetProject: parsed.targetProject,
+      sourceCommit: parsed.sourceCommit, summaryHash: parsed.summaryHash, scope: parsed.scope,
+      invalidatesOn: parsed.invalidatesOn, verification: parsed.verification,
+      knowledgeDisposition: parsed.knowledgeDisposition, searchText: parsed.searchText,
+      inspect: { kind: 'repo_file', value: file },
+    })
+  }
+  scan.cap_handoff_entries = report.entries
+  scan.cap_handoff_truncated = report.truncated
+  return candidates
 }
 function boundedDirectoryEntries(capRoot, path, limit = MAX_DIRECTORY_ENTRIES, report = null) {
   try {
@@ -541,9 +643,9 @@ export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 
   const root = realpathSync.native(resolve(git(repo, ['rev-parse', '--show-toplevel'])))
   const intentTerms = terms(intent)
   const scan = { cap_history_index_entries: 0, cap_history_index_truncated: false }
-  const candidates = [...gitCandidates(root), ...capCandidates(root, scan)]
+  const candidates = [...gitCandidates(root), ...capCandidates(root, scan), ...incomingHandoffCandidates(root, scan)]
     .map(candidate => scoreCandidate(candidate, intentTerms, anchors))
-    .filter(candidate => candidate.score > 0)
+    .filter(candidate => candidate.score > 0 || candidate.source_type === 'cap_handoff')
     .sort((left, right) => {
       const priority = { 'pending-sync': 0, 'needs-harvest': 1, 'local-only': 2, synced: 3, 'no-reusable-experience': 4, 'legacy-unknown': 5 }
       const leftPriority = priority[left.knowledgeDisposition] ?? 6
@@ -563,13 +665,31 @@ export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 
   }
   let selected = unique.slice(0, limit)
   let relevanceSlotReserved = false
+  let handoffSlotReserved = false
+  const bestRelevant = [...unique]
+    .filter(candidate => candidate.matchedAnchors.length > 0 || candidate.score > 1)
+    .sort((left, right) => right.matchedAnchors.length - left.matchedAnchors.length || right.score - left.score)[0]
   if (unique.length > limit && limit > 0) {
-    const bestRelevant = [...unique]
-      .filter(candidate => candidate.matchedAnchors.length > 0 || candidate.score > 1)
-      .sort((left, right) => right.matchedAnchors.length - left.matchedAnchors.length || right.score - left.score)[0]
     if (bestRelevant && !selected.includes(bestRelevant)) {
       selected = limit === 1 ? [bestRelevant] : [...selected.slice(0, limit - 1), bestRelevant]
       relevanceSlotReserved = true
+    }
+  }
+  if (limit > 0) {
+    const bestHandoff = unique.find(candidate => candidate.source_type === 'cap_handoff')
+    if (bestHandoff && !selected.includes(bestHandoff)) {
+      if (limit === 1) {
+        selected = [bestHandoff]
+        handoffSlotReserved = true
+      } else {
+        const protectedRelevant = selected.includes(bestRelevant) ? bestRelevant : null
+        let replacement = selected.length - 1
+        while (replacement >= 0 && selected[replacement] === protectedRelevant) replacement -= 1
+        if (replacement >= 0) {
+          selected = selected.map((candidate, index) => index === replacement ? bestHandoff : candidate)
+          handoffSlotReserved = true
+        }
+      }
     }
   }
   const matches = selected.map(publicCandidate)
@@ -586,6 +706,7 @@ export function inspectHistory({ repo = '.', intent = '', anchors = [], limit = 
       results_total: unique.length,
       results_truncated: unique.length > limit,
       relevance_slot_reserved: relevanceSlotReserved,
+      handoff_slot_reserved: handoffSlotReserved,
       ...scan,
     },
     matches,
