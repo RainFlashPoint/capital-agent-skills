@@ -36,6 +36,23 @@ jobs:
           fi
           git diff --check "$base" HEAD
 
+  semantic-compaction:
+    name: Semantic compaction gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Context checkpoint and semantic protection regressions
+        run: |
+          node --test \
+            scripts/test-context-compaction.mjs \
+            scripts/test-context-gate.mjs \
+            scripts/test-context-preparation.mjs \
+            scripts/test-context-protection.mjs
+
   node-regression:
     name: Node regression
     runs-on: ubuntu-latest

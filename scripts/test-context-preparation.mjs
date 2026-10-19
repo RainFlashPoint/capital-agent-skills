@@ -46,6 +46,30 @@ test('prepare publishes a reviewed initial snapshot and reuses an unchanged bind
   assert.deepEqual(readdirSync(join(repo, '.cap/context')), files)
 })
 
+test('prepare reuses content-identical atoms when only the source binding changes', async t => {
+  const { repo, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  const fingerprints = await inspectContextFingerprint(repo)
+  const taskContextPath = join(repo, '.cap/task-context.md')
+  let taskContext = readFileSync(taskContextPath, 'utf8')
+  taskContext = taskContext
+    .replace(/^- index-fingerprint:.*$/m, `- index-fingerprint: ${fingerprints.index}`)
+    .replace(/^- worktree-fingerprint:.*$/m, `- worktree-fingerprint: ${fingerprints.worktree}`)
+    .replace(/^- untracked-fingerprint:.*$/m, `- untracked-fingerprint: ${fingerprints.untracked}`)
+  writeFileSync(taskContextPath, taskContext)
+
+  const second = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(second.valid, true, JSON.stringify(second))
+  assert.notEqual(second.manifest, first.manifest)
+  const firstManifest = JSON.parse(readFileSync(join(repo, first.manifest), 'utf8'))
+  const secondManifest = JSON.parse(readFileSync(join(repo, second.manifest), 'utf8'))
+  assert.equal(secondManifest.atomLog.path, firstManifest.atomLog.path)
+  assert.equal(readdirSync(join(repo, '.cap/context')).filter(name => name.startsWith('atoms-')).length, 1)
+})
+
 test('one prepare call replays a visible resume and binds its exact receipt', async t => {
   const { repo, path } = await fixture(t)
   assert.equal((await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })).valid, true)

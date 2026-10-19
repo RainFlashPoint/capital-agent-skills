@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto'
-import { writeFile, rename, rm, open } from 'node:fs/promises'
+import { writeFile, readFile, rename, rm, open } from 'node:fs/promises'
 import { join, posix } from 'node:path'
 import { captureContextBinding, captureContextPressure, captureCoverageRequirements, capturePublishedPredecessor, inspectSemanticContext, loadContextManifest, readContained, validateRecoveryReceipt } from './cap-context-gate.mjs'
 import { checkpointDigest, createManifest, fileSource, validateCheckpointTransition, validateManifest, planContext } from './cap-context-checkpoint.mjs'
@@ -101,9 +101,10 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, enviro
     if (path && !Object.hasOwn(sources, path)) sources[path] = await readContained(repo, path)
   }
   const id = randomUUID()
-  const logPath = `.cap/context/atoms-${id}.jsonl`
-  const manifestPath = `.cap/context/manifest-${id}.json`
   const log = checkpoint.atoms.map(atom => JSON.stringify(atom)).join('\n') + '\n'
+  const logDigest = createHash('sha256').update(log).digest('hex')
+  const logPath = `.cap/context/atoms-${logDigest}.jsonl`
+  const manifestPath = `.cap/context/manifest-${id}.json`
   const makeManifest = currentBinding => {
     const manifest = createManifest(checkpoint, {
       checkpointPath: posix.basename(checkpointPath),
@@ -142,11 +143,29 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, enviro
   manifest = makeManifest(currentBinding)
   checked = validateManifest(manifest, { checkpoint, previous: predecessor && !same ? predecessor.checkpoint : null, atomLogContent: log, sourceContents: sources })
   if (!checked.valid) return failed(checked.errors)
-  await writeFile(join(repo, logPath), log, { flag: 'wx', mode: 0o600 })
-  await writeFile(join(repo, manifestPath), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
-  let next = state
-  for (const [key, value] of Object.entries({ 'context-checkpoint': checkpointPath, 'context-checkpoint-digest': manifest.digest, 'context-manifest': manifestPath, 'context-previous-manifest': predecessor?.manifestPath || 'none', 'context-previous-digest': predecessor?.digest || 'none' })) next = setField(next, key, value)
-  await replaceState(repo, state, next)
+  let atomCreated = false
+  let manifestCreated = false
+  let published = false
+  try {
+    try {
+      await writeFile(join(repo, logPath), log, { flag: 'wx', mode: 0o600 })
+      atomCreated = true
+    } catch (cause) {
+      if (cause.code !== 'EEXIST') throw cause
+      if (await readFile(join(repo, logPath), 'utf8') !== log) throw new Error('context_atom_hash_collision')
+    }
+    await writeFile(join(repo, manifestPath), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
+    manifestCreated = true
+    let next = state
+    for (const [key, value] of Object.entries({ 'context-checkpoint': checkpointPath, 'context-checkpoint-digest': manifest.digest, 'context-manifest': manifestPath, 'context-previous-manifest': predecessor?.manifestPath || 'none', 'context-previous-digest': predecessor?.digest || 'none' })) next = setField(next, key, value)
+    await replaceState(repo, state, next)
+    published = true
+  } finally {
+    if (!published) {
+      if (manifestCreated) await rm(join(repo, manifestPath), { force: true })
+      if (atomCreated) await rm(join(repo, logPath), { force: true })
+    }
+  }
   const gate = await inspectSemanticContext(repo, { environment })
   return { valid: gate.passed, reused: false, manifest: manifestPath, digest: manifest.digest, recovery, warnings: semanticProtectionAdvisories(checkpoint, requirements), errors: gate.passed ? [] : [problem(gate.reason)], contextGate: gate, nextAction: gate.passed ? 'Read replayed hot atoms and resolve needed warm references before continuing; rerun the full stage guard.' : gate.remediation }
 }

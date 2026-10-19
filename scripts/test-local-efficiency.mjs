@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -10,6 +10,7 @@ import { inspectSessionRoot } from './cap-session-root.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { captureContextBinding, captureCoverageRequirements } from './cap-context-gate.mjs'
 import { createManifest } from './cap-context-checkpoint.mjs'
+import { digest } from '../runtime/ontology/schema.mjs'
 
 const cli=fileURLToPath(new URL('./cap-execute.mjs',import.meta.url))
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()
@@ -48,14 +49,15 @@ test('ordinary local run needs no key and persisted evidence can be recomputed',
  const root=await fixture(t);const run=await runLocalAction(root,opts)
  assert.equal(run.gate.gate,'PASS');assert.equal(run.receipt.authority,'local-observed');assert.equal(run.envelope.stage,'test')
  assert.equal((await inspectLocalExecution(root)).passed,true)
- assert.equal((await readFile(join(run.artifactDir,'bundle.json'),'utf8')).includes('CAP_LOCAL_EXECUTION_SECRET'),false)
+ assert.deepEqual(await readdir(run.artifactDir),['gate.json'])
+ assert.equal((await readFile(join(run.artifactDir,'gate.json'),'utf8')).includes('CAP_LOCAL_EXECUTION_SECRET'),false)
 })
 test('failed execution keeps bounded redacted diagnostics for model recovery',async t=>{
  const root=await fixture(t);const run=await runLocalAction(root,{environment:{TOKEN:'hidden'},command:[process.execPath,'-e','console.error("token=sk-123456789012345");process.exit(2)']})
- const diagnostic=JSON.parse(await readFile(join(run.artifactDir,'diagnostic.json'),'utf8'))
+ const diagnostic=JSON.parse(await readFile(join(run.artifactDir,'gate.json'),'utf8')).diagnostic
  assert.equal(run.gate.gate,'BLOCKED');assert.match(diagnostic.stderr,/REDACTED/);assert.doesNotMatch(diagnostic.stderr,/sk-123456789012345/);assert.ok(run.gate.nextActions.some(item=>item.kind==='diagnose_command_failure'))
  const multiline=await runLocalAction(root,{environment:{},command:[process.execPath,'-e','console.error("password=super secret phrase\\ntoken=\\\"quoted secret\\\"");process.exit(2)']})
- const multilineDiagnostic=JSON.parse(await readFile(join(multiline.artifactDir,'diagnostic.json'),'utf8'))
+ const multilineDiagnostic=JSON.parse(await readFile(join(multiline.artifactDir,'gate.json'),'utf8')).diagnostic
  assert.doesNotMatch(multilineDiagnostic.stderr,/super secret phrase|quoted secret/)
 })
 test('current dirty snapshot is supported, later source edit invalidates old evidence',async t=>{
@@ -73,10 +75,9 @@ test('newest failure replaces earlier pass; explicit IDs cannot run twice',async
  await runLocalAction(root,{environment:{},command:[process.execPath,'-e','process.exit(4)']})
  const status=await inspectLocalExecution(root);assert.equal(status.passed,false);assert.equal(status.reason,'command_failed')
 })
-test('tampered bundle and standalone PASS files cannot open the gate',async t=>{
+test('tampered canonical evidence and embedded PASS fields cannot open the gate',async t=>{
  const root=await fixture(t);const run=await runLocalAction(root,opts)
- await writeFile(join(run.artifactDir,'gate.json'),JSON.stringify({gate:'PASS'}))
- const path=join(run.artifactDir,'bundle.json');const body=JSON.parse(await readFile(path,'utf8'));body.receipt.exitCode=42;await writeFile(path,JSON.stringify(body))
+ const path=join(run.artifactDir,'gate.json');const body=JSON.parse(await readFile(path,'utf8'));body.gate={gate:'PASS',passed:true};body.receipt.exitCode=42;await writeFile(path,JSON.stringify(body))
  assert.equal((await inspectLocalExecution(root)).passed,false)
 })
 test('wrong Task/session, branch and commit never reuse old execution',async t=>{
@@ -180,8 +181,20 @@ test('active lock rejects concurrent run; pending latest cannot reuse old succes
  await assert.rejects(runLocalAction(root,opts),/execution_in_progress_or_interrupted/)
  await rm(join(root,'.cap/execution/.lock'),{recursive:true})
  const run=await runLocalAction(root,opts)
- await rm(join(run.artifactDir,'bundle.json'))
+ const path=join(run.artifactDir,'gate.json'),evidence=JSON.parse(await readFile(path,'utf8'))
+ await writeFile(path,JSON.stringify({schemaVersion:3,status:'pending',envelope:evidence.envelope,envelopeHash:evidence.envelopeHash}))
  assert.equal((await inspectLocalExecution(root)).reason,'execution_pending_or_interrupted')
+})
+
+test('legacy four-file actions remain readable',async t=>{
+ const root=await fixture(t),run=await runLocalAction(root,opts)
+ const evidence=JSON.parse(await readFile(join(run.artifactDir,'gate.json'),'utf8'))
+ const receipt={...evidence.receipt,diagnosticPath:'diagnostic.json',diagnosticHash:evidence.diagnosticHash}
+ await writeFile(join(run.artifactDir,'request.json'),JSON.stringify(evidence.envelope))
+ await writeFile(join(run.artifactDir,'diagnostic.json'),JSON.stringify(evidence.diagnostic))
+ await writeFile(join(run.artifactDir,'bundle.json'),JSON.stringify({schemaVersion:2,envelope:evidence.envelope,receipt,envelopeHash:evidence.envelopeHash,receiptHash:digest(receipt)}))
+ await writeFile(join(run.artifactDir,'gate.json'),JSON.stringify(evidence.gate))
+ assert.equal((await inspectLocalExecution(root)).passed,true)
 })
 test('recover refuses live PID and clears only a stopped-process lock',async t=>{
  const {recoverLocalExecution}=await import('../runtime/execution/local-flow.mjs')

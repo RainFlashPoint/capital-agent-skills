@@ -248,10 +248,6 @@ export function validateCheckpointTransition(previous, current) {
       successors.set(target, values)
     }
   }
-  for (const [target, values] of successors) {
-    if (values.length > 1) errors.push(error('supersedes_target_ambiguous', `atoms.${target}`, 'one atom cannot have multiple direct successors'))
-  }
-
   const visiting = new Set()
   const visited = new Set()
   const visit = id => {
@@ -265,19 +261,38 @@ export function validateCheckpointTransition(previous, current) {
   }
   if ([...currentAtoms.keys()].some(visit)) errors.push(error('supersedes_cycle', 'atoms', 'supersedes lineage must be acyclic'))
 
-  const validSuccessors = before => (successors.get(before.id) || []).filter(after => {
-    let valid = true
-    if (!active(after)) { errors.push(error('supersedes_successor_inactive', `atoms.${after.id}`, 'a successor must be active')); valid = false }
-    if (!compatibleSuccessorType(before, after)) { errors.push(error('supersedes_type_incompatible', `atoms.${after.id}.type`, `cannot supersede ${before.type} with ${after.type}`)); valid = false }
-    if ((PROTECTION_ORDER.get(after.protection) ?? 99) > (PROTECTION_ORDER.get(before.protection) ?? 99)) { errors.push(error('supersedes_protection_downgraded', `atoms.${after.id}.protection`, 'successor cannot lower the protection floor')); valid = false }
-    if (!scopeMatchesIdentity(after.scope, current?.identity, after.scopeBinding)) { errors.push(error('supersedes_scope_mismatch', `atoms.${after.id}.scope`, 'successor must bind the current checkpoint identity')); valid = false }
-    if (!authoritativeNewSource(before, after)) { errors.push(error('supersedes_authority_missing', `atoms.${after.id}.sourceRefs`, 'successor requires a new authoritative source')); valid = false }
-    if (before.type === 'authorization') {
-      const retained = new Set(after.invalidation || [])
-      if ((before.invalidation || []).some(value => !retained.has(value))) { errors.push(error('authorization_invalidation_removed', `atoms.${after.id}.invalidation`, 'successor authorization cannot remove invalidation conditions')); valid = false }
+  const successorCache = new Map()
+  const validSuccessors = (before, trail = new Set()) => {
+    if (successorCache.has(before.id)) return successorCache.get(before.id)
+    if (trail.has(before.id)) return []
+    const nextTrail = new Set(trail).add(before.id)
+    const leaves = []
+    for (const after of successors.get(before.id) || []) {
+      let valid = true
+      if (!compatibleSuccessorType(before, after)) { errors.push(error('supersedes_type_incompatible', `atoms.${after.id}.type`, `cannot supersede ${before.type} with ${after.type}`)); valid = false }
+      if ((PROTECTION_ORDER.get(after.protection) ?? 99) > (PROTECTION_ORDER.get(before.protection) ?? 99)) { errors.push(error('supersedes_protection_downgraded', `atoms.${after.id}.protection`, 'successor cannot lower the protection floor')); valid = false }
+      if (!authoritativeNewSource(before, after)) { errors.push(error('supersedes_authority_missing', `atoms.${after.id}.sourceRefs`, 'successor requires a new authoritative source')); valid = false }
+      if (before.type === 'authorization') {
+        const retained = new Set(after.invalidation || [])
+        if ((before.invalidation || []).some(value => !retained.has(value))) { errors.push(error('authorization_invalidation_removed', `atoms.${after.id}.invalidation`, 'successor authorization cannot remove invalidation conditions')); valid = false }
+      }
+      if (!valid) continue
+      if (active(after)) {
+        if (!scopeMatchesIdentity(after.scope, current?.identity, after.scopeBinding)) errors.push(error('supersedes_scope_mismatch', `atoms.${after.id}.scope`, 'active successor must bind the current checkpoint identity'))
+        else leaves.push(after)
+      } else {
+        leaves.push(...validSuccessors(after, nextTrail))
+      }
     }
-    return valid
-  })
+    const unique = [...new Map(leaves.map(atom => [atom.id, atom])).values()]
+    if (unique.length > 1) errors.push(error('supersedes_target_ambiguous', `atoms.${before.id}`, 'one atom cannot have multiple active successor branches'))
+    successorCache.set(before.id, unique)
+    return unique
+  }
+  for (const target of successors.keys()) {
+    const before = currentAtoms.get(target)
+    if (before) validSuccessors(before)
+  }
 
   for (const [id, before] of previousAtoms) {
     const after = currentAtoms.get(id)
