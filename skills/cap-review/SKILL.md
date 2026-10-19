@@ -134,12 +134,15 @@ description: >
 
 按 `cap-flow/references/history-rule-consistency.md` 复核 task-context 的历史规则对照：原始来源是否适用、变更决策是否明确、实现与边界回归是否遵循已确认规则。未处置冲突不得 Review PASS；历史规则不因新 Task 的范围差异自动全局废弃。
 
+先按 `cap-flow/references/solution-necessity.md` 审方向与必要性。用户原始意图、当前仓库事实和 `task-context.md#Solution necessity` 优先于本轮自行生成的 spec/plan；spec、plan 与 diff 都是被审对象，不能互相循环证明扩张合理。对迁移、换地址、升级或环境适配，明确区分“保留原实现后重新取证”和“重新实现”：前者可构成有效验收，后者若缺少原始需求或已观察失败证据，测试全绿仍是 scope drift。
+
 在审代码质量**之前**,先回答两个问题:**只做了该做的吗?该做的都做了吗?**
 
 **2a. 确定 stated intent(意图)**,按优先级取来源:
-1. `.cap/spec.md` 与 `.cap/plan.md`(主线产物,**首选**)。
-2. PR 描述:`gh pr view --json body -q .body 2>/dev/null`。
-3. commit 信息:`git log <base>..HEAD --oneline`(过滤 WIP/tmp/merge/chore 噪声,抽真实意图)。
+1. 用户原始意图与 `.cap/task-context.md` 中经过取证的范围、必要差异和保留项。
+2. `.cap/spec.md` 与 `.cap/plan.md`；若比原始意图更宽，宽出的部分本身必须受审。
+3. PR 描述:`gh pr view --json body -q .body 2>/dev/null`。
+4. commit 信息:`git log <base>..HEAD --oneline`(过滤 WIP/tmp/merge/chore 噪声,抽真实意图)。
 
 **2b. 抽取可执行项**:从 spec / plan 抽出每条"要做的事"(checkbox / 编号步骤 / 祈使句 / 文件级规格 /
 测试要求 / 数据模型变更)。上限 50 条。忽略:Context / Background、开放项(TBD)、显式 Deferred
@@ -164,7 +167,7 @@ description: >
 - **诚实铁律**:处理某交付物的代码 ≠ 该交付物本身(发了 markdown 提取库 ≠ 发了那个 markdown 文件)。
 
 **2e. SCOPE CREEP 检测**:diff 里有与 intent 无关的文件 / 计划外的新功能或重构 / "顺手改的"扩大了爆炸
-半径 → 列出每条越界改动。
+半径 → 列出每条越界改动。核心路径改造还要逐项核对 `required-delta` 或扩张证明；“为了新环境重新验收”不能解释重建构建/导出/隔离框架。
 
 **2f. 输出审计块**(信息性;HIGH-impact 缺口才升级为门控,见 Step 6):
 ```
@@ -357,7 +360,7 @@ status: clean | issues_found
 
 **全部满足才算 review PASS**(任一 FAIL → 阶段未过,回对应处置):
 
-- [ ] **G1 范围诚实**:scope-drift 审计已出;无 HIGH-impact 的 NOT-DONE 未处置(有则按 Step 6 升级:停下
+- [ ] **G1 范围诚实**:scope-drift 与方案必要性审计已出；核心路径扩张均有原始需求或实际失败证据；无 HIGH-impact 的 NOT-DONE 未处置(有则按 Step 6 升级:停下
       补做 / 落地 + 建 P1 待办 / 显式判为放弃)。
 - [ ] **G2 多角色已审**:每个 active role 都产了 `review/<role>.md`(clean 或 issues_found),无角色被静默跳过。
 - [ ] **G3 安全硬门**:若跑了安全门 → `threats_open == 0`(全部 mitigate 或文档化 accept/transfer);否则 **BLOCK**。

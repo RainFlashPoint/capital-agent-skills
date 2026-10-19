@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "unnecessary-reimplementation",
+  "title": "Reject rebuilding a successful path for an address-only migration",
+  "category": "solution_necessity",
+  "runner": "node_test",
+  "testFile": "scripts/test-solution-necessity.mjs",
+  "testNamePattern": "address-only migration cannot justify rebuilding a successful path"
+}

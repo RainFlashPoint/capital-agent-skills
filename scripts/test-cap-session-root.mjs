@@ -1,10 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
+import { mkdtemp, mkdir, readFile, realpath, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { inspectSessionRoot, switchSessionRoot } from './cap-session-root.mjs'
+import { inspectSessionRoot, prepareHandoff, switchSessionRoot } from './cap-session-root.mjs'
+import { handoffRepositoryIdentity, inspectHistory, parseIncomingHandoff } from './cap-history-recon.mjs'
 import { inspectCapStatus } from './cap-status.mjs'
 
 async function worktreeFixture() {
@@ -42,11 +45,25 @@ async function independentReposFixture({ sameRemote = false } = {}) {
   return { parent, repoA, repoB, registryRoot: join(parent, 'session-locks') }
 }
 
-async function handoffFixture(repo, name = 'project-a-to-b.md') {
+async function handoffFixture(repo, targetRepo, name = 'project-a-to-b.md', overrides = {}) {
   const root = join(repo, '.cap', 'handoff', 'outgoing')
   await mkdir(root, { recursive: true })
   const path = join(root, name)
-  await writeFile(path, 'source: project-a @ main / abcdef\ntarget: project-b\nintent: continue work\nconfirmed: source fact\nto-verify: target contract\ntarget-work: implement target change\nnon-transferable: Task / Session / Gate / Delivery / Outbox / PASS\n')
+  const fields = {
+    source: `${handoffRepositoryIdentity(repo)} @ ${execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim()} / ${execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()}`,
+    target: handoffRepositoryIdentity(targetRepo),
+    intent: 'continue work',
+    confirmed: 'source fact in README.md',
+    'to-verify': 'target contract',
+    scope: 'README.md',
+    'target-work': 'implement target change',
+    'invalidates-on': 'source commit, contract or scope changes',
+    'non-transferable': 'Task / Session / Gate / Delivery / Outbox / PASS',
+    ...overrides,
+  }
+  const body = `${Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join('\n')}\n`
+  const hash = createHash('sha256').update(body).digest('hex')
+  await writeFile(path, `${body}summary-sha256: ${hash}\n`)
   return path
 }
 
@@ -84,18 +101,92 @@ test('an explicit switch moves the single writable root between independent proj
   const { repoA, repoB, registryRoot } = await independentReposFixture()
   const environment = { CODEX_THREAD_ID: 'thread-explicit-project-switch' }
   await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
-  const handoff = await handoffFixture(repoA)
+  const handoff = await handoffFixture(repoA, repoB)
 
   const switched = await switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, handoffSourcePath: handoff, environment, registryRoot })
   assert.equal(switched.switched, true)
   assert.equal(switched.previousRoot, await realpath(repoA))
   assert.equal(switched.currentRoot, await realpath(repoB))
   assert.equal(await readFile(switched.handoff.destination, 'utf8'), await readFile(handoff, 'utf8'))
+  const history = inspectHistory({ repo: repoB, intent: 'unrelated target work', limit: 1 })
+  assert.equal(history.matches.length, 1)
+  assert.equal(history.matches[0].source_type, 'cap_handoff')
+  assert.equal(history.matches[0].targetProject, handoffRepositoryIdentity(repoB))
 
   const oldRoot = await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
   const newRoot = await inspectSessionRoot({ repoRoot: repoB, environment, registryRoot })
   assert.equal(oldRoot.blocked, true)
   assert.equal(newRoot.blocked, false)
+})
+
+test('handoff copy uses the exact bytes from the validated safe read when the source path is replaced', async () => {
+  const { repoA, repoB } = await independentReposFixture()
+  const canonicalA = await realpath(repoA)
+  const canonicalB = await realpath(repoB)
+  const handoff = await handoffFixture(repoA, repoB, 'stable-snapshot.md')
+  const original = await readFile(handoff, 'utf8')
+  const replacementPath = await handoffFixture(repoA, repoB, 'replacement.md', { intent: 'replacement content must not be copied' })
+  const replacement = await readFile(replacementPath, 'utf8')
+
+  const prepared = await prepareHandoff({
+    fromRoot: canonicalA,
+    targetRoot: canonicalB,
+    sourcePath: handoff,
+    parseHandoff: (...args) => {
+      const parsed = parseIncomingHandoff(...args)
+      writeFileSync(handoff, replacement)
+      return parsed
+    },
+  })
+  await prepared.commit()
+
+  assert.equal(await readFile(handoff, 'utf8'), replacement)
+  assert.equal(await readFile(prepared.destination, 'utf8'), original)
+  assert.equal(prepared.hash, createHash('sha256').update(original).digest('hex'))
+})
+
+test('handoff commit never overwrites a destination created after preparation', async () => {
+  const { repoA, repoB } = await independentReposFixture()
+  const sourcePath = await handoffFixture(repoA, repoB)
+  const prepared = await prepareHandoff({ fromRoot: await realpath(repoA), targetRoot: await realpath(repoB), sourcePath })
+  try {
+    await writeFile(prepared.destination, 'concurrent handoff\n', { flag: 'wx' })
+    await assert.rejects(prepared.commit(), /project_handoff_destination_conflict/)
+    await prepared.rollback()
+    assert.equal(await readFile(prepared.destination, 'utf8'), 'concurrent handoff\n')
+  } finally {
+    await prepared.cleanup()
+  }
+})
+
+test('handoff rollback preserves a destination replaced after commit even with identical bytes', async () => {
+  const { repoA, repoB } = await independentReposFixture()
+  const sourcePath = await handoffFixture(repoA, repoB)
+  const prepared = await prepareHandoff({ fromRoot: await realpath(repoA), targetRoot: await realpath(repoB), sourcePath })
+  try {
+    await prepared.commit()
+    const content = await readFile(prepared.destination, 'utf8')
+    const replacement = `${prepared.destination}.replacement`
+    await writeFile(replacement, content, { flag: 'wx' })
+    await rename(replacement, prepared.destination)
+    await prepared.rollback()
+    assert.equal(await readFile(prepared.destination, 'utf8'), content)
+  } finally {
+    await prepared.cleanup()
+  }
+})
+
+test('handoff rollback removes its own published file', async () => {
+  const { repoA, repoB } = await independentReposFixture()
+  const sourcePath = await handoffFixture(repoA, repoB)
+  const prepared = await prepareHandoff({ fromRoot: await realpath(repoA), targetRoot: await realpath(repoB), sourcePath })
+  try {
+    await prepared.commit()
+    await prepared.rollback()
+    await assert.rejects(readFile(prepared.destination), { code: 'ENOENT' })
+  } finally {
+    await prepared.cleanup()
+  }
 })
 
 test('a missing reviewed handoff leaves the original repository root unchanged', async () => {
@@ -115,7 +206,7 @@ test('a symlinked target handoff directory cannot escape the target repository',
   const { parent, repoA, repoB, registryRoot } = await independentReposFixture()
   const environment = { CODEX_THREAD_ID: 'thread-handoff-target-symlink' }
   await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
-  const handoff = await handoffFixture(repoA)
+  const handoff = await handoffFixture(repoA, repoB)
   const outside = join(parent, 'outside-handoff')
   await mkdir(outside)
   await mkdir(join(repoB, '.cap', 'handoff'), { recursive: true })
@@ -124,6 +215,19 @@ test('a symlinked target handoff directory cannot escape the target repository',
   await assert.rejects(
     switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, handoffSourcePath: handoff, environment, registryRoot }),
     /project_handoff_target_escape/,
+  )
+  assert.equal((await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })).blocked, false)
+})
+
+test('an outgoing handoff for another target repository is rejected before switching', async () => {
+  const { repoA, repoB, registryRoot } = await independentReposFixture()
+  const environment = { CODEX_THREAD_ID: 'thread-wrong-handoff-target' }
+  await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+  const handoff = await handoffFixture(repoA, repoB, 'wrong-target.md', { target: 'remote:git.example.com/team/project-other' })
+
+  await assert.rejects(
+    switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, handoffSourcePath: handoff, environment, registryRoot }),
+    /project_handoff_invalid_target_mismatch/,
   )
   assert.equal((await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })).blocked, false)
 })
@@ -137,6 +241,18 @@ test('same-project sibling worktrees cannot use the explicit project switch', as
     switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, environment, registryRoot }),
     /session_root_same_project/,
   )
+  assert.equal((await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })).blocked, false)
+})
+
+test('legacy persisted project identities cannot permit a same-project worktree switch', async () => {
+  const { repoA, repoB, registryRoot } = await worktreeFixture()
+  const environment = { CODEX_THREAD_ID: 'legacy-project-lock' }
+  await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })
+  const key = createHash('sha256').update(`codex-thread:${environment.CODEX_THREAD_ID}`).digest('hex')
+  await writeFile(join(registryRoot, `${key}.json`), JSON.stringify({
+    schema: 2, kind: 'codex-thread', root: await realpath(repoA), project: `git-dir:${join(await realpath(repoA), '.git')}`,
+  }))
+  await assert.rejects(switchSessionRoot({ fromRepoRoot: repoA, targetRepoRoot: repoB, environment, registryRoot }), /session_root_same_project/)
   assert.equal((await inspectSessionRoot({ repoRoot: repoA, environment, registryRoot })).blocked, false)
 })
 

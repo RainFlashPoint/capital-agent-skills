@@ -19,6 +19,8 @@ description: >
 
 > **全程契约**：开始实质工作前读取并执行 `../cap-flow/references/progress-protocol.md` 与 `../cap-flow/references/task-reconnaissance.md`。先播报当前动作和下一步；新任务没有新鲜 `.cap/task-context.md` 时，先调查当前仓库代码，不能只依赖 PROFILE。
 
+> **跨会话真值**：发布判断和执行还要读取 `../cap-flow/references/cross-session-truth.md`。进入发布前刷新远端 ref、PR、Tag、Release、CI/Provider 与当前用户决定；旧会话结论不能证明“尚未发布”或“已经发布”。同一源码树、命令、环境和 Gate 版本的有效证据可以复用，不能因为换会话机械重跑。
+
 > **本地执行证据**：显式 local / local-only 模式同时遵循 `../cap-flow/references/local-execution.md`。构建、测试、打包复用当前源码快照上的真实命令结果；评审仍需独立证据，单次命令 PASS 不替代阶段全部验收。
 
 你正在执行研发主线的**发布阶段**。显式 local / local-only 仓使用与当前 HEAD 一致的本地 `cap-gate`；团队模式必须由 Server canonical state 证明同一 Commit 的 Review Action 已通过。进入 strict Retire 时必须把证明类型显式传为 `gate-kind=local|server`，并让 `gate-commit` 精确等于 Delivery Commit；Retire 还会自行验证 local `STATE cap-gate` 或实时 Server canonical Review Action，单独传入无类型的 `passed` 文本不能成为证明。现在由你把它**逐级晋级**

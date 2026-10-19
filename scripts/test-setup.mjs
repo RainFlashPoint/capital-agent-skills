@@ -11,7 +11,13 @@ test('parses setup modes and validates server URL', () => {
   assert.deepEqual(parseSetupArgs(['--server','https://example.test/','--doctor']).doctor, true)
   assert.equal(parseSetupArgs(['--local','--upgrade']).local, true)
   assert.equal(normalizeServerUrl('https://example.test/'), 'https://example.test')
+  assert.equal(normalizeServerUrl('http://127.0.0.1:3210/'), 'http://127.0.0.1:3210')
+  assert.equal(normalizeServerUrl('http://localhost:3210/'), 'http://localhost:3210')
   assert.throws(() => normalizeServerUrl('file:///tmp/a'))
+  assert.throws(() => normalizeServerUrl('http://example.test'))
+  assert.throws(() => normalizeServerUrl('https://user:password@example.test'))
+  assert.throws(() => normalizeServerUrl('https://example.test?token=secret'))
+  assert.throws(() => normalizeServerUrl('https://example.test#fragment'))
 })
 test('local mode supports Node 18 without relaxing the MCP runtime', () => {
   assert.equal(minimumLocalNodeVersion, '18.0.0')
@@ -506,6 +512,26 @@ test('bootstraps a test-only provider without exposing credentials in arguments'
   assert.equal(request.url,'https://example.test/api/auth/local-test-provider/bootstrap')
   assert.equal(request.options.headers['x-user-key'],'user-key')
   assert.deepEqual(JSON.parse(request.options.body),{clientId:'client_12345678',clientName:'laptop'})
+})
+test('setup, bootstrap, install and doctor reject provider URLs the runtime would refuse', async () => {
+  const unsafe = [
+    'http://example.test',
+    'https://user:password@example.test',
+    'https://example.test?token=secret',
+    'https://example.test#fragment',
+  ]
+  for (const serverUrl of unsafe) {
+    let calls = 0
+    const fetchImpl = async () => { calls += 1; throw new Error('must not fetch') }
+    await assert.rejects(bootstrapLocalTestProvider(serverUrl, 'user-key', { clientId: 'client_12345678', clientName: 'laptop' }, fetchImpl))
+    assert.deepEqual(await checkPlatformHandshake(serverUrl, 'user-key', fetchImpl), { ok: false, reason: 'invalid_server_url' })
+    assert.equal((await checkLocalTestProvider({ serverUrl, runnerId: 'runner_1', runnerCredential: 'credential' }, fetchImpl)).reason, 'invalid_server_url')
+    const home = await mkdtemp(join(tmpdir(), 'cap-provider-unsafe-'))
+    const source = join(home, 'source.mjs')
+    await writeFile(source, 'console.log("fixture")\n')
+    await assert.rejects(installLocalTestProvider({ home, source, serverUrl, registration: { runnerId: 'runner_1', runnerCredential: 'credential' }, clientId: 'client_12345678' }))
+    assert.equal(calls, 0)
+  }
 })
 test('installs local provider runtime and test-only credentials with a valid doctor probe', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-provider-'))

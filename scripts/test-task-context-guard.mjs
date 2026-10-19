@@ -81,6 +81,14 @@ ${includeTests ? '- `test/payment.test.js` — 支付测试入口' : '- 尚未�
 ## Evidence sources
 - \`test/payment.test.js\` — 测试资产引用，不记录敏感正文
 
+## Current truth and decisions
+- observed-at: 2026-07-21T00:00:00Z
+- sources: 当前 Git、测试环境状态和用户授权消息
+- user-decisions: 只允许当前测试范围，不触及生产
+- external-state: 测试环境可用，尚未执行外部写入
+- conflicts: none
+- invalidates-on: 环境、授权、分支、HEAD 或执行范围变化
+
 ## External operation boundary
 - environment: test
 - authorization: 已授权当前测试动作
@@ -355,6 +363,69 @@ test('missing external operation boundary blocks handoff', () => {
   const result = run(repo, '--stage', 'test')
   assert.equal(result.status, 1)
   assert.match(result.stderr, /缺少 recovery/)
+})
+
+test('external actions require current truth and decisions', () => {
+  const repo = fixture(); writeContext(repo)
+  const context = join(repo, '.cap/task-context.md')
+  const content = readFileSync(context, 'utf8').replace(/\n## Current truth and decisions[\s\S]*?\n## External operation boundary/, '\n## External operation boundary')
+  writeFileSync(context, content)
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Current truth and decisions/)
+})
+
+test('production actions cannot bypass current truth with authorization none', () => {
+  const repo = fixture(); writeContext(repo)
+  const context = join(repo, '.cap/task-context.md')
+  const content = readFileSync(context, 'utf8')
+    .replace(/\n## Current truth and decisions[\s\S]*?\n## External operation boundary/, '\n## External operation boundary')
+    .replace('- environment: test', '- environment: production')
+    .replace('- authorization: 已授权当前测试动作', '- authorization: none')
+  writeFileSync(context, content)
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Current truth and decisions/)
+})
+
+test('unresolved cross-session decision conflicts block external actions', () => {
+  const repo = fixture(); writeContext(repo)
+  const context = join(repo, '.cap/task-context.md')
+  const content = readFileSync(context, 'utf8').replace('- conflicts: none', '- conflicts: unresolved:用户要求保持 CI 关闭，但当前计划准备开启 CI')
+  writeFileSync(context, content)
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /current_truth_conflict_unresolved/)
+})
+
+test('duplicate current truth sections fail closed even when the first section is clean', () => {
+  const repo = fixture(); writeContext(repo)
+  const context = join(repo, '.cap/task-context.md')
+  appendFileSync(context, `
+## Current truth and decisions
+- observed-at: 2026-07-21T00:00:00Z
+- sources: later conflicting source
+- user-decisions: later decision
+- external-state: changed
+- conflicts: unresolved:later section must not be ignored
+- invalidates-on: any change
+`)
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /current_truth_duplicate/)
+})
+
+test('duplicate current truth fields fail closed when an older clean value appears first', () => {
+  const repo = fixture(); writeContext(repo)
+  const context = join(repo, '.cap/task-context.md')
+  const content = readFileSync(context, 'utf8').replace(
+    '- conflicts: none',
+    '- conflicts: none\n- conflicts: unresolved:later field must not be ignored',
+  )
+  writeFileSync(context, content)
+  const result = run(repo, '--stage', 'implement')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /current_truth_field_duplicate.*conflicts/)
 })
 
 test('history usage must explain candidate adoption and plan/verification impact', () => {

@@ -603,12 +603,17 @@ export async function installSkillLinks(sourceDir, targetDir, skillNames = publi
 }
 
 export const normalizeServerUrl = value => {
-  const url = new URL(String(value || '').trim().replace(/\/+$/, ''))
+  const url = new URL(String(value || '').trim())
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('平台地址必须是 HTTP(S)')
+  if (url.username || url.password || url.search || url.hash) throw new Error('平台地址不能包含用户信息、查询参数或片段')
+  if (url.protocol !== 'https:' && !['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname)) {
+    throw new Error('非回环平台地址必须使用 HTTPS')
+  }
   return url.toString().replace(/\/+$/, '')
 }
 
 export async function pollDeviceAuthorization(serverUrl, secret, { fetchImpl = fetch, wait = ms => new Promise(resolve => setTimeout(resolve, ms)), expiresIn = 600, interval = 2 } = {}) {
+  serverUrl = normalizeServerUrl(serverUrl)
   const deadline = Date.now() + expiresIn * 1000
   while (Date.now() < deadline) {
     const response = await fetchImpl(`${serverUrl}/api/device-auth/token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device_secret: secret }) })
@@ -623,6 +628,7 @@ export async function pollDeviceAuthorization(serverUrl, secret, { fetchImpl = f
 export async function checkPlatformConnection(serverUrl, userKey, fetchImpl = fetch) {
   if (!serverUrl || !userKey) return false
   try {
+    serverUrl = normalizeServerUrl(serverUrl)
     const response = await fetchImpl(`${serverUrl}/api/auth/heartbeat`, { method: 'PUT', headers: { 'x-user-key': userKey } })
     return response.ok
   } catch { return false }
@@ -630,6 +636,7 @@ export async function checkPlatformConnection(serverUrl, userKey, fetchImpl = fe
 
 export async function checkPlatformHandshake(serverUrl, userKey, fetchImpl = fetch, client = {}) {
   if (!serverUrl || !userKey) return { ok: false, reason: 'missing_config' }
+  try { serverUrl = normalizeServerUrl(serverUrl) } catch { return { ok: false, reason: 'invalid_server_url' } }
   try {
     const response = await fetchImpl(`${serverUrl}/api/auth/handshake`, { method: 'PUT', headers: { 'x-user-key': userKey, 'Content-Type': 'application/json' }, body: JSON.stringify(client && typeof client === 'object' ? client : {}) })
     const body = await response.json().catch(() => ({}))
@@ -665,6 +672,7 @@ export function systemCurlJson(url, { method = 'GET', headers = {}, body = '' } 
 }
 
 export async function bootstrapLocalTestProvider(serverUrl, userKey, client = {}, fetchImpl = fetch) {
+  serverUrl = normalizeServerUrl(serverUrl)
   const response = await fetchImpl(`${serverUrl}/api/auth/local-test-provider/bootstrap`, {
     method: 'POST',
     headers: { 'x-user-key': userKey, 'Content-Type': 'application/json' },
@@ -676,6 +684,7 @@ export async function bootstrapLocalTestProvider(serverUrl, userKey, client = {}
 }
 
 export async function installLocalTestProvider({ home, source, serverUrl, registration, clientId }) {
+  serverUrl = normalizeServerUrl(serverUrl)
   const directory = join(home, '.capital-agent', 'runner')
   const runtimePath = join(directory, 'local-test-provider.mjs')
   const configPath = join(directory, 'config.json')
@@ -701,6 +710,7 @@ export async function inspectLocalTestProvider(home) {
   try {
     const config = JSON.parse(await readFile(configPath, 'utf8'))
     const runtime = await lstat(runtimePath)
+    config.serverUrl = normalizeServerUrl(config.serverUrl)
     const credentialsReady = Boolean(config.serverUrl && config.runnerId && config.runnerCredential && Array.isArray(config.capabilities) && config.capabilities.length === 1 && config.capabilities[0] === 'test')
     return { ok: runtime.isFile() && credentialsReady, runtimePath, configPath, config }
   } catch {
@@ -710,6 +720,7 @@ export async function inspectLocalTestProvider(home) {
 
 export async function checkLocalTestProvider(config = {}, fetchImpl = fetch) {
   if (!config.serverUrl || !config.runnerId || !config.runnerCredential) return { ok: false, reason: 'missing_config' }
+  try { config = { ...config, serverUrl: normalizeServerUrl(config.serverUrl) } } catch { return { ok: false, reason: 'invalid_server_url' } }
   try {
     const response = await fetchImpl(`${config.serverUrl}/api/execution/runner/heartbeat`, {
       method: 'POST',

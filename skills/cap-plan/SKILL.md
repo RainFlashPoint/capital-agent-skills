@@ -18,6 +18,8 @@ description: >
 
 若 `task-context.md` 的 `History usage` 有候选，plan 必须保留其采用/拒绝结果，并把 `plan-impact` 转成至少一条具体任务或明确记录 `none`；不能只在 `Similar implementations` 中列出历史路径。
 
+若 `task-context.md` 命中迁移/升级/加固/环境适配或已有成功路径，先读 `cap-flow/references/solution-necessity.md`。计划必须从 `existing-success-path` 与 `required-delta` 出发：优先保留成功实现，只为必要差异和重新取证建任务。更换构建工具、基础镜像、源码导出、产物布局、执行拓扑或配置打包方式，必须引用原始需求或已观察失败证据；“新环境需要重新验收”不能单独证明重建必要。
+
 你的唯一职责:读**已批准的 `spec.md`**,产出一份 **`<target-repo>/.cap/plan.md`**,把需求**两级贯通**:
 
 ```
@@ -205,6 +207,8 @@ git -C <target-repo> status --porcelain
 | **read_first** | 执行前必读的文件 / 上下文(精确路径,含行号区间更好) | 好:`src/auth/jwt.py:1-40, .cap/spec.md#auth`;坏:「相关文件」 |
 | **acceptance_criteria** | **必可验证**的完成判据(命令 + 期望输出,或可观察状态) | 好:`pytest tests/test_login.py::test_401 -q` 期望 PASS;有效凭据返回 200 + cookie,无效返回 401。坏:「能登录就行」 |
 | **action** | 具体实现指令,**含具体值**(路径、库、参数、为什么避开某选择) | 好:「新建 `POST /api/login` 收 {email,password},用 bcrypt 比对 User 表,返回 jose 签发的 JWT(15min) 进 httpOnly cookie。**不用 jsonwebtoken**——Edge runtime 的 CommonJS 问题」。坏:「加上认证」 |
+
+此外，每个任务都要能追溯到 `required-delta`、必要验证或已证明的扩张项。仅由本轮 spec/plan 新增、但无法回溯用户原始意图或实际失败证据的“通用框架/顺手重构”不进入计划；不能用计划自身给扩张循环背书。
 
 > 另带:**predicted_files**(结构化的"这个任务预测会动哪些文件")。三字段里的 action 即"要做什么",
 > acceptance_criteria 合并了"自动化验证命令"+"可测完成态",read_first 覆盖"读侧上下文"。

@@ -6,6 +6,7 @@ import { link, lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:f
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { handoffRepositoryIdentity, parseIncomingHandoff } from './cap-history-recon.mjs'
 
 const SESSION_KEYS = [
   ['capital-agent', 'CAPITAL_AGENT_RUNTIME_SESSION_ID'],
@@ -39,21 +40,6 @@ async function canonicalGitRoot(candidate = '.') {
   return realpath(gitRoot(candidate))
 }
 
-function normalizeRemote(value = '') {
-  let remote = String(value || '').trim()
-  const scp = remote.match(/^[^@]+@([^:]+):(.+)$/)
-  if (scp) remote = `${scp[1]}/${scp[2]}`
-  else {
-    try {
-      const parsed = new URL(remote)
-      remote = `${parsed.hostname}${parsed.port ? `:${parsed.port}` : ''}${parsed.pathname}`
-    } catch {
-      remote = remote.replace(/^[^@]+@/, '')
-    }
-  }
-  return remote.replace(/\.git\/?$/, '').replace(/\/$/, '').toLowerCase()
-}
-
 function comparablePath(value = '') {
   const normalized = String(value).replace(/^\\\\\?\\/, '').replace(/\\/g, '/').replace(/\/+$/, '')
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
@@ -66,10 +52,7 @@ function isInside(child, parent) {
 }
 
 async function projectIdentity(repoRoot) {
-  const remote = normalizeRemote(gitValue(repoRoot, ['remote', 'get-url', 'origin']))
-  if (remote) return `remote:${remote}`
-  const commonDir = gitValue(repoRoot, ['rev-parse', '--git-common-dir'])
-  return `git-dir:${await realpath(resolve(repoRoot, commonDir || '.git')).catch(() => resolve(repoRoot, commonDir || '.git'))}`
+  return handoffRepositoryIdentity(repoRoot)
 }
 
 function sessionIdentity(environment = {}) {
@@ -138,7 +121,7 @@ async function readLock(path) {
   return parsed
 }
 
-async function prepareHandoff({ fromRoot, targetRoot, sourcePath, incomingName = '' }) {
+export async function prepareHandoff({ fromRoot, targetRoot, sourcePath, incomingName = '', parseHandoff = parseIncomingHandoff }) {
   if (!sourcePath) throw new Error('project_handoff_required')
   const sourceInfo = await lstat(resolve(sourcePath))
   if (sourceInfo.isSymbolicLink() || !sourceInfo.isFile()) throw new Error('project_handoff_unsafe_source')
@@ -146,10 +129,15 @@ async function prepareHandoff({ fromRoot, targetRoot, sourcePath, incomingName =
   const source = await realpath(resolve(sourcePath))
   if (!isInside(source, outgoingRoot)) throw new Error('project_handoff_source_outside_outgoing')
 
-  const content = await readFile(source, 'utf8')
-  for (const field of ['source', 'target', 'intent', 'confirmed', 'to-verify', 'target-work', 'non-transferable']) {
-    if (!new RegExp(`^${field}:\\s*\\S`, 'm').test(content)) throw new Error(`project_handoff_missing_${field}`)
-  }
+  const parsed = parseHandoff(join(fromRoot, '.cap'), source, `.cap/handoff/outgoing/${basename(source)}`, {
+    expectedTarget: handoffRepositoryIdentity(targetRoot),
+  })
+  if (parsed.error) throw new Error(`project_handoff_invalid_${parsed.error}`)
+  const content = parsed.validatedText
+  if (!content) throw new Error('project_handoff_invalid_unreadable_or_oversized')
+  if (parsed.sourceRepo !== handoffRepositoryIdentity(fromRoot)) throw new Error('project_handoff_source_repository_mismatch')
+  if (parsed.sourceBranch !== gitValue(fromRoot, ['branch', '--show-current'])) throw new Error('project_handoff_source_branch_mismatch')
+  if (parsed.sourceCommit !== gitValue(fromRoot, ['rev-parse', 'HEAD']).toLowerCase()) throw new Error('project_handoff_source_commit_mismatch')
   const name = incomingName || basename(source)
   if (!/^[a-zA-Z0-9._-]+\.md$/.test(name) || name === '.' || name === '..') throw new Error('project_handoff_invalid_name')
 
@@ -167,19 +155,37 @@ async function prepareHandoff({ fromRoot, targetRoot, sourcePath, incomingName =
 
   const temporary = join(canonicalIncoming, `.${process.pid}.${randomUUID()}.handoff.tmp`)
   const handle = await open(temporary, 'wx', 0o600)
+  let publishedIdentity
+  const hash = createHash('sha256').update(content).digest('hex')
   try {
     await handle.writeFile(content)
     await handle.sync()
+    publishedIdentity = await handle.stat()
   } finally {
     await handle.close()
   }
   return {
     source,
     destination,
-    hash: createHash('sha256').update(content).digest('hex'),
+    hash,
     temporary,
-    commit: async () => rename(temporary, destination),
-    rollback: async () => rm(destination, { force: true }).catch(() => {}),
+    commit: async () => {
+      try {
+        await link(temporary, destination)
+      } catch (error) {
+        if (error?.code === 'EEXIST') throw new Error('project_handoff_destination_conflict')
+        throw error
+      }
+    },
+    rollback: async () => {
+      // Keep the temporary hardlink until cleanup so the original inode cannot
+      // be recycled while deciding whether this transaction still owns the file.
+      const current = await lstat(destination).catch(error => error?.code === 'ENOENT' ? null : Promise.reject(error))
+      if (!current?.isFile() || current.dev !== publishedIdentity.dev || current.ino !== publishedIdentity.ino) return
+      if (createHash('sha256').update(await readFile(destination)).digest('hex') !== hash) return
+      const latest = await lstat(destination)
+      if (latest.dev === publishedIdentity.dev && latest.ino === publishedIdentity.ino) await rm(destination, { force: true })
+    },
     cleanup: async () => rm(temporary, { force: true }).catch(() => {}),
   }
 }
@@ -255,7 +261,9 @@ export async function switchSessionRoot({ fromRepoRoot = '.', targetRepoRoot, ha
     if (expectedRoot !== fromRoot) throw new Error(`session_root_mismatch: expected ${expectedRoot}, received ${fromRoot}`)
     if (fromRoot === targetRoot) throw new Error('session_root_same_project')
 
-    const sourceProject = previousLock.project || await projectIdentity(fromRoot)
+    // Persisted locks may use a prior identity format. Recompute both sides
+    // from current repositories instead of comparing across identity versions.
+    const sourceProject = await projectIdentity(fromRoot)
     const targetProject = await projectIdentity(targetRoot)
     if (sourceProject === targetProject) throw new Error('session_root_same_project')
     handoff = await prepareHandoff({ fromRoot, targetRoot, sourcePath: handoffSourcePath, incomingName: handoffIncomingName })

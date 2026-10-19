@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.1
+
+- 增加方案必要性 Gate：迁移、换地址、升级和环境适配先对照既有成功路径与必要差异，明确“重新取证 ≠ 重新实现”；构建工具、基础镜像、源码导出、产物布局或执行拓扑等扩张必须有原始需求或实际失败证据，评审不得让本轮自行生成的 spec/plan 为无关扩张循环背书。
+- `cap-history-recon` 现在只从当前锁定仓明确落地的 `.cap/handoff/incoming/*.md` 读取跨项目交接线索；新增来源仓/分支/Commit、摘要 SHA-256、范围和失效条件校验，并将合格摘要标记为待核验本地线索，拒绝损坏、错 hash、路径逃逸、敏感或伪造元数据，且不继承来源 Task/Session/Gate/PASS/Delivery/Outbox 或平台知识。
+- 增加跨会话真值与决定对账：会话恢复、状态查询及提交、迁移、CI/CD、部署、发布等外部动作前，按领域刷新 Git、Server、Provider 与原始用户决定；旧聊天摘要、旧 STATE 和旧报告不再作为当前真值。
+- `task-context` 对非本地外部动作新增 `Current truth and decisions` 门禁，记录本轮实际来源、有效允许/禁止、外部状态、冲突和失效条件；`unresolved` 决定冲突失败关闭，防止后续会话把“保持关闭”等明确禁止反向执行。
+- 相同源码树/Commit、命令、环境和 Gate 版本的测试证据允许复用；只有绑定变化或无法重验时才重跑受影响范围，避免因换会话机械重复完整发布门禁。
+- 本地 Test Provider 在 heartbeat 前读取精确 Action 的 canonical repository ID，并与本地 origin、目标 Server 和领取时来源再次核对；setup、doctor 与运行时统一拒绝非 HTTPS/非回环 HTTP、userinfo、query 和 fragment，SCP 远端的 `?/#` 直接失败关闭，避免仓库身份别名碰撞。
+- Provider 验证目录改用独立本地 clone，使 `.git` 管理数据留在沙箱内；macOS 只补充必要父路径元数据与 shell 读取权限。失租连续失败后立即停止续租和后续检查，先 TERM、2 秒后 KILL，且不上传 PASS/evidence。
+- 跨项目 `switch --handoff` 与新会话召回共用同一摘要校验契约，并把来源仓、完整 Commit 和目标仓稳定身份绑定到实际切换两端；复制使用同一次安全读取已验证的字节快照，避免验证后源路径被替换的 TOCTOU。
+- task-context 对必填章节、顶层关键字段及 `Current truth and decisions` 真值字段的重复定义失败关闭，防止旧 clean/none 值遮蔽后续 unresolved 冲突。
+- incoming handoff 的 `non-transferable` 现在逐项要求 Task、Session、Gate、Delivery、Outbox 与 PASS，任一缺失都拒绝召回，不再接受部分免责声明。
+- handoff 目标文件使用原子 no-clobber 发布；并发同名写入明确冲突，失败回滚核对原始 inode、设备和内容 hash，保留其他会话替换的文件。
+- 失租或超时终止时，即使命令主进程先退出，也立即清理同进程组中重定向输出且忽略 TERM 的后代，再取消延迟信号，避免孤儿继续执行及 PID 复用误杀。
+- 切仓时重新计算两端仓库身份，不再混用旧版持久锁中的身份格式，防止无 origin 的同仓 worktree 被误识别为独立项目。
+
 ## 0.13.0
 
 - 建立公开版本发布契约：以 `plugin.json` 为单一事实源，确定性校验 marketplace、README、CHANGELOG、Tag、Commit 与 GitHub Release；新增 Tag workflow，在完整门禁通过后才创建 Release。
