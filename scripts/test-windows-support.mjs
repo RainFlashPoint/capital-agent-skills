@@ -114,6 +114,45 @@ test('launcher treats a missing installed Provider as remote-only instead of fai
   assert.equal(result.body.code, 'local_provider_unavailable')
 })
 
+test('launcher never falls back to a legacy or PATH runner for a formal Action', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-provider-legacy-launcher-'))
+  await mkdir(join(repo, '.git'))
+  let spawned = false
+  const legacy = join(repo, 'legacy-capital-loop-runner.mjs')
+  const result = launchLocalTestProvider({
+    repo,
+    actionId: 'action_fixture',
+    launchPolicy: { allowed: true, code: '', detail: '' },
+    environment: { HOME: repo, PATH: repo, CAPITAL_AGENT_RUNNER_BIN: legacy },
+    pathExists: value => value === join(repo, '.git') || value === legacy,
+    readOrigin: () => 'https://example.test/org/repo.git',
+    spawnProcess: () => { spawned = true; return { status: 0, stdout: '{}' } },
+  })
+  assert.equal(spawned, false)
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.body.code, 'local_provider_unavailable')
+})
+
+test('launcher maps pre-claim setup or authentication failures to remote-only', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-provider-unavailable-launcher-'))
+  await mkdir(join(repo, '.git'))
+  const installed = join(repo, '.capital-agent', 'runner', 'local-test-provider.mjs')
+  const result = launchLocalTestProvider({
+    repo,
+    actionId: 'action_fixture',
+    launchPolicy: { allowed: true, code: '', detail: '' },
+    environment: { HOME: repo, PATH: '' },
+    pathExists: value => value === join(repo, '.git') || value === installed,
+    readOrigin: () => 'https://example.test/org/repo.git',
+    spawnProcess: () => ({ status: 1, stdout: '', stderr: JSON.stringify({ ok: false, code: 'local_provider_unavailable', claimed: false, detail: 'setup incomplete' }) }),
+  })
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.body.skipped, true)
+  assert.equal(result.body.mode, 'remote-only')
+  assert.equal(result.body.code, 'local_provider_unavailable')
+  assert.match(result.body.detail, /setup incomplete/)
+})
+
 test('remote-only hosts wait for a remote Runner without weakening Provider fail-closed behavior', async () => {
   const cap = await readFile(join(root, 'skills', 'cap', 'SKILL.md'), 'utf8')
   const protocol = await readFile(join(root, 'skills', 'cap-flow', 'references', 'harness-action-protocol.md'), 'utf8')

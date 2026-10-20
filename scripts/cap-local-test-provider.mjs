@@ -1,13 +1,23 @@
 #!/usr/bin/env node
 import { existsSync } from 'fs'
 import { execFileSync, spawnSync } from 'child_process'
-import { dirname, resolve } from 'path'
-import { fileURLToPath, pathToFileURL } from 'url'
+import { resolve } from 'path'
+import { pathToFileURL } from 'url'
 import { sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { localTestProviderLaunchPolicy } from './setup-lib.mjs'
 
 const failure = (code, detail = '') => ({ exitCode: 1, body: { ok: false, code, detail } })
 const skipped = (code, detail) => ({ exitCode: 0, body: { ok: true, skipped: true, mode: 'remote-only', code, detail } })
+
+function parseRuntimeFailure(result) {
+  for (const value of [result.stderr, result.stdout]) {
+    try {
+      const parsed = JSON.parse(String(value || '').trim())
+      if (parsed?.code === 'local_provider_unavailable' && parsed?.claimed !== true) return parsed
+    } catch {}
+  }
+  return null
+}
 
 export function launchLocalTestProvider({
   repo = resolve(process.argv[2] || process.cwd()),
@@ -30,25 +40,17 @@ export function launchLocalTestProvider({
   }
 
   if (repoUrl) {
-    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-    const candidates = [
-      environment.CAPITAL_AGENT_RUNNER_BIN,
-      resolve(environment.HOME || '', '.capital-agent', 'runner', 'local-test-provider.mjs'),
-      resolve(packageRoot, '..', 'capital-agent-runner', 'bin', 'capital-loop-runner.mjs'),
-      resolve(packageRoot, '..', '..', 'capital-agent-runner', 'bin', 'capital-loop-runner.mjs'),
-    ].filter(Boolean)
-    const runnerBin = candidates.find(candidate => pathExists(candidate)) || ''
-    const installedRuntime = runnerBin.endsWith('local-test-provider.mjs')
-    const command = runnerBin ? process.execPath : 'capital-loop-runner'
-    const args = installedRuntime
-      ? [runnerBin, repo, actionId]
-      : runnerBin
-      ? [runnerBin, 'once', '--harness-only', '--harness-action-id', actionId, '--repo-map', `${repoUrl}=${repo}|`]
-      : ['once', '--harness-only', '--harness-action-id', actionId, '--repo-map', `${repoUrl}=${repo}|`]
-    const result = spawnProcess(command, args, { encoding: 'utf8', stdio: 'pipe', env: environment })
+    // Formal Harness Actions may run only through the installed test-only
+    // runtime that implements the current pre-claim sandbox protocol. Legacy
+    // loop runners and PATH fallbacks cannot prove that boundary.
+    const runnerBin = resolve(environment.HOME || '', '.capital-agent', 'runner', 'local-test-provider.mjs')
+    if (!pathExists(runnerBin)) return skipped('local_provider_unavailable', '本机 Test Provider 未安装；未查询或领取本机 Action，客户端应继续等待远端 Runner。')
+    const result = spawnProcess(process.execPath, [runnerBin, repo, actionId], { encoding: 'utf8', stdio: 'pipe', env: environment })
     if (result.error?.code === 'ENOENT') {
       return skipped('local_provider_unavailable', '本机 Test Provider 未安装或不可执行；未查询或领取本机 Action，客户端应继续等待远端 Runner。')
     } else if (result.status !== 0) {
+      const unavailable = parseRuntimeFailure(result)
+      if (unavailable) return skipped('local_provider_unavailable', unavailable.detail || '本机 Test Provider 配置、认证或初始化未就绪；客户端应继续等待远端 Runner。')
       return failure('local_runner_failed', String(result.stderr || result.stdout || result.error?.message || '').trim().slice(0, 2000))
     } else {
       return { exitCode: 0, raw: String(result.stdout || '').trim() }

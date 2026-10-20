@@ -47,7 +47,22 @@ export async function handleContextHook(input, { environment = process.env } = {
     let record
     try { record = JSON.parse(await readContained(repo, recordPath)) }
     catch (cause) { if (cause.code !== 'ENOENT') throw cause }
-    if ((event === 'PreToolUse' || event === 'PostToolUse') && (!record || record.phase === 'delivered')) return noop()
+    if (event === 'PreToolUse' && !record) {
+      // A missing hook record is harmless only when there is no unfinished
+      // recovery lifecycle in STATE and the ordinary semantic gate is current.
+      // PreCompact publishes the pending STATE before its hook record, so a
+      // crash, deletion or failed publication between those writes must not
+      // reopen arbitrary shell/write tools.
+      const gate = await inspectSemanticContext(repo, { environment: env })
+      const recoveryEvent = field(state, 'context-recovery-event')
+      const recoveryReceipt = field(state, 'context-recovery-receipt')
+      if (!gate.passed || recoveryEvent.startsWith('codex-native:') || (recoveryEvent && (!recoveryReceipt || recoveryReceipt === 'none'))) {
+        throw new Error(gate.passed ? 'hook_recovery_record_missing' : gate.reason)
+      }
+      return noop()
+    }
+    if (event === 'PostToolUse' && !record) return noop()
+    if ((event === 'PreToolUse' || event === 'PostToolUse') && record.phase === 'delivered') return noop()
     lock = await open(join(repo, '.cap/.context-hook.lock'), 'wx', 0o600)
     await lock.writeFile(`${process.pid}\n`)
     try { record = JSON.parse(await readContained(repo, recordPath)) }

@@ -293,6 +293,30 @@ test('a missing PostCompact fails closed before any tool can run', async t => {
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
 })
 
+test('a missing hook record cannot reopen tools while recovery is pending', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  assert.equal((await invoke('PreCompact')).continue, true)
+  const record = readdirSync(join(repo, '.cap/context')).find(name => name.startsWith('codex-hook-'))
+  assert.ok(record)
+  rmSync(join(repo, '.cap/context', record))
+  const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool' })
+  assert.equal(denied.continue, false)
+  assert.match(denied.stopReason, /context_recovery_required|hook_recovery_record_missing/)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
+})
+
+test('a missing recovered native hook record cannot skip first-tool replay', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
+  const record = readdirSync(join(repo, '.cap/context')).find(name => name.startsWith('codex-hook-'))
+  assert.ok(record)
+  rmSync(join(repo, '.cap/context', record))
+  const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool' })
+  assert.equal(denied.continue, false)
+  assert.match(denied.stopReason, /hook_recovery_record_missing/)
+})
+
 test('native PostCompact without PreCompact still binds a real event; tampered replay stays blocked', async t => {
   const { repo, invoke } = await nativeFixture(t)
   assert.equal((await invoke('PostCompact')).continue, true)

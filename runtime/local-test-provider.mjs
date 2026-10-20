@@ -9,6 +9,7 @@ import { pathToFileURL } from 'url'
 
 const hash = value => createHash('sha256').update(String(value || '')).digest('hex')
 const configPath = process.env.CAPITAL_AGENT_LOCAL_PROVIDER_CONFIG || join(homedir(), '.capital-agent', 'runner', 'config.json')
+const providerUnavailable = message => Object.assign(new Error(message), { code: 'LOCAL_PROVIDER_UNAVAILABLE' })
 const environmentFailures = [
   /could not transfer artifact|non-resolvable parent pom|failed to read artifact descriptor|dependency resolution failed/i,
   /unknown host|name or service not known|temporary failure in name resolution/i,
@@ -101,26 +102,43 @@ function actionSource(action, actionId, repoUrl) {
 async function canonicalAction(config, client, actionId) {
   // Read-only host-controller lookup. Never persist this identity in the runner
   // config or pass it to commands; owner/scope authorization remains at claim.
-  const serverUrl = serverAddress(config.serverUrl)
-  if (!client.CAPITAL_AGENT_USER_KEY || serverAddress(client.CAPITAL_AGENT_SERVER_URL) !== serverUrl) throw new Error('本地客户端身份缺失或与 Provider Server 不一致')
-  const response = await fetch(`${serverUrl}/api/harness/actions/${encodeURIComponent(actionId)}`, {
-    headers: { 'x-user-key': client.CAPITAL_AGENT_USER_KEY }, redirect: 'error', signal: AbortSignal.timeout(15_000),
-  })
+  let serverUrl, clientServer
+  try {
+    serverUrl = serverAddress(config.serverUrl)
+    clientServer = serverAddress(client.CAPITAL_AGENT_SERVER_URL)
+  } catch { throw providerUnavailable('本地 Test Provider 或客户端 Server 配置无效') }
+  if (!client.CAPITAL_AGENT_USER_KEY || clientServer !== serverUrl) throw providerUnavailable('本地客户端身份缺失或与 Provider Server 不一致')
+  let response
+  try {
+    response = await fetch(`${serverUrl}/api/harness/actions/${encodeURIComponent(actionId)}`, {
+      headers: { 'x-user-key': client.CAPITAL_AGENT_USER_KEY }, redirect: 'error', signal: AbortSignal.timeout(15_000),
+    })
+  } catch { throw providerUnavailable('本地 Test Provider 无法连接或认证平台') }
   const payload = await response.json().catch(() => ({}))
+  if ([401, 403].includes(response.status)) throw providerUnavailable('本地 Test Provider 平台认证失败')
   if (!response.ok || payload.code !== 0) throw new Error(`平台 Action 查询失败：HTTP ${response.status}`)
   if (payload.data?.status !== 'ready') throw new Error('指定 Test Action 当前不可领取')
   return payload.data
 }
 
-async function post(config, path, body = {}) {
-  const response = await fetch(`${config.serverUrl}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-runner-id': config.runnerId, 'x-runner-token': config.runnerCredential },
-    body: JSON.stringify(body),
-    redirect: 'error', signal: AbortSignal.timeout(15_000),
-  })
+async function post(config, path, body = {}, { beforeClaim = false } = {}) {
+  let response
+  try {
+    response = await fetch(`${config.serverUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-runner-id': config.runnerId, 'x-runner-token': config.runnerCredential },
+      body: JSON.stringify(body),
+      redirect: 'error', signal: AbortSignal.timeout(15_000),
+    })
+  } catch (error) {
+    if (beforeClaim) throw providerUnavailable('本地 Test Provider 无法连接平台 Runner 接口')
+    throw error
+  }
   const payload = await response.json().catch(() => ({}))
-  if (!response.ok || payload.code !== 0) throw new Error(`${path}: HTTP ${response.status} ${payload.msg || 'request failed'}`)
+  if (!response.ok || payload.code !== 0) {
+    if (beforeClaim) throw providerUnavailable('本地 Test Provider 配置或认证未就绪')
+    throw new Error(`${path}: HTTP ${response.status} ${payload.msg || 'request failed'}`)
+  }
   return payload.data
 }
 
@@ -298,9 +316,12 @@ export async function runLocalTestProviderRuntime({
   }
   const client = await clientConfig()
   if (String(client.CAPITAL_AGENT_MODE || '').trim().toLowerCase() === 'local') throw new Error('显式本地模式禁止连接平台或领取 Harness Action')
-  const config = JSON.parse(await readFile(configPath, 'utf8'))
-  if (!config.serverUrl || !config.runnerId || !config.runnerCredential) throw new Error('本地 Test Provider 尚未完成 setup')
-  config.serverUrl = serverAddress(config.serverUrl)
+  let config
+  try { config = JSON.parse(await readFile(configPath, 'utf8')) }
+  catch { throw providerUnavailable('本地 Test Provider 配置缺失或损坏') }
+  if (!config.serverUrl || !config.runnerId || !config.runnerCredential) throw providerUnavailable('本地 Test Provider 尚未完成 setup')
+  try { config.serverUrl = serverAddress(config.serverUrl) }
+  catch { throw providerUnavailable('本地 Test Provider Server 配置无效') }
   const remote = run('git', ['-C', repo, 'remote', 'get-url', 'origin'])
   if (remote.status !== 0) throw new Error('当前仓库没有 origin')
   const repoUrl = sanitizeRepoUrl(String(remote.stdout || '').trim())
@@ -310,8 +331,8 @@ export async function runLocalTestProviderRuntime({
   await post(config, '/api/execution/runner/heartbeat', {
     hostname: hostname(), version: config.runtimeVersion || 'skills-local-test-provider',
     capabilities: { test: true, patch: false, repositoryIds: [expectedSource.repositoryId], repositories: [repoUrl], runtimes: [`node${process.versions.node.split('.')[0]}`], networkZones: ['local', 'public', 'enterprise'], maxConcurrency: 1 },
-  })
-  const claim = await post(config, '/api/execution/runner/harness/actions/claim', { actionId })
+  }, { beforeClaim: true })
+  const claim = await post(config, '/api/execution/runner/harness/actions/claim', { actionId }, { beforeClaim: true })
   if (!claim?.action) throw new Error('指定 Test Action 当前不可领取')
   const source = actionSource(claim.action, actionId, repoUrl)
   if (source.repositoryId !== expectedSource.repositoryId || source.commitSha !== expectedSource.commitSha || source.branch !== expectedSource.branch) throw new Error('领取的 Action 来源与平台预检结果不一致，停止执行')
@@ -366,6 +387,7 @@ export async function runLocalTestProviderRuntime({
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) runLocalTestProviderRuntime().catch(error => {
-  process.stderr.write(`${JSON.stringify({ ok: false, error: String(error?.message || error) }, null, 2)}\n`)
+  const unavailable = error?.code === 'LOCAL_PROVIDER_UNAVAILABLE'
+  process.stderr.write(`${JSON.stringify({ ok: false, code: unavailable ? 'local_provider_unavailable' : 'local_provider_failed', ...(unavailable ? { claimed: false } : {}), detail: String(error?.message || error) }, null, 2)}\n`)
   process.exit(1)
 })
