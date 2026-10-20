@@ -5,11 +5,11 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { captureContextBinding, captureCoverageRequirements, inspectSemanticContext } from './cap-context-gate.mjs'
+import { captureContextBinding, captureCoverageRequirements, inspectSemanticContext, nativeHookPaths } from './cap-context-gate.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { prepareContext } from './cap-context-preparation.mjs'
 import { inspectTaskContext } from './cap-runtime.mjs'
-import { handleContextHook } from './cap-context-hooks.mjs'
+import { handleContextHook, recoverContextHook } from './cap-context-hooks.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 
 const packageRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -247,12 +247,129 @@ async function nativeFixture(t) {
   return { ...result, env, payload, invoke }
 }
 
+function nativeRecord(repo, env) {
+  const path = join(repo, nativeHookPaths(env.CODEX_THREAD_ID).record)
+  return { path, record: JSON.parse(readFileSync(path, 'utf8')) }
+}
+
+test('legacy native checkpoints preserve chat liveness across automatic compact retries without claiming shared state', async t => {
+  const { repo, invoke } = await nativeFixture(t)
+  const statePath = join(repo, '.cap/STATE.md')
+  const before = readFileSync(statePath, 'utf8')
+  const manifestPath = before.match(/^context-manifest: (.+)$/m)[1]
+  const manifest = JSON.parse(readFileSync(join(repo, manifestPath), 'utf8'))
+  delete manifest.entry.runtimeSessionId
+  writeFileSync(join(repo, manifestPath), JSON.stringify(manifest))
+  for (const turn_id of ['turn-one', 'retry-after-compact', 'retry-again']) {
+    for (const event of ['PreCompact', 'PostCompact']) {
+      const notice = await invoke(event, { turn_id })
+      assert.notEqual(notice.continue, false, JSON.stringify(notice))
+      assert.match(notice.systemMessage, /hook_checkpoint_session_unbound/)
+      assert.match(notice.systemMessage, /recover .*--session-id .*--reviewed-manifest/)
+    }
+    const denial = await invoke('PreToolUse', { tool_use_id: turn_id })
+    assert.equal(denial.hookSpecificOutput?.permissionDecision, 'deny')
+    assert.notEqual(denial.continue, false)
+  }
+  assert.equal(readFileSync(statePath, 'utf8'), before)
+  assert.equal(JSON.parse(readFileSync(join(repo, manifestPath), 'utf8')).entry.runtimeSessionId, undefined)
+})
+
+test('two native sessions cannot take over each others checkpoint or shared pending state', async t => {
+  const { repo, invoke, payload, env } = await nativeFixture(t)
+  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  assert.equal((await invoke('PreCompact')).continue, true)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
+  const other = { ...env, CODEX_THREAD_ID: 'second-native-session' }
+  await inspectSessionRoot({ repoRoot: repo, environment: other })
+  const firstTool = await handleContextHook({ ...payload, session_id: other.CODEX_THREAD_ID, hook_event_name: 'PreToolUse', tool_use_id: 'foreign-first-tool' }, { environment: other })
+  assert.equal(firstTool.hookSpecificOutput?.permissionDecision, 'deny')
+  assert.match(firstTool.systemMessage, /hook_checkpoint_owned_by_other_session/)
+  for (const hook_event_name of ['PreCompact', 'PostCompact']) {
+    const result = await handleContextHook({ ...payload, session_id: other.CODEX_THREAD_ID, hook_event_name }, { environment: other })
+    assert.notEqual(result.continue, false)
+    assert.match(result.systemMessage, /hook_checkpoint_owned_by_other_session/)
+  }
+  const denied = await handleContextHook({ ...payload, session_id: other.CODEX_THREAD_ID, hook_event_name: 'PreToolUse', tool_use_id: 'other-write' }, { environment: other })
+  assert.equal(denied.hookSpecificOutput?.permissionDecision, 'deny')
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'owner-write' })).hookSpecificOutput.additionalContext)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
+})
+
+test('postcompact failure preserves conversation and denies business tools with actionable feedback', async t => {
+  const { repo, invoke } = await nativeFixture(t)
+  assert.equal((await invoke('PreCompact')).continue, true)
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  const result = await invoke('PostCompact')
+  assert.notEqual(result.continue, false)
+  assert.match(result.systemMessage, /recovery.*context_sources_changed/)
+  const denied = await invoke('PreToolUse', { tool_use_id: 'business-write' })
+  assert.equal(denied.hookSpecificOutput?.permissionDecision, 'deny')
+  assert.match(denied.hookSpecificOutput.permissionDecisionReason, /recover|worktree/)
+})
+
+test('ordinary source edits without a compact lifecycle do not trap maintenance tools', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  const statePath = join(repo, '.cap/STATE.md')
+  writeFileSync(statePath, readFileSync(statePath, 'utf8') + '\ncontext-recovery-event: none\ncontext-recovery-receipt: none\n')
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
+  assert.deepEqual(await invoke('PreToolUse', { tool_use_id: 'refresh-owned-checkpoint' }), { continue: true })
+})
+
+test('scoped legacy recovery admits only the exact repair command and never changes shared checkpoint ownership', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const pointer = before.match(/^context-manifest: (.+)$/m)[1]
+  const manifest = JSON.parse(readFileSync(join(repo, pointer), 'utf8'))
+  delete manifest.entry.runtimeSessionId
+  const legacy = JSON.stringify(manifest)
+  writeFileSync(join(repo, pointer), legacy)
+  const failure = await invoke('PreCompact')
+  const command = failure.systemMessage.match(/: ('[^\n]+--reviewed-manifest '[^']+')\./)[1]
+  const repairInput = { tool_name: 'Bash', tool_input: { command }, tool_use_id: 'scoped-repair' }
+  assert.equal((await invoke('PreToolUse', repairInput)).hookSpecificOutput.permissionDecision, 'allow')
+  for (const extra of [
+    { tool_name: 'apply_patch' },
+    { tool_input: { command: command + '; echo arbitrary-command' } },
+    { tool_input: { command: command.replace(env.CODEX_THREAD_ID, 'other-session') } },
+  ]) assert.equal((await invoke('PreToolUse', { ...repairInput, ...extra })).hookSpecificOutput.permissionDecision, 'deny')
+  writeFileSync(join(repo, nativeHookPaths(env.CODEX_THREAD_ID).record), '{broken JSON')
+  assert.equal((await invoke('PreToolUse', repairInput)).hookSpecificOutput.permissionDecision, 'allow')
+  assert.equal((await recoverContextHook(repo, { sessionId: env.CODEX_THREAD_ID, reviewedManifest: pointer, environment: env })).valid, true)
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'first-business-tool' })).hookSpecificOutput.additionalContext)
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'first-business-tool' })).continue, true)
+  assert.equal((await invoke('PreCompact', { turn_id: 'retry-after-review' })).continue, true)
+  assert.equal((await invoke('PostCompact', { turn_id: 'retry-after-review' })).continue, true)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
+  assert.equal(readFileSync(join(repo, pointer), 'utf8'), legacy)
+  await assert.rejects(recoverContextHook(repo, { sessionId: env.CODEX_THREAD_ID, reviewedManifest: pointer + '.stale', environment: env }), /hook_reviewed_manifest_changed/)
+  const replacement = '.cap/context/manifest-replacement.json'
+  writeFileSync(join(repo, replacement), legacy)
+  writeFileSync(join(repo, '.cap/STATE.md'), before.replace(pointer, replacement))
+  const unreviewed = await invoke('PostCompact', { turn_id: 'post-only-new-manifest' })
+  assert.equal(unreviewed.continue, true)
+  assert.match(unreviewed.systemMessage, /hook_checkpoint_session_unbound/)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
+})
+
+test('foreign runtime checkpoints cannot be claimed through explicit recovery', async t => {
+  const { repo, env } = await nativeFixture(t)
+  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const pointer = before.match(/^context-manifest: (.+)$/m)[1]
+  const other = { ...env, CODEX_THREAD_ID: 'other-session' }
+  await inspectSessionRoot({ repoRoot: repo, environment: other })
+  await assert.rejects(recoverContextHook(repo, { sessionId: other.CODEX_THREAD_ID, reviewedManifest: pointer, environment: other }), /hook_checkpoint_owned_by_other_session/)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
+})
+
 test('native compact hooks recover once and inject exact context until the matching tool acknowledgment', async t => {
   const { repo, invoke, env } = await nativeFixture(t)
   assert.equal((await invoke('PreCompact')).continue, true)
   assert.equal((await invoke('PostCompact')).continue, true)
   const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
-  const event = state.match(/^context-recovery-event: (.+)$/m)[1]
+  const event = nativeRecord(repo, env).record.event
   assert.match(event, /^codex-native:/)
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
   assert.equal((await invoke('PostCompact')).continue, true)
@@ -269,12 +386,12 @@ test('native callbacks reject another host session and stale source without chan
   const { repo, invoke, payload, env } = await nativeFixture(t)
   const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
   const wrong = await handleContextHook({ ...payload, hook_event_name: 'PostCompact', session_id: 'other-host' }, { environment: env })
-  assert.equal(wrong.continue, false)
-  assert.match(wrong.stopReason, /hook_session_mismatch/)
+  assert.equal(wrong.continue, true)
+  assert.match(wrong.systemMessage, /hook_session_mismatch/)
   assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
   assert.equal((await invoke('PreCompact')).continue, true)
   writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
-  assert.equal((await invoke('PostCompact')).continue, false)
+  assert.match((await invoke('PostCompact')).systemMessage, /context_sources_changed/)
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
 })
 
@@ -283,8 +400,8 @@ test('a missing PostCompact fails closed before any tool can run', async t => {
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
   assert.equal((await invoke('PreCompact')).continue, true)
   const notice = await invoke('PreToolUse', { tool_use_id: 'repair-checkpoint' })
-  assert.equal(notice.continue, false)
-  assert.match(notice.stopReason, /hook_postcompact_missing/)
+  assert.equal(notice.hookSpecificOutput.permissionDecision, 'deny')
+  assert.match(notice.systemMessage, /hook_postcompact_missing/)
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
   const result = spawnSync(process.execPath, [join(packageRoot, 'scripts/cap-execute.mjs'), 'run', '--repo', repo, '--stage', 'implement', '--', process.execPath, '-e', 'process.exit(89)'], { env, encoding: 'utf8' })
   assert.notEqual(result.status, 89)
@@ -300,8 +417,8 @@ test('a missing hook record cannot reopen tools while recovery is pending', asyn
   assert.ok(record)
   rmSync(join(repo, '.cap/context', record))
   const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool' })
-  assert.equal(denied.continue, false)
-  assert.match(denied.stopReason, /context_recovery_required|hook_recovery_record_missing/)
+  assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny')
+  assert.match(denied.systemMessage, /hook_recovery_record_missing/)
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
 })
 
@@ -313,21 +430,20 @@ test('a missing recovered native hook record cannot skip first-tool replay', asy
   assert.ok(record)
   rmSync(join(repo, '.cap/context', record))
   const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool' })
-  assert.equal(denied.continue, false)
-  assert.match(denied.stopReason, /hook_recovery_record_missing/)
+  assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny')
+  assert.match(denied.systemMessage, /hook_recovery_record_missing/)
 })
 
 test('native PostCompact without PreCompact still binds a real event; tampered replay stays blocked', async t => {
-  const { repo, invoke } = await nativeFixture(t)
+  const { repo, invoke, env } = await nativeFixture(t)
   assert.equal((await invoke('PostCompact')).continue, true)
-  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
-  const path = join(repo, state.match(/^context-recovery-receipt: (.+)$/m)[1])
-  const receipt = JSON.parse(readFileSync(path, 'utf8'))
-  receipt.hot[0].assertion = 'unapproved replacement'
-  writeFileSync(path, JSON.stringify(receipt))
+  const { path, record } = nativeRecord(repo, env)
+  record.recovery.hot[0].assertion = 'unapproved replacement'
+  writeFileSync(path, JSON.stringify(record))
   const denied = await invoke('PreToolUse', { tool_use_id: 'tool-one' })
-  assert.equal(denied.continue, false)
-  assert.match(denied.stopReason, /hook_(?:receipt_invalid|recovery_stale)/)
+  assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny')
+  assert.match(denied.systemMessage, /hook_(?:receipt_invalid|recovery_stale)/)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
 })
 
 test('native PreToolUse rejects a Task or Session mismatch instead of bypassing recovery', async t => {
@@ -336,14 +452,14 @@ test('native PreToolUse rejects a Task or Session mismatch instead of bypassing 
   const statePath = join(repo, '.cap/STATE.md')
   writeFileSync(statePath, readFileSync(statePath, 'utf8').replace('task-id: local-fixture', 'task-id: other-task'))
   const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool' })
-  assert.equal(denied.continue, false)
-  assert.match(denied.stopReason, /hook_compaction_binding_mismatch/)
+  assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny')
+  assert.match(denied.systemMessage, /hook_compaction_binding_mismatch|context_identity_changed/)
 })
 
 test('native delivery acknowledgment survives a legitimate source edit and a new PostCompact gets a new event', async t => {
   const { repo, invoke, env } = await nativeFixture(t)
   assert.equal((await invoke('PostCompact')).continue, true)
-  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const before = nativeRecord(repo, env).record.event
   assert.ok((await invoke('PreToolUse', { tool_use_id: 'edit-source' })).hookSpecificOutput)
   writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
   assert.equal((await invoke('PostToolUse', { tool_use_id: 'edit-source' })).continue, true)
@@ -351,8 +467,8 @@ test('native delivery acknowledgment survives a legitimate source edit and a new
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
   writeFileSync(join(repo, 'source.js'), 'export const value = 1\n')
   assert.equal((await invoke('PostCompact', { turn_id: 'turn-two' })).continue, true)
-  const after = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
-  assert.notEqual(before.match(/^context-recovery-event: (.+)$/m)[1], after.match(/^context-recovery-event: (.+)$/m)[1])
+  const after = nativeRecord(repo, env).record.event
+  assert.notEqual(before, after)
   assert.ok((await invoke('PreToolUse', { tool_use_id: 'next-tool', turn_id: 'turn-two' })).hookSpecificOutput)
 })
 
@@ -362,12 +478,12 @@ test('native global hooks do not intercept pristine Git repositories or bootstra
   execFileSync('git', ['init', '-q'], { cwd: repo })
   const payload = { cwd: repo, session_id: 'new-native-session', hook_event_name: 'PreToolUse', tool_use_id: 'bootstrap' }
   const env = { ...environment, CODEX_THREAD_ID: payload.session_id, CAPITAL_AGENT_SESSION_LOCK_DIR: join(repo, '.cap/local-state/session-locks') }
-  assert.deepEqual(await handleContextHook(payload, { environment: env }), { continue: true, suppressOutput: true })
+  assert.deepEqual(await handleContextHook(payload, { environment: env }), { continue: true })
   mkdirSync(join(repo, '.cap'), { recursive: true })
   for (const state of ['stage: understand\ntask-id: \n', 'stage: done\ntask-id: finished-task\n']) {
     writeFileSync(join(repo, '.cap/STATE.md'), state)
     for (const hook_event_name of ['PreToolUse', 'PreCompact', 'PostCompact']) {
-      assert.deepEqual(await handleContextHook({ ...payload, hook_event_name }, { environment: env }), { continue: true, suppressOutput: true })
+      assert.deepEqual(await handleContextHook({ ...payload, hook_event_name }, { environment: env }), { continue: true })
     }
   }
 })
@@ -375,9 +491,11 @@ test('native global hooks do not intercept pristine Git repositories or bootstra
 test('native hook writer contention fails closed and non-Git directories remain unaffected', async t => {
   const { repo, invoke, payload, env } = await nativeFixture(t)
   const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
-  const lock = join(repo, '.cap/.context-hook.lock')
+  assert.equal((await invoke('PreCompact')).continue, true)
+  const lock = join(repo, `${nativeHookPaths(env.CODEX_THREAD_ID).record}.lock`)
   writeFileSync(lock, 'another writer\n')
-  assert.match((await invoke('PostCompact')).stopReason, /hook_writer_busy/)
+  assert.match((await invoke('PostCompact')).systemMessage, /hook_writer_busy/)
+  assert.equal((await invoke('PreToolUse', { tool_use_id: 'write-during-contention' })).hookSpecificOutput.permissionDecision, 'deny')
   assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
   assert.equal(readFileSync(lock, 'utf8'), 'another writer\n')
   rmSync(lock)

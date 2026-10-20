@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.3
+
+- 修复全局压缩 Hook 将旧 manifest、会话错绑或恢复失败转成 `continue:false`，导致自动压缩与后续追问反复中断的死循环。准备/恢复失败保留聊天与压缩能力并显示原因；业务工具通过正式 deny 协议阻断，精确受控恢复命令保留修复通道。原生生命周期按会话保存，不再改写共享 STATE；旧检查点经审阅后只在当前会话局部恢复，禁止接管其他会话/Task。普通源码编辑不再误触发压缩恢复门禁。
+
 ## 0.13.2
 
 - 本机 Test Provider 改为能力可选：macOS/Linux 在查询或领取正式 Test Action 前真实启动 `sandbox-exec` / `bubblewrap` 做无副作用探测，文件存在但不可执行、namespace 被宿主禁用、未安装/未完成配置或认证的 Provider 与原生 Windows 均安全降级为 `remote-only`；正式 Action 只允许运行当前已安装的 test-only runtime，不再回退到旧 Runner 或 PATH 命令。不阻断安装、Doctor、普通本地代码、`cap-execute` 或本地测试，并继续等待 Server/Linux/Docker Runner。沙箱在探测后失效仍归类 `ENV_BLOCKED`，绝不无沙箱继承宿主权限执行正式 Action；领取请求发送后的断连/超时/5xx 会重新读取 canonical Action/lease，不能再未经证明声称 `claimed:false`。

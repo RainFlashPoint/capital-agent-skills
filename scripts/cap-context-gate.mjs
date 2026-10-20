@@ -28,6 +28,43 @@ function section(text, heading) {
 }
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
+export function nativeHookPaths(runtimeSessionId) {
+  const id = createHash('sha256').update(runtimeSessionId).digest('hex')
+  return { record: `.cap/context/codex-hook-${id}.json`, pending: `.cap/context/codex-pending-${id}.json` }
+}
+
+// Native lifecycle state is per runtime, never published into the shared STATE.
+// The separate pending marker keeps a lost record from reopening stage/tools.
+export function validateNativeRecovery(record, snapshot) {
+  const expected = { schemaVersion: 2, event: record.event, identity: record.identity, manifestPath: record.manifestPath, manifestDigest: record.manifestDigest, digest: record.digest, planDigest: checkpointDigest(snapshot.manifest.plan), ...contextReplay(snapshot.checkpoint, snapshot.manifest.plan) }
+  const digest = checkpointDigest(expected)
+  return record.recoveryDigest === digest && checkpointDigest(record.recovery) === digest
+}
+
+export async function inspectNativeRecovery(repo, binding, manifestPath) {
+  if (!binding.runtimeSessionId || binding.runtimeSessionId === 'none') return null
+  const paths = nativeHookPaths(binding.runtimeSessionId)
+  let pending, record
+  try { pending = JSON.parse(await readContained(repo, paths.pending)) }
+  catch (cause) { if (cause.code === 'ENOENT') return null; return 'hook_recovery_marker_invalid' }
+  try { record = JSON.parse(await readContained(repo, paths.record)) }
+  catch { return 'hook_recovery_record_missing' }
+  const keys = ['taskId', 'sessionId', 'runtimeSessionId', 'repo', 'branch']
+  if (pending.schemaVersion !== 2 || record.schemaVersion !== 2 || pending.event !== record.event ||
+    !keys.every(key => pending.identity?.[key] === record.identity?.[key] && record.identity?.[key] === binding[key])) return 'hook_compaction_binding_mismatch'
+  if (record.phase === 'delivered') return null
+  if (record.phase === 'recovered') {
+    try {
+      const snapshot = await loadContextManifest(repo, manifestPath)
+      if ((!snapshot.manifest.entry?.runtimeSessionId || snapshot.manifest.entry.runtimeSessionId === 'none') && record.legacyReviewed !== true) return 'context_native_recovery_required'
+      if (record.manifestPath === manifestPath && record.manifestDigest === checkpointDigest(snapshot.manifest) &&
+        ['commit', 'stage', 'sourceFingerprint', 'semanticsHash'].every(key => record.identity[key] === binding[key]) &&
+        validateNativeRecovery(record, snapshot)) return null
+    } catch { /* A stale/missing/tampered receipt cannot unlock the stage. */ }
+  }
+  return 'context_native_recovery_required'
+}
+
 // The complete replay payload must match the validated snapshot. Checking only
 // ids permits an edited receipt to silently replace a protected assertion.
 export function validateRecoveryReceipt(receipt, manifest, checkpoint, binding) {
@@ -168,6 +205,10 @@ export async function inspectSemanticContext(candidate, options = {}) {
   const pointer = field(state, 'context-manifest')
   const active = binding.taskId && field(state, 'stage') && context && binding.stage !== 'done'
   const required = Boolean(active && (observedResumeEvent || STAGES.has(binding.stage) || PRESSURES.indexOf(pressure) >= 2 || (pointer && pointer !== 'none')))
+  if (!options.skipNativeRecovery) {
+    const nativeFailure = await inspectNativeRecovery(repo, binding, pointer)
+    if (nativeFailure) return result(nativeFailure, { kind: 'recover_context_checkpoint' })
+  }
   if (required && observedResumeEvent && observedResumeEvent !== binding.recoveryEvent) return result('context_recovery_required', { kind: 'recover_context_checkpoint', observedResumeEvent })
   if (active) {
     const historyRules = inspectHistoryRules(context, { repo: binding.repo, taskId: binding.taskId })
