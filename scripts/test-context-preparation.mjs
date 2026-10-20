@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -55,15 +55,26 @@ test('prepare duplicate replay keeps exact coverage and rejects edited alias/sou
 })
 
 test('prepare publishes a reviewed initial snapshot and reuses an unchanged binding', async t => {
-  const { repo, path } = await fixture(t)
-  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
-  assert.equal(first.valid, true, JSON.stringify(first))
-  assert.equal((await inspectSemanticContext(repo, { environment })).passed, true)
-  const files = readdirSync(join(repo, '.cap/context'))
-  const second = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
-  assert.equal(second.valid, true, JSON.stringify(second))
-  assert.equal(second.reused, true)
-  assert.deepEqual(readdirSync(join(repo, '.cap/context')), files)
+  for (const event of [undefined, 'visible-resume:unchanged']) {
+    const { repo, path } = await fixture(t)
+    const options = { budgetTokens: 20000, environment, event }
+    const first = await prepareContext(repo, { checkpointPath: path, ...options })
+    assert.equal(first.valid, true, JSON.stringify(first))
+    assert.equal(first.reused, false)
+    assert.equal((await inspectSemanticContext(repo, { environment })).passed, true)
+    const snapshot = () => [join(repo, '.cap/STATE.md'), ...readdirSync(join(repo, '.cap/context')).sort().map(name => join(repo, '.cap/context', name))]
+      .map(file => ({ file, content: readFileSync(file, 'utf8'), mtime: statSync(file, { bigint: true }).mtimeNs }))
+    const before = snapshot()
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // Omitting the path exercises reuse of the checkpoint published in STATE.
+      const next = await prepareContext(repo, options)
+      assert.equal(next.valid, true, JSON.stringify(next))
+      assert.equal(next.reused, true)
+      assert.equal(next.manifest, first.manifest)
+      assert.equal(next.digest, first.digest)
+      assert.deepEqual(snapshot(), before)
+    }
+  }
 })
 
 test('unbound legacy runtime accepts a host while a bound runtime rejects another session', async t => {
@@ -502,4 +513,55 @@ test('native hook writer contention fails closed and non-Git directories remain 
   const outside = mkdtempSync(join(tmpdir(), 'cap-native-no-repo-'))
   t.after(() => rmSync(outside, { recursive: true, force: true }))
   assert.equal((await handleContextHook({ ...payload, hook_event_name: 'PreCompact', cwd: outside }, { environment: env })).continue, true)
+})
+
+test('an old delivered record cannot bypass an interrupted second native compaction', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'first-tool' })).hookSpecificOutput)
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'first-tool' })).continue, true)
+  const { path } = nativeRecord(repo, env)
+  const delivered = readFileSync(path, 'utf8')
+  assert.equal(JSON.parse(delivered).phase, 'delivered')
+  assert.equal((await invoke('PreCompact', { turn_id: 'turn-two' })).continue, true)
+  // Reproduce failure after the new per-session pending marker is published,
+  // before the prior delivered record can be replaced.
+  writeFileSync(path, delivered)
+  const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool', turn_id: 'turn-two' })
+  assert.equal(denied.hookSpecificOutput?.permissionDecision, 'deny')
+  assert.notEqual(denied.continue, false)
+  assert.match(denied.systemMessage, /hook_recovery_marker_invalid/)
+})
+
+for (const key of ['task-id', 'session-id']) {
+  test(`a delivered native hook record cannot authorize another ${key}`, async t => {
+    const { repo, invoke } = await nativeFixture(t)
+    assert.equal((await invoke('PostCompact')).continue, true)
+    assert.ok((await invoke('PreToolUse', { tool_use_id: 'first-tool' })).hookSpecificOutput)
+    assert.equal((await invoke('PostToolUse', { tool_use_id: 'first-tool' })).continue, true)
+    const statePath = join(repo, '.cap/STATE.md')
+    writeFileSync(statePath, readFileSync(statePath, 'utf8').replace(new RegExp(`^${key}:.*$`, 'm'), `${key}: another-binding`))
+    const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool' })
+    assert.equal(denied.hookSpecificOutput?.permissionDecision, 'deny')
+    assert.notEqual(denied.continue, false)
+    assert.match(denied.systemMessage, /hook_compaction_binding_mismatch/)
+  })
+}
+
+test('a delivered native event permits a legitimate successor checkpoint receipt', async t => {
+  const { repo, invoke, env, checkpoint } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'first-tool' })).hookSpecificOutput)
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'first-tool' })).continue, true)
+  const before = nativeRecord(repo, env).record
+  const successor = structuredClone(checkpoint)
+  successor.atoms.push({ ...successor.atoms[0], id: 'native-successor-detail', type: 'constraint', protection: 'P2', assertion: 'New reviewed implementation detail' })
+  const nextPath = '.cap/context/checkpoint-native-successor.json'
+  writeFileSync(join(repo, nextPath), JSON.stringify(successor))
+  const result = await prepareContext(repo, { checkpointPath: nextPath, budgetTokens: 20000, environment: env })
+  assert.equal(result.valid, true, JSON.stringify(result))
+  const after = nativeRecord(repo, env).record
+  assert.deepEqual(after, before, 'reviewed succession does not rewrite the delivered native event')
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
+  assert.equal((await invoke('PreToolUse', { tool_use_id: 'next-tool' })).continue, true)
 })

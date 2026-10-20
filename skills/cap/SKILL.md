@@ -87,6 +87,8 @@ Server Test/Review 前精确 Commit 须在上游可见。`reconciliation.pushReq
 
 提交前执行目标测试、`bash scripts/validate-skills`（适用时）、`git diff --check`，核对 task-context 范围；行为变更同步 CHANGELOG、版本。
 
+维护 capital-agent-skills 本仓时区分交付意图：**普通维护**按影响面显式选择定向 Node/Python 测试，按改动类型补必要 E2E/eval；仅用户明确要求**正式 Skills 发版**交付时，才必须执行本仓完整发布门禁。行为变更、提交、推送或 `release` 阶段名本身不触发全量检查。复用现有显式命令入口与仓库维护约定，不为测试范围再建自动选择框架；压力测试仍须显式 opt-in。
+
 团队按 `skills/harvest-experience/SKILL.md` 回写摘要、路径，不传代码/秘密；本地生成并校验 `.cap/experience.md`。严格 Retire 记录可验证知识处置，完成态不直接移入 stale；按当前阶段 Skill 执行。
 
 只报告已证实结果：本地证据≠Server Gate，提交≠推送，分支推送≠合并/发布。

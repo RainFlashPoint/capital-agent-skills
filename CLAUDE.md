@@ -30,6 +30,11 @@
 2. **更新 `CHANGELOG.md`** + 必要时升 `.claude-plugin/{plugin,marketplace}.json` 的 `version`(语义化)。
 3. 行为变更 → 用 dogfood 验证(见下"测试")。
 
+## 测试入口：普通维护与正式 Skills 发版
+- **普通维护**：按影响面运行定向 Node/Python 测试、`bash scripts/validate-skills` 和 `git diff --check`；按改动类型补必要 E2E/eval。测试命令显式选择，`.cap/PROFILE.md` 不预设全量单测入口。
+- **正式 Skills 发版**：只有用户明确要求本仓正式发版交付时，才必须运行完整 `bash scripts/release-check`。普通行为改动、提交、推送或阶段名 `release` 都不自动升级为正式发版。
+- Outbox 压力仍为显式 opt-in，仅在修改 Outbox 并发、锁或测试编排器时追加。完整命令与范围见 `CONTRIBUTING.md`；不新增自动测试选择框架。
+
 ## 测试这套 skill(两层,markdown playbook 没法单测)
 - **结构 lint(可重复回归)**:`scripts/validate-skills` —— 一致性/悬空引用/frontmatter。
 - **行为 dogfood**:把某个流程 skill 真跑在一个**通用 fixture/真实项目**上,对照判据查产出(如 cap-understand 产的 surface-map 是否过 Phase C 三条自检)。产出样例见 `examples/`。**别把内部项目产物 commit 进来**(`docs/dogfood/` 已 gitignore,只在本地跑)。

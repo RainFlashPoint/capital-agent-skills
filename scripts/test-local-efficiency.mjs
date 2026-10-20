@@ -148,7 +148,7 @@ test('CLI compact mode suppresses successful noise and restores failed diagnosti
  assert.equal(r.status,0,r.stderr+r.stdout)
  let projected=JSON.parse(r.stdout)
  assert.equal(projected.outputMode,'compact');assert.equal(projected.gate.gate,'PASS');assert.doesNotMatch(r.stdout,/success-noise/)
- r=spawnSync(process.execPath,[cli,'run','--repo',root,'--compact','--',process.execPath,'-e','console.error("first clue\\n"+"noise\\n".repeat(5000)+"last clue\\ntoken=sk-123456789012345");process.exit(3)'],{encoding:'utf8',env})
+ r=spawnSync(process.execPath,[cli,'run','--repo',root,'--compact','--',process.execPath,'-e','console.error("first clue\\n"+"noise\\n".repeat(5000)+"last clue\\ntoken=sk-123456789012345");process.exitCode=3'],{encoding:'utf8',env})
  assert.equal(r.status,1)
  projected=JSON.parse(r.stdout)
  assert.equal(projected.outputMode,'full-fallback');assert.equal(projected.gate.gate,'BLOCKED');assert.match(projected.diagnostic.stderr,/first clue/);assert.match(projected.diagnostic.stderr,/REDACTED/);assert.doesNotMatch(r.stdout,/sk-123456789012345/)
