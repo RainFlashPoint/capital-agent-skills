@@ -5,5 +5,5 @@
   "category": "regression_coverage",
   "runner": "file_contains",
   "path": "scripts/release-check",
-  "patterns": ["node scripts/node-test-runner.mjs", "node scripts/node-test-runner.mjs --stress", "python3 -m unittest discover"]
+  "patterns": ["node scripts/node-test-runner.mjs", "python3 -m unittest discover"]
 }

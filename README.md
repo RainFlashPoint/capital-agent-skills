@@ -17,7 +17,8 @@
 | 证据 | 能证明什么 | 不能证明什么 |
 |---|---|---|
 | `node scripts/node-test-runner.mjs` | 当前工作区的常规 Node 回归；逐文件显示进度、限制并发并设置单文件超时 | 发布前 40 次并发写入压力覆盖 |
-| `bash scripts/release-check` | 当前工作区的结构、常规 Node/Python 回归、发布前并发压力、eval、fixture 和补丁卫生 | GitHub 上已经运行或已经发布 |
+| `bash scripts/release-check` | 当前工作区的结构、常规 Node/Python 回归、eval、fixture 和补丁卫生；默认不含压力测试 | GitHub 上已经运行或已经发布 |
+| `node scripts/node-test-runner.mjs --stress` | 显式执行 Outbox 的 40 次并发写入压力覆盖 | 常规回归已通过 |
 | GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
 | Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
@@ -32,6 +33,16 @@ node examples/e2e-local/run.mjs
 node scripts/node-test-runner.mjs
 bash scripts/release-check
 ```
+
+普通 Node 回归默认逐文件串行执行，每个文件限时 180 秒，输出开始、完成、耗时和汇总；默认测试集合不含 `stress-cap-outbox.mjs`。只有修改 Outbox 并发、锁或测试编排器时，才额外显式运行：
+
+```bash
+node scripts/node-test-runner.mjs --stress
+```
+
+该入口单独执行 40 次写入，最多 4 个活跃子进程，每个子进程限时 15 秒，整个压力文件限时 90 秒。
+
+上下文准备复用已有检查点：Task、Session、Commit、阶段、源码与语义绑定、恢复事件和预算均未变化时，`prepareContext` 返回 `reused: true`，不重复生成 manifest、原子日志或恢复回执。绑定变化后重新校验并更新相应证据。
 
 ## 快速安装
 

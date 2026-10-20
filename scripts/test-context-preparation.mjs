@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -55,15 +55,26 @@ test('prepare duplicate replay keeps exact coverage and rejects edited alias/sou
 })
 
 test('prepare publishes a reviewed initial snapshot and reuses an unchanged binding', async t => {
-  const { repo, path } = await fixture(t)
-  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
-  assert.equal(first.valid, true, JSON.stringify(first))
-  assert.equal((await inspectSemanticContext(repo, { environment })).passed, true)
-  const files = readdirSync(join(repo, '.cap/context'))
-  const second = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
-  assert.equal(second.valid, true, JSON.stringify(second))
-  assert.equal(second.reused, true)
-  assert.deepEqual(readdirSync(join(repo, '.cap/context')), files)
+  for (const event of [undefined, 'visible-resume:unchanged']) {
+    const { repo, path } = await fixture(t)
+    const options = { budgetTokens: 20000, environment, event }
+    const first = await prepareContext(repo, { checkpointPath: path, ...options })
+    assert.equal(first.valid, true, JSON.stringify(first))
+    assert.equal(first.reused, false)
+    assert.equal((await inspectSemanticContext(repo, { environment })).passed, true)
+    const snapshot = () => [join(repo, '.cap/STATE.md'), ...readdirSync(join(repo, '.cap/context')).sort().map(name => join(repo, '.cap/context', name))]
+      .map(file => ({ file, content: readFileSync(file, 'utf8'), mtime: statSync(file, { bigint: true }).mtimeNs }))
+    const before = snapshot()
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // Omitting the path exercises reuse of the checkpoint published in STATE.
+      const next = await prepareContext(repo, options)
+      assert.equal(next.valid, true, JSON.stringify(next))
+      assert.equal(next.reused, true)
+      assert.equal(next.manifest, first.manifest)
+      assert.equal(next.digest, first.digest)
+      assert.deepEqual(snapshot(), before)
+    }
+  }
 })
 
 test('unbound legacy runtime accepts a host while a bound runtime rejects another session', async t => {

@@ -1,12 +1,58 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawn, spawnSync } from 'node:child_process'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runTestFiles } from './node-test-runner.mjs'
+import { fileURLToPath } from 'node:url'
+import { discoverRegularTestFiles, runTestFiles } from './node-test-runner.mjs'
 
 const quiet = () => {}
+
+test('Node CLI keeps default regression separate from explicit stress', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cap-node-profiles-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'scripts'))
+  await writeFile(join(root, 'scripts/test-regular.mjs'), "import test from 'node:test'; test('regular marker', () => {})\n")
+  await writeFile(join(root, 'scripts/stress-cap-outbox.mjs'), "import test from 'node:test'; test('stress marker', () => {})\n")
+  assert.deepEqual(await discoverRegularTestFiles(root), ['scripts/test-regular.mjs'])
+  const runner = fileURLToPath(new URL('./node-test-runner.mjs', import.meta.url))
+  for (const stress of [false, true]) {
+    const result = spawnSync(process.execPath, [runner, ...(stress ? ['--stress'] : [])], {
+      cwd: root,
+      env: { ...process.env, CAP_NODE_TEST_CONCURRENCY: '', CAP_NODE_TEST_TIMEOUT_MS: '' },
+      encoding: 'utf8', timeout: 10_000,
+    })
+    assert.equal(result.status, 0, result.stdout + result.stderr)
+    assert.match(result.stdout, stress ? /profile=release-stress files=1 concurrency=1 timeout_ms=90000/ : /profile=regular files=1 concurrency=1 timeout_ms=180000/)
+    assert.match(result.stdout, stress ? /stress marker/ : /regular marker/)
+    assert.doesNotMatch(result.stdout, stress ? /regular marker/ : /stress marker/)
+    assert.match(result.stdout, /completed=1 passed=1 failed=0 timed_out=0 not_run=0 max_active=1/)
+  }
+})
+
+test('default release-check schedules regular regression without Outbox stress', { skip: process.platform === 'win32' }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cap-release-default-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'scripts'))
+  await mkdir(join(root, 'bin'))
+  await copyFile(new URL('./release-check', import.meta.url), join(root, 'scripts/release-check'))
+  await writeFile(join(root, 'scripts/validate-skills'), 'exit 0\n')
+  const log = join(root, 'commands.log')
+  for (const command of ['node', 'python3', 'git']) {
+    await writeFile(join(root, 'bin', command), `#!/bin/sh\nprintf '%s\\n' '${command}'\" $*\" >> \"$CAP_RELEASE_COMMAND_LOG\"\n`, { mode: 0o755 })
+  }
+  const result = spawnSync('bash', [join(root, 'scripts/release-check')], {
+    env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, CAP_RELEASE_COMMAND_LOG: log, CAP_RELEASE_DIFF_BASE: 'HEAD^' },
+    encoding: 'utf8', timeout: 10_000,
+  })
+  assert.equal(result.status, 0, result.stdout + result.stderr)
+  const commands = await readFile(log, 'utf8')
+  assert.match(commands, /^node scripts\/node-test-runner\.mjs$/m)
+  assert.match(commands, /^python3 -m unittest discover/m)
+  assert.doesNotMatch(commands, /--stress|stress-cap-outbox/)
+  assert.match(result.stdout, /RELEASE CHECK: PASS/)
+})
 
 test('node test runner keeps file concurrency within the configured limit', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cap-node-test-runner-'))
