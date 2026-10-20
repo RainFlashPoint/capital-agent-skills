@@ -9,27 +9,33 @@
 3. 行为变更先补能证明风险的回归；文档改动保持跨 Codex、Claude Code、Cursor 和 Windows/macOS/Linux 可移植。
 4. 不提交私有 Server 源码、凭据、内部地址、客户数据、真实 `.env` 或未脱敏截图。
 
-## 本地验证
+## 普通维护
 
-最小检查：
+普通代码、Skills、文档或测试路由修改，按实际影响范围选择定向 Node/Python 测试，再运行结构与补丁检查。下面是入口示例，测试文件应替换为本次改动对应的文件，未涉及的语言无需运行：
 
 ```bash
-node scripts/release-contract.mjs check --phase worktree
+node --test scripts/test-release-contract.mjs
+python3 -m unittest scripts.test_contrast_check
 bash scripts/validate-skills
 git diff --check
 ```
 
-行为或发布改动必须运行：
+现有 `cap-execute` 可通过显式命令记录这些定向测试；`.cap/PROFILE.md` 不预设统一全量单测命令。未选择测试时应先补齐定向命令，不能把未执行测试视为通过。
+
+修改 Agent/eval 场景时补相关 eval，安装或用户路径变化时补必要 E2E；只修改其他文档不因此运行这些检查。提交、推送、行为变更或进入 `release` 阶段，本身都不代表正式发版。
+
+## 正式 Skills 发版
+
+只有用户明确要求本仓正式 Skills 发版交付时，才必须按 [发布流程](docs/releasing.md) 运行完整门禁：
 
 ```bash
 bash scripts/release-check
 ```
 
-若改动涉及 Agent/eval 场景：
+它覆盖全量常规 Node/Python、结构、eval、E2E 与发布契约，不作为普通维护默认入口。Outbox 压力仍保持显式 opt-in；仅修改 Outbox 并发、锁或测试编排器时额外运行：
 
 ```bash
-node scripts/eval-cap.mjs --markdown
-node examples/e2e-local/run.mjs
+node scripts/node-test-runner.mjs --stress
 ```
 
 ## Pull Request 说明

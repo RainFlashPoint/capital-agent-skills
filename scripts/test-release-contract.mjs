@@ -1,9 +1,38 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { extractReleaseNotes, inspectGitHubRelease, inspectPublishedVersions, readReleaseContract, validateReleaseContract } from './release-contract.mjs'
+import { commandFor } from '../runtime/execution/local-support.mjs'
+
+const packageRoot = fileURLToPath(new URL('..', import.meta.url))
+
+test('maintenance profile requires explicit affected tests instead of automatic full-suite discovery', async () => {
+  assert.deepEqual(await commandFor(packageRoot, 'test'), {
+    argv: [], source: '.cap/PROFILE.md#test-commands', disabled: true,
+  })
+  for (const argv of [
+    ['node', '--test', 'scripts/test-release-contract.mjs'],
+    ['python3', '-m', 'unittest', 'scripts.test_contrast_check'],
+  ]) assert.deepEqual(await commandFor(packageRoot, 'test', argv), { argv, source: 'explicit' })
+})
+
+test('maintenance instructions reserve the full release gate for an explicit formal Skills release', async () => {
+  const contributing = await readFile(join(packageRoot, 'CONTRIBUTING.md'), 'utf8')
+  const maintenance = contributing.match(/^## 普通维护\n([\s\S]*?)(?=^## )/m)?.[1] || ''
+  for (const command of ['node --test', 'python3 -m unittest', 'bash scripts/validate-skills', 'git diff --check']) assert.ok(maintenance.includes(command), command)
+  assert.doesNotMatch(maintenance, /scripts\/release-check|--stress|test-\*\.mjs/)
+  const release = contributing.match(/^## 正式 Skills 发版\n([\s\S]*?)(?=^## )/m)?.[1] || ''
+  assert.ok(release.includes('明确'))
+  assert.ok(release.includes('bash scripts/release-check'))
+  for (const path of ['CLAUDE.md', 'README.md', 'skills/cap/SKILL.md', '.cap/PROFILE.md']) {
+    const text = await readFile(join(packageRoot, path), 'utf8')
+    assert.ok(text.includes('普通维护'), path)
+    assert.ok(text.includes('正式 Skills 发版'), path)
+  }
+})
 
 async function fixture(version = '1.2.3') {
   const root = await mkdtemp(join(tmpdir(), 'cap-release-contract-'))

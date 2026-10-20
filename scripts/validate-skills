@@ -244,6 +244,11 @@ grep -q 'node scripts/eval-cap.mjs' scripts/release-check || err "完整发布�
 grep -q 'node examples/e2e-local/run.mjs' scripts/release-check || err "完整发布门禁未运行本地端到端 fixture"
 grep -q 'node scripts/node-test-runner.mjs$' scripts/release-check || err "完整发布门禁未运行有界常规 Node 回归"
 grep -q 'node scripts/node-test-runner.mjs --stress' README.md || err "README 未公开显式 Outbox 压力回归入口"
+for source in CLAUDE.md CONTRIBUTING.md README.md .cap/PROFILE.md "$ROOT/cap/SKILL.md"; do
+  grep -q '普通维护' "$source" || err "$source 缺普通维护的定向验证约定"
+  grep -q '正式 Skills 发版' "$source" || err "$source 未区分正式 Skills 发版"
+done
+grep -q 'unit: "none' .cap/PROFILE.md || err "本仓 PROFILE 必须要求显式选择定向测试，不能默认运行整库"
 grep -q 'node-regression:' .github/workflows/ci.yml || err "公开 CI 未拆分 Node 回归"
 grep -q 'node scripts/node-test-runner.mjs' .github/workflows/ci.yml || err "公开 CI Node 回归未使用有界编排器"
 grep -q 'python-regression:' .github/workflows/ci.yml || err "公开 CI 未拆分 Python 回归"

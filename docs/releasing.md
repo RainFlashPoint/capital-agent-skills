@@ -1,5 +1,7 @@
 # Release process
 
+本页仅适用于用户明确要求本仓**正式 Skills 发版**交付。普通维护（包括行为改动、文档和测试路由）按 [CONTRIBUTING.md](../CONTRIBUTING.md) 运行定向测试、结构和补丁检查；提交、推送或阶段名不代表正式发版请求。
+
 版本单一事实源是 `.claude-plugin/plugin.json.version`。当前公开 workflow 只发布纯稳定 `x.y.z` 版本，拒绝 `-rc`、`-beta` 等 prerelease 和 `+build` metadata；不要先手工改 Tag/Release，再回头猜 manifest 应该是什么版本。
 
 ## 1. 准备候选版本

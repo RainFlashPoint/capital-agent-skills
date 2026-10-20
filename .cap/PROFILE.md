@@ -3,7 +3,12 @@
 harness-mode: local-only
 
 tech-stack: [markdown skills, node.js scripts, python utilities, shell validation]
-test-commands: { unit: "node --test scripts/test-*.mjs && python3 -m unittest scripts/test_intake.py scripts/test_contrast_check.py", coverage: "none — 纯文件协议未配置覆盖率门", e2e: "bash scripts/validate-skills", typecheck: "node --check <changed-js-file>", build: "none — 纯文件 Skill 与脚本无需构建" }
+test-commands: { unit: "none — 普通维护必须按影响面显式指定定向 Node/Python 测试，无统一全量默认命令", coverage: "none — 纯文件协议未配置覆盖率门", e2e: "bash scripts/validate-skills", typecheck: "node --check <changed-js-file>", build: "none — 纯文件 Skill 与脚本无需构建" }
+
+## 测试入口
+- 普通维护：显式传入相关 Node/Python 测试命令，执行结构与补丁检查；按改动类型补必要 E2E/eval。unit 的 none 表示必须先选择测试，不代表跳过测试或通过。
+- 正式 Skills 发版：只有用户明确要求本仓正式发版交付时，才必须运行完整 release-check。提交、推送、阶段名或行为变更本身不触发全量门禁。
+- Outbox 并发、锁或测试编排器变化时才额外显式运行压力入口；参考 CONTRIBUTING.md。复用既有 cap-execute 显式命令，不维护自动测试选择框架。
 
 ## Verification environment
 - runtime: node >=18 + Python 3 + Bash（macOS/Linux/Git Hook）或 PowerShell + Git for Windows（Windows 原生）

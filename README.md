@@ -12,29 +12,31 @@
 
 当前候选版本：`v0.13.2`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
 
-公开证据分为三层：
+公开证据按入口区分：
 
 | 证据 | 能证明什么 | 不能证明什么 |
 |---|---|---|
-| `node scripts/node-test-runner.mjs` | 当前工作区的常规 Node 回归；逐文件显示进度、限制并发并设置单文件超时 | 发布前 40 次并发写入压力覆盖 |
-| `bash scripts/release-check` | 当前工作区的结构、常规 Node/Python 回归、eval、fixture 和补丁卫生；默认不含压力测试 | GitHub 上已经运行或已经发布 |
+| 定向 Node/Python + `bash scripts/validate-skills` + `git diff --check` | 普通维护的受影响行为、结构和补丁卫生；按需补 E2E/eval | 全量发版门禁已通过 |
+| `node scripts/node-test-runner.mjs` | 显式全量 Node 自查；逐文件显示进度、限制并发并设置单文件超时 | 发布前 40 次并发写入压力覆盖 |
+| `bash scripts/release-check` | 正式 Skills 发版的完整本地门禁；默认不含压力测试 | GitHub 上已经运行或已经发布 |
 | `node scripts/node-test-runner.mjs --stress` | 显式执行 Outbox 的 40 次并发写入压力覆盖 | 常规回归已通过 |
 | GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
 | Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
 截至 2026-10-20，本轮发布前公开 `main`、Git Tag 与 GitHub Latest Release 的真实状态仍需在推送后回读；`v0.13.2` 只有在本地门禁、独立复核、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
 
-可复现入口：
+普通维护按影响面选择定向测试，例：修改版本契约时执行对应 Node 测试；修改 Python 工具时选择对应 unittest。测试文件需按实际改动替换，未涉及的语言无需运行：
 
 ```bash
-node scripts/release-contract.mjs check --phase worktree
-node scripts/eval-cap.mjs --markdown
-node examples/e2e-local/run.mjs
-node scripts/node-test-runner.mjs
-bash scripts/release-check
+node --test scripts/test-release-contract.mjs
+python3 -m unittest scripts.test_contrast_check
+bash scripts/validate-skills
+git diff --check
 ```
 
-普通 Node 回归默认逐文件串行执行，每个文件限时 180 秒，输出开始、完成、耗时和汇总；默认测试集合不含 `stress-cap-outbox.mjs`。只有修改 Outbox 并发、锁或测试编排器时，才额外显式运行：
+只有用户明确要求本仓**正式 Skills 发版**交付时，才必须执行完整 `bash scripts/release-check`，详见 [发布流程](docs/releasing.md)。普通维护、行为变更、提交、推送或 `release` 阶段名不自动触发该门禁；相关 E2E/eval 按改动类型补齐。`.cap/PROFILE.md` 要求先显式选择定向命令，复用现有 `cap-execute`，不默认发现整库测试。
+
+显式全量 Node 自查按文件串行执行，每个文件限时 180 秒，输出开始、完成、耗时和汇总；常规集合不含 `stress-cap-outbox.mjs`。只有修改 Outbox 并发、锁或测试编排器时，才额外显式运行：
 
 ```bash
 node scripts/node-test-runner.mjs --stress
