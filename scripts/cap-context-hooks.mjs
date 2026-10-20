@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process'
 import { lstat, open, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { setTimeout as delay } from 'node:timers/promises'
+import { performance } from 'node:perf_hooks'
 import { captureContextBinding, inspectSemanticContext, loadContextManifest, nativeHookPaths, readContained, validateNativeRecovery } from './cap-context-gate.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { checkpointDigest, contextReplay } from './cap-context-checkpoint.mjs'
@@ -20,6 +22,7 @@ const recoveryCommand = (repo, sessionId, manifestPath) => `${quote(process.exec
 
 function feedback(code, input = {}, repo = '', manifestPath = '') {
   const phase = input.hook_event_name === 'PreCompact' ? 'preparation' : input.hook_event_name === 'PreToolUse' ? 'tool gate' : 'recovery'
+  if (code === 'hook_writer_busy') return `Capital Agent context ${phase} busy: ${code}. Another callback is updating this session. Retry the tool after it finishes; if this persists, inspect the owning hook process before recovery. Do not remove a live writer's lock. Chat and native compaction remain available.`
   const recovery = code === 'hook_checkpoint_owned_by_other_session' || code === 'hook_compaction_binding_mismatch'
     ? 'This checkpoint belongs to another runtime/Task. Use that owning chat, or a separate worktree with a reviewed handoff and its own Task. Do not rebind shared STATE.'
     : `After reviewing the original sources, run the exact scoped recovery command (also supported through the tool gate): ${recoveryCommand(repo || input.cwd || '.', input.session_id || '', manifestPath || '<current .cap/context/manifest path>')}. Stale/invalid sources must first be repaired by the owning STATE writer; do not overwrite another session's checkpoint.`
@@ -47,6 +50,26 @@ export function codexHooksConfig() {
 async function optionalRecord(repo, path) {
   try { return JSON.parse(await readContained(repo, path)) }
   catch (cause) { if (cause.code === 'ENOENT') return null; throw cause }
+}
+
+async function acquireHookLock(repo, paths) {
+  // Stay below the native callback's 30-second budget. Never steal a lock,
+  // including after timeout: its owner alone may release it.
+  const deadline = performance.now() + 5000
+  for (;;) {
+    try { return await open(join(repo, `${paths.record}.lock`), 'wx', 0o600) }
+    catch (cause) {
+      if (cause.code !== 'EEXIST' || performance.now() >= deadline) throw cause
+      await delay(25)
+    }
+  }
+}
+
+function isDelivered(record, pending, binding) {
+  if (record?.phase !== 'delivered') return false
+  if (!matches(record.identity, binding, stableKeys)) throw new Error('hook_compaction_binding_mismatch')
+  if (record.schemaVersion === 2 && (!pending || pending.event !== record.event || !matches(pending.identity, record.identity))) throw new Error('hook_recovery_marker_invalid')
+  return true
 }
 
 async function checkSnapshotOwnership(repo, manifestPath, binding) {
@@ -132,11 +155,7 @@ export async function handleContextHook(input, { environment = process.env } = {
     record = await optionalRecord(repo, paths.record)
     let pending = await optionalRecord(repo, paths.pending)
     if (event === 'PostToolUse' && !record) return noop()
-    if ((event === 'PreToolUse' || event === 'PostToolUse') && record?.phase === 'delivered') {
-      if (!matches(record.identity, binding, stableKeys)) throw new Error('hook_compaction_binding_mismatch')
-      if (record.schemaVersion === 2 && (!pending || pending.event !== record.event || !matches(pending.identity, record.identity))) throw new Error('hook_recovery_marker_invalid')
-      return noop()
-    }
+    if ((event === 'PreToolUse' || event === 'PostToolUse') && isDelivered(record, pending, binding)) return noop()
     if (event === 'PreToolUse' && !record) {
       if (pending) throw new Error('hook_recovery_record_missing')
       const recoveryEvent = field(state, 'context-recovery-event')
@@ -145,15 +164,22 @@ export async function handleContextHook(input, { environment = process.env } = {
       return noop()
     }
     // Per-session lock: independent chats cannot steal or stall each other.
-    lock = await open(join(repo, `${paths.record}.lock`), 'wx', 0o600)
+    lock = await acquireHookLock(repo, paths)
     await lock.writeFile(`${process.pid}\n`)
     record = await optionalRecord(repo, paths.record)
     pending = await optionalRecord(repo, paths.pending)
     state = await readContained(repo, '.cap/STATE.md')
     binding = await captureContextBinding(repo, { environment: env })
+    // A preceding callback may have acknowledged while this one waited.
+    if (event === 'PreToolUse' || event === 'PostToolUse') {
+      await checkSnapshotOwnership(repo, field(state, 'context-manifest'), binding)
+      if (isDelivered(record, pending, binding)) return noop()
+    }
     if (event === 'PostToolUse') {
-      if (record?.phase === 'recovered' && record.injectingToolId === input.tool_use_id) {
+      if (record?.phase === 'recovered' && input.tool_use_id &&
+        (record.injectingToolId === input.tool_use_id || record.injectingToolIds?.includes(input.tool_use_id))) {
         if (!matches(record.identity, binding, stableKeys)) throw new Error('hook_compaction_binding_mismatch')
+        if (!pending || pending.event !== record.event || !matches(pending.identity, record.identity)) throw new Error('hook_recovery_marker_invalid')
         if (checkpointDigest(record.recovery) !== record.injectingReceiptDigest) throw new Error('hook_injected_receipt_changed')
         record.phase = 'delivered'
         await publishRecord(repo, paths.record, record)
@@ -193,6 +219,7 @@ export async function handleContextHook(input, { environment = process.env } = {
     if (record.phase !== 'recovered') throw new Error('hook_recovery_stale')
     verifyReplay(record, snapshot)
     if (!input.tool_use_id) throw new Error('hook_tool_identity_missing')
+    record.injectingToolIds = [...new Set([...(record.injectingToolIds || []), ...(record.injectingToolId ? [record.injectingToolId] : []), input.tool_use_id])]
     record.injectingToolId = input.tool_use_id
     record.injectingReceiptDigest = checkpointDigest(record.recovery)
     await publishRecord(repo, paths.record, record)
@@ -225,7 +252,7 @@ export async function recoverContextHook(candidate, { sessionId, reviewedManifes
   const paths = nativeHookPaths(sessionId)
   // Validate directory containment before opening the writer lock.
   await readContained(repo, reviewedManifest)
-  const lock = await open(join(repo, `${paths.record}.lock`), 'wx', 0o600)
+  const lock = await acquireHookLock(repo, paths)
   try {
     const snapshot = await currentSnapshot(repo, state, env, sessionId, { allowLegacy: true })
     const record = prepared(snapshot, `reviewed:${randomUUID()}`)

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFile, execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -510,9 +510,82 @@ test('native hook writer contention fails closed and non-Git directories remain 
   assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
   assert.equal(readFileSync(lock, 'utf8'), 'another writer\n')
   rmSync(lock)
+  // Contention alone does not quarantine or require reviewed recovery.
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'retry-after-contention' })).hookSpecificOutput?.additionalContext)
   const outside = mkdtempSync(join(tmpdir(), 'cap-native-no-repo-'))
   t.after(() => rmSync(outside, { recursive: true, force: true }))
   assert.equal((await handleContextHook({ ...payload, hook_event_name: 'PreCompact', cwd: outside }, { environment: env })).continue, true)
+})
+
+test('parallel native tool callbacks serialize recovery and acknowledge any injected tool', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  assert.equal((await invoke('PostCompact')).continue, true)
+  const ids = ['parallel-one', 'parallel-two', 'parallel-three']
+  const replies = await Promise.all(ids.map(tool_use_id => invoke('PreToolUse', { tool_use_id })))
+  for (const reply of replies) assert.ok(reply.hookSpecificOutput?.additionalContext, JSON.stringify(reply))
+  assert.equal(new Set(replies.map(reply => JSON.parse(reply.hookSpecificOutput.additionalContext).event)).size, 1)
+  const record = nativeRecord(repo, env).record
+  const firstToFinish = ids.find(id => id !== record.injectingToolId)
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'never-injected' })).continue, true)
+  assert.equal(nativeRecord(repo, env).record.phase, 'recovered')
+  assert.equal((await invoke('PostToolUse', { tool_use_id: firstToFinish })).continue, true)
+  assert.equal(nativeRecord(repo, env).record.phase, 'delivered')
+  assert.deepEqual(await invoke('PreToolUse', { tool_use_id: 'after-delivery' }), { continue: true })
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
+})
+
+test('native parallel callbacks coordinate across separate hook processes', async t => {
+  const { repo, invoke, env, payload } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  const run = (hook_event_name, tool_use_id) => new Promise((resolve, reject) => {
+    const child = execFile(process.execPath, [join(packageRoot, 'scripts/cap-context-hooks.mjs')], { env, timeout: 15000 }, (error, stdout) => {
+      if (error) return reject(error)
+      try { resolve(JSON.parse(stdout)) } catch (cause) { reject(cause) }
+    })
+    child.stdin.end(JSON.stringify({ ...payload, hook_event_name, tool_use_id }))
+  })
+  const ids = ['process-one', 'process-two', 'process-three']
+  const replies = await Promise.all(ids.map(id => run('PreToolUse', id)))
+  for (const reply of replies) assert.ok(reply.hookSpecificOutput?.additionalContext, JSON.stringify(reply))
+  const acknowledgments = await Promise.all(ids.map(id => run('PostToolUse', id)))
+  for (const reply of acknowledgments) assert.equal(reply.continue, true)
+  assert.equal(nativeRecord(repo, env).record.phase, 'delivered')
+  assert.ok(!readdirSync(join(repo, '.cap/context')).some(name => name.endsWith('.lock')))
+})
+
+test('native acknowledgment survives a later injected tool and legacy single-tool receipts', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  await invoke('PreToolUse', { tool_use_id: 'first-tool' })
+  await invoke('PreToolUse', { tool_use_id: 'later-tool' })
+  await invoke('PostToolUse', { tool_use_id: 'first-tool' })
+  assert.equal(nativeRecord(repo, env).record.phase, 'delivered')
+  assert.equal((await invoke('PostCompact', { turn_id: 'legacy-next-turn' })).continue, true)
+  await invoke('PreToolUse', { tool_use_id: 'legacy-tool' })
+  const { path, record } = nativeRecord(repo, env)
+  delete record.injectingToolIds
+  writeFileSync(path, JSON.stringify(record))
+  await invoke('PostToolUse', { tool_use_id: 'legacy-tool' })
+  assert.equal(nativeRecord(repo, env).record.phase, 'delivered')
+})
+
+test('a native callback waits for a transient writer without taking over its lock', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  const lock = join(repo, `${nativeHookPaths(env.CODEX_THREAD_ID).record}.lock`)
+  writeFileSync(lock, 'live-owner\n')
+  let ownerReleased = false
+  const release = setTimeout(() => {
+    assert.equal(readFileSync(lock, 'utf8'), 'live-owner\n')
+    rmSync(lock)
+    ownerReleased = true
+  }, 250)
+  t.after(() => clearTimeout(release))
+  const result = await invoke('PreToolUse', { tool_use_id: 'wait-for-owner' })
+  assert.ok(ownerReleased)
+  assert.ok(result.hookSpecificOutput?.additionalContext, JSON.stringify(result))
 })
 
 test('an old delivered record cannot bypass an interrupted second native compaction', async t => {
