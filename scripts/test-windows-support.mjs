@@ -10,6 +10,7 @@ import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { captureTaskBaseline } from './cap-worktree-baseline.mjs'
 import { localTestProviderLaunchPolicy, localTestProviderPolicy, localTestProviderSandboxCapability } from './setup-lib.mjs'
+import { launchLocalTestProvider } from './cap-local-test-provider.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const runtime = join(root, 'scripts', 'cap-runtime.mjs')
@@ -78,13 +79,39 @@ test('local Provider is optional and only enabled when a supported sandbox exist
     })
   }
   assert.throws(() => localTestProviderPolicy('freebsd'), /不支持的平台/)
-  assert.deepEqual(localTestProviderSandboxCapability('darwin', value => value === '/usr/bin/sandbox-exec'), { available: true, code: '', executable: '/usr/bin/sandbox-exec' })
-  assert.deepEqual(localTestProviderSandboxCapability('linux', () => false), { available: false, code: 'sandbox_unavailable', executable: '/usr/bin/bwrap' })
+  assert.deepEqual(localTestProviderSandboxCapability('darwin', { pathExists: value => value === '/usr/bin/sandbox-exec', probe: () => ({ status: 0 }) }), { available: true, code: '', executable: '/usr/bin/sandbox-exec', detail: '' })
+  assert.deepEqual(localTestProviderSandboxCapability('linux', { pathExists: () => false }), { available: false, code: 'sandbox_unavailable', executable: '/usr/bin/bwrap', detail: '' })
+  const unusable = localTestProviderSandboxCapability('linux', {
+    pathExists: () => true,
+    probe: () => ({ status: 1, stderr: 'bwrap: Creating new namespace failed: Operation not permitted' }),
+  })
+  assert.equal(unusable.available, false)
+  assert.equal(unusable.code, 'sandbox_unusable')
+  assert.match(unusable.detail, /Operation not permitted/)
   assert.deepEqual(localTestProviderLaunchPolicy('win32'), {
     allowed: false,
     code: 'windows_remote_only',
     detail: 'Windows 原生不启用本机 Test Provider；独立验证由 Server/Linux Runner 执行',
   })
+})
+
+test('launcher treats a missing installed Provider as remote-only instead of failing', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-provider-launcher-'))
+  await mkdir(join(repo, '.git'))
+  const result = launchLocalTestProvider({
+    repo,
+    actionId: 'action_fixture',
+    launchPolicy: { allowed: true, code: '', detail: '' },
+    environment: { HOME: repo, PATH: '' },
+    pathExists: value => value === join(repo, '.git'),
+    readOrigin: () => 'https://example.test/org/repo.git',
+    spawnProcess: () => ({ status: null, error: { code: 'ENOENT' }, stdout: '', stderr: '' }),
+  })
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.body.ok, true)
+  assert.equal(result.body.skipped, true)
+  assert.equal(result.body.mode, 'remote-only')
+  assert.equal(result.body.code, 'local_provider_unavailable')
 })
 
 test('remote-only hosts wait for a remote Runner without weakening Provider fail-closed behavior', async () => {
@@ -98,7 +125,7 @@ test('remote-only hosts wait for a remote Runner without weakening Provider fail
   assert.match(launcher, /localTestProviderLaunchPolicy\(process\.platform\)/)
   assert.match(launcher, /launchPolicy\.code/)
   assert.match(launcher, /skipped: true, mode: 'remote-only'/)
-  assert.ok(launcher.indexOf('if (!launchPolicy.allowed)') < launcher.indexOf("existsSync(resolve(repo, '.git'))"))
+  assert.ok(launcher.indexOf('if (!launchPolicy.allowed)') < launcher.indexOf("pathExists(resolve(repo, '.git'))"))
 })
 
 test('PowerShell entry is a thin argument-preserving wrapper around setup.mjs', async () => {

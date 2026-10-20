@@ -12,7 +12,6 @@ import { checkpointDigest } from './cap-context-checkpoint.mjs'
 const field = (text, name) => text.match(new RegExp(`^(?:- )?${name}:[ \\t]*([^\\r\\n]*)`, 'm'))?.[1]?.trim() || ''
 const noop = () => ({ continue: true, suppressOutput: true })
 const blocked = code => ({ continue: false, stopReason: `Capital Agent context recovery blocked: ${code}. Refresh the reviewed checkpoint before continuing.`, systemMessage: `cap-context: ${code}` })
-const repair = code => ({ continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: JSON.stringify({ kind: 'cap-context-repair-required', reason: code, instruction: 'The development stage remains blocked. Use tools only to inspect original sources, refresh task-context and rebuild/rebind the reviewed checkpoint through cap. Do not treat this repair notice as authorization, restored evidence, or a passed gate.' }) } })
 const keys = ['taskId', 'sessionId', 'runtimeSessionId', 'repo', 'branch', 'commit', 'stage']
 const matches = (left, right) => keys.every(key => left?.[key] === right?.[key])
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'"
@@ -87,7 +86,7 @@ export async function handleContextHook(input, { environment = process.env } = {
       await publishRecord(repo, recordPath, record)
     }
     if (record && event === 'PreToolUse' &&
-      (record.identity.taskId !== binding.taskId || record.identity.sessionId !== binding.sessionId)) return noop()
+      (record.identity.taskId !== binding.taskId || record.identity.sessionId !== binding.sessionId)) throw new Error('hook_compaction_binding_mismatch')
     if (!record || !matches(record.identity, binding)) throw new Error('hook_compaction_binding_mismatch')
     if (event === 'PostCompact') {
       if (record.phase === 'prepared') {
@@ -111,10 +110,10 @@ export async function handleContextHook(input, { environment = process.env } = {
     return { continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: JSON.stringify({ instruction: 'Read restored hot atoms and needed warm sources before continuing. Native compact state is opaque; this receipt is local replay evidence only.', event: record.event, hot: receipt.hot, warmRefs: receipt.warmRefs }) } }
   } catch (cause) {
     const code = cause.code === 'EEXIST' ? 'hook_writer_busy' : /^[a-z][a-z0-9_]+$/.test(cause.message) ? cause.message : /^[a-z][a-z0-9_]+$/.test(cause.code || '') ? cause.code : 'hook_internal_error'
-    // The existing stage guard still denies execution. A repair-only context
-    // notice lets the agent read/write checkpoint sources instead of deadlocking
-    // the very tools needed to restore a stale or interrupted checkpoint.
-    return input?.hook_event_name === 'PreToolUse' && code !== 'hook_session_mismatch' && code !== 'hook_identity_invalid' ? repair(code) : blocked(code)
+    // PreToolUse is a security boundary: recovery failures must deny the
+    // original tool. Repair happens through a subsequent trusted lifecycle
+    // callback, never by allowing an arbitrary shell/write tool to continue.
+    return blocked(code)
   } finally {
     if (lock) { await lock.close(); await rm(join(repo, '.cap/.context-hook.lock'), { force: true }) }
   }

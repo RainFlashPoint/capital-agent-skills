@@ -17,9 +17,29 @@ const environmentFailures = [
   /(?:401|403).*(?:repository|artifact)|not authorized.*(?:repository|artifact)/i,
   /(?:EPERM|operation not permitted).*(?:lstat|\/private|sandbox)|(?:lstat|\/private|sandbox).*(?:EPERM|operation not permitted)/i,
   /(?:could not create shared memory segment|shmget|semget).*(?:operation not permitted|permission denied)/i,
+  /bwrap:.*(?:creating new namespace failed|operation not permitted|permission denied)/i,
+  /(?:sandbox-exec|bwrap).*(?:EACCES|ENOEXEC|operation not permitted|permission denied)/i,
 ]
 
 export const isEnvironmentFailure = diagnostic => environmentFailures.some(pattern => pattern.test(diagnostic))
+
+function sandboxProbeArgs(platform, pathExists) {
+  if (platform === 'darwin') return ['-p', '(version 1)(deny default)(allow process*)(allow file-read*)', '/usr/bin/true']
+  const args = ['--die-with-parent', '--new-session', '--unshare-all', '--share-net', '--proc', '/proc', '--dev', '/dev']
+  for (const path of ['/usr', '/bin', '/sbin', '/lib', '/lib64']) if (pathExists(path)) args.push('--ro-bind', path, path)
+  return [...args, '/bin/true']
+}
+
+export function inspectSandboxCapability(platform = process.platform, { pathExists = existsSync, runCommand = spawnSync } = {}) {
+  if (platform === 'win32') return { available: false, code: 'windows_remote_only', executable: '', detail: '' }
+  const executable = platform === 'darwin' ? '/usr/bin/sandbox-exec' : platform === 'linux' ? '/usr/bin/bwrap' : ''
+  if (!executable) return { available: false, code: 'sandbox_unsupported', executable: '', detail: `unsupported platform: ${platform}` }
+  if (!pathExists(executable)) return { available: false, code: 'sandbox_unavailable', executable, detail: '' }
+  const result = runCommand(executable, sandboxProbeArgs(platform, pathExists), { encoding: 'utf8', stdio: 'pipe', timeout: 5000 })
+  const detail = String(result.stderr || result.stdout || result.error?.message || '').trim().slice(0, 500)
+  if (result.status !== 0 || result.error) return { available: false, code: 'sandbox_unusable', executable, detail }
+  return { available: true, code: '', executable, detail: '' }
+}
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, { encoding: 'utf8', stdio: 'pipe', ...options })
@@ -223,7 +243,7 @@ async function commandEvidence(action, cwd, leaseState) {
       const diagnostic = `${result.stderrPreview || ''}\n${result.stdoutPreview || ''}\n${result.error?.message || ''}`
       const ok = result.status === 0 && !result.error
       if (ok) passed += 1
-      else failures.push(['ETIMEDOUT', 'SANDBOX_UNAVAILABLE', 'LEASE_LOST'].includes(result.error?.code) || isEnvironmentFailure(diagnostic) ? 'ENV_BLOCKED' : 'CODE_FAILED')
+      else failures.push(['ETIMEDOUT', 'SANDBOX_UNAVAILABLE', 'LEASE_LOST', 'EACCES', 'ENOEXEC', 'EPERM'].includes(result.error?.code) || isEnvironmentFailure(diagnostic) ? 'ENV_BLOCKED' : 'CODE_FAILED')
       receipts.push({
         commandId: `command_${hash(`${action.id}:${check.id}:${startedAt}`).slice(0, 16)}`,
         checkId: check.id,
@@ -257,13 +277,27 @@ async function commandEvidence(action, cwd, leaseState) {
   }
 }
 
-async function main() {
-  const repo = resolve(process.argv[2] || '')
-  const actionId = String(process.argv[3] || '').trim()
+export async function runLocalTestProviderRuntime({
+  repo = resolve(process.argv[2] || ''),
+  actionId = String(process.argv[3] || '').trim(),
+  platform = process.platform,
+  pathExists = existsSync,
+  runCommand = spawnSync,
+  environment = process.env,
+  output = value => process.stdout.write(value),
+} = {}) {
+  repo = resolve(repo)
   if (!repo || !existsSync(join(repo, '.git'))) throw new Error('必须传入本地 Git 仓库路径')
   if (!/^action_[a-zA-Z0-9-]+$/.test(actionId)) throw new Error('必须传入精确 Harness Action ID')
+  if (String(environment.CAPITAL_AGENT_MODE || '').trim().toLowerCase() === 'local') throw new Error('显式本地模式禁止连接平台或领取 Harness Action')
+  const sandbox = inspectSandboxCapability(platform, { pathExists, runCommand })
+  if (!sandbox.available) {
+    const result = { ok: true, skipped: true, mode: 'remote-only', code: sandbox.code, detail: `本机没有可实际运行的 OS 沙箱${sandbox.detail ? `：${sandbox.detail}` : ''}；未查询或领取 Action，客户端继续等待远端 Runner。` }
+    output(`${JSON.stringify(result, null, 2)}\n`)
+    return result
+  }
   const client = await clientConfig()
-  if (String(process.env.CAPITAL_AGENT_MODE || client.CAPITAL_AGENT_MODE || '').trim().toLowerCase() === 'local') throw new Error('显式本地模式禁止连接平台或领取 Harness Action')
+  if (String(client.CAPITAL_AGENT_MODE || '').trim().toLowerCase() === 'local') throw new Error('显式本地模式禁止连接平台或领取 Harness Action')
   const config = JSON.parse(await readFile(configPath, 'utf8'))
   if (!config.serverUrl || !config.runnerId || !config.runnerCredential) throw new Error('本地 Test Provider 尚未完成 setup')
   config.serverUrl = serverAddress(config.serverUrl)
@@ -325,13 +359,13 @@ async function main() {
     clearInterval(renewal)
     if (leaseState.lost) throw new Error(`Test Action 续租失败，已停止执行：${leaseState.error}`)
     const finished = await post(config, `/api/execution/runner/harness/actions/${actionId}/evidence`, { leaseId: claim.lease?.leaseId, evidence })
-    process.stdout.write(`${JSON.stringify({ ok: true, actionId, status: finished.status, outcome: evidence.outcome, summary: evidence.summary }, null, 2)}\n`)
+    output(`${JSON.stringify({ ok: true, actionId, status: finished.status, outcome: evidence.outcome, summary: evidence.summary }, null, 2)}\n`)
   } finally {
     await rm(worktree, { recursive: true, force: true }).catch(() => {})
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main().catch(error => {
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) runLocalTestProviderRuntime().catch(error => {
   process.stderr.write(`${JSON.stringify({ ok: false, error: String(error?.message || error) }, null, 2)}\n`)
   process.exit(1)
 })

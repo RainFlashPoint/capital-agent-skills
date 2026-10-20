@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { chmod, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rename, symlink, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { basename, dirname, join, relative, resolve } from 'path'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawnSync } from 'child_process'
 import { createRequire } from 'module'
 import { createHash, randomUUID } from 'crypto'
 
@@ -15,22 +15,44 @@ export const minimumMcpNodeVersion = '20.18.1'
 export const minimumLocalNodeVersion = '18.0.0'
 export const clientRestartNotice = () => '重要：已经打开的客户端不会热加载新 Skill/MCP。请完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，然后新建任务继续；现有分支和工作区改动不会丢失。'
 
-export function localTestProviderSandboxCapability(platform = process.platform, pathExists = existsSync) {
-  if (platform === 'win32') {
-    return { available: false, code: 'windows_remote_only', executable: '' }
+function sandboxProbeArgs(platform) {
+  if (platform === 'darwin') return ['-p', '(version 1)(deny default)(allow process*)(allow file-read*)', '/usr/bin/true']
+  if (platform === 'linux') {
+    const args = ['--die-with-parent', '--new-session', '--unshare-all', '--share-net', '--proc', '/proc', '--dev', '/dev']
+    for (const path of ['/usr', '/bin', '/sbin', '/lib', '/lib64']) if (existsSync(path)) args.push('--ro-bind', path, path)
+    return [...args, '/bin/true']
   }
+  return []
+}
+
+function sandboxProbe(platform, executable) {
+  return spawnSync(executable, sandboxProbeArgs(platform), { encoding: 'utf8', stdio: 'pipe', timeout: 5000 })
+}
+
+function sandboxProbeDetail(result = {}) {
+  return String(result.stderr || result.stdout || result.error?.message || '').trim().slice(0, 500)
+}
+
+export function localTestProviderSandboxCapability(platform = process.platform, options = {}) {
+  if (platform === 'win32') {
+    return { available: false, code: 'windows_remote_only', executable: '', detail: '' }
+  }
+  const pathExists = options.pathExists || existsSync
+  const probe = options.probe || sandboxProbe
   const executable = platform === 'darwin'
     ? '/usr/bin/sandbox-exec'
     : platform === 'linux'
       ? '/usr/bin/bwrap'
       : ''
   if (!executable) throw new Error(`本地 Test Provider 不支持的平台：${platform}`)
-  const available = pathExists(executable)
-  return { available, code: available ? '' : 'sandbox_unavailable', executable }
+  if (!pathExists(executable)) return { available: false, code: 'sandbox_unavailable', executable, detail: '' }
+  const result = probe(platform, executable)
+  if (result?.status !== 0 || result?.error) return { available: false, code: 'sandbox_unusable', executable, detail: sandboxProbeDetail(result) }
+  return { available: true, code: '', executable, detail: '' }
 }
 
 export function localTestProviderPolicy(platform = process.platform, options = {}) {
-  const capability = options.capability || localTestProviderSandboxCapability(platform, options.pathExists)
+  const capability = options.capability || localTestProviderSandboxCapability(platform, options)
   if (platform === 'win32') {
     return {
       supported: false,
@@ -46,7 +68,7 @@ export function localTestProviderPolicy(platform = process.platform, options = {
         supported: false,
         required: false,
         mode: 'remote-only',
-        detail: `当前主机缺少受支持的 ${sandbox} 沙箱；普通本地开发不受影响，正式 Test Action 由 Server/Linux/Docker Runner 执行`,
+        detail: `当前主机没有可实际运行的 ${sandbox} 沙箱${capability.detail ? `（${capability.detail}）` : ''}；普通本地开发不受影响，正式 Test Action 由 Server/Linux/Docker Runner 执行`,
       }
     }
     return {

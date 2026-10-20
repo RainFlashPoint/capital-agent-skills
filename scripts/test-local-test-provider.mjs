@@ -6,13 +6,46 @@ import { existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { spawn, spawnSync } from 'child_process'
-import { sandboxInvocation, isEnvironmentFailure } from '../runtime/local-test-provider.mjs'
+import { inspectSandboxCapability, runLocalTestProviderRuntime, sandboxInvocation, isEnvironmentFailure } from '../runtime/local-test-provider.mjs'
 
 const runtime = resolve('runtime/local-test-provider.mjs')
 const git = (repo, args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
 
 const macSandbox = process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec')
 const shellQuote = value => "'" + String(value).replaceAll("'", "'\\''") + "'"
+
+test('runtime sandbox preflight detects an installed but unusable bubblewrap', () => {
+  const capability = inspectSandboxCapability('linux', {
+    pathExists: () => true,
+    runCommand: () => ({ status: 1, stderr: 'bwrap: Creating new namespace failed: Operation not permitted' }),
+  })
+  assert.equal(capability.available, false)
+  assert.equal(capability.code, 'sandbox_unusable')
+  assert.match(capability.detail, /Operation not permitted/)
+  assert.equal(isEnvironmentFailure(capability.detail), true)
+})
+
+test('runtime degrades to remote-only before reading config or contacting the Server', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cap-provider-preflight-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const repo = join(root, 'repo')
+  await mkdir(join(repo, '.git'), { recursive: true })
+  let output = ''
+  const result = await runLocalTestProviderRuntime({
+    repo,
+    actionId: 'action_fixture',
+    platform: 'linux',
+    pathExists: () => true,
+    runCommand: () => ({ status: 1, stderr: 'bwrap: Creating new namespace failed: Operation not permitted' }),
+    environment: {},
+    output: value => { output += value },
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.equal(result.mode, 'remote-only')
+  assert.equal(result.code, 'sandbox_unusable')
+  assert.match(output, /未查询或领取 Action/)
+})
 
 async function sandboxFixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'cap-provider-sandbox-'))

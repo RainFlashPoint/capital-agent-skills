@@ -278,13 +278,13 @@ test('native callbacks reject another host session and stale source without chan
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
 })
 
-test('a missing PostCompact leaves normal stage and execution gates blocked while repair tools remain usable', async t => {
+test('a missing PostCompact fails closed before any tool can run', async t => {
   const { repo, invoke, env } = await nativeFixture(t)
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
   assert.equal((await invoke('PreCompact')).continue, true)
   const notice = await invoke('PreToolUse', { tool_use_id: 'repair-checkpoint' })
-  assert.equal(notice.continue, true)
-  assert.equal(JSON.parse(notice.hookSpecificOutput.additionalContext).reason, 'hook_postcompact_missing')
+  assert.equal(notice.continue, false)
+  assert.match(notice.stopReason, /hook_postcompact_missing/)
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
   const result = spawnSync(process.execPath, [join(packageRoot, 'scripts/cap-execute.mjs'), 'run', '--repo', repo, '--stage', 'implement', '--', process.execPath, '-e', 'process.exit(89)'], { env, encoding: 'utf8' })
   assert.notEqual(result.status, 89)
@@ -302,7 +302,18 @@ test('native PostCompact without PreCompact still binds a real event; tampered r
   receipt.hot[0].assertion = 'unapproved replacement'
   writeFileSync(path, JSON.stringify(receipt))
   const denied = await invoke('PreToolUse', { tool_use_id: 'tool-one' })
-  assert.equal(JSON.parse(denied.hookSpecificOutput.additionalContext).kind, 'cap-context-repair-required')
+  assert.equal(denied.continue, false)
+  assert.match(denied.stopReason, /hook_(?:receipt_invalid|recovery_stale)/)
+})
+
+test('native PreToolUse rejects a Task or Session mismatch instead of bypassing recovery', async t => {
+  const { repo, invoke } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  const statePath = join(repo, '.cap/STATE.md')
+  writeFileSync(statePath, readFileSync(statePath, 'utf8').replace('task-id: local-fixture', 'task-id: other-task'))
+  const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool' })
+  assert.equal(denied.continue, false)
+  assert.match(denied.stopReason, /hook_compaction_binding_mismatch/)
 })
 
 test('native delivery acknowledgment survives a legitimate source edit and a new PostCompact gets a new event', async t => {
