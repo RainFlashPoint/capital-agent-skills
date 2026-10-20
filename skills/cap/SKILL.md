@@ -41,7 +41,7 @@ L1/L2 无风险时只加载必要 reference 和当前阶段 Skill。L3/L4、安�
 
 长会话按 `skills/cap-flow/references/context-compaction.md`；`contextGate` 未过按 `nextActions` 补齐重跑，无遥测仍检测阶段/语义变化。
 
-原生 Hook 见该 reference；注册、信任和真实回调分别取证。
+不安装全局压缩或工具 Hook；仅在 cap 流程内按可见压缩事件恢复。
 
 可见压缩/恢复后，**恢复必须先于继续读取业务代码或执行研发动作**：同源运行 `scripts/cap-context-checkpoint.mjs resume <repo> --event <unique-visible-event>`，读 hot 和所需 warm。没有可信压缩回调时不能承诺每次自动监听；摘要不证明恢复成功。审阅来源后用 `scripts/cap-context-checkpoint.mjs prepare`，参数见 reference，沿用授权。
 
