@@ -16,7 +16,8 @@
 
 | 证据 | 能证明什么 | 不能证明什么 |
 |---|---|---|
-| `bash scripts/release-check` | 当前工作区的结构、Node/Python 回归、eval、fixture 和补丁卫生 | GitHub 上已经运行或已经发布 |
+| `node scripts/node-test-runner.mjs` | 当前工作区的常规 Node 回归；逐文件显示进度、限制并发并设置单文件超时 | 发布前 40 次并发写入压力覆盖 |
+| `bash scripts/release-check` | 当前工作区的结构、常规 Node/Python 回归、发布前并发压力、eval、fixture 和补丁卫生 | GitHub 上已经运行或已经发布 |
 | GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
 | Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
@@ -28,6 +29,7 @@
 node scripts/release-contract.mjs check --phase worktree
 node scripts/eval-cap.mjs --markdown
 node examples/e2e-local/run.mjs
+node scripts/node-test-runner.mjs
 bash scripts/release-check
 ```
 
