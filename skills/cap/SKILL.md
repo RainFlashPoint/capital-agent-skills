@@ -1,6 +1,6 @@
 ---
 name: cap
-description: Capital Agent 研发工作的统一入口。用于实现功能、修复问题、测试验证、代码评审和发布交付；系统根据任务复杂度自动选择必要步骤，用户不需要理解或手动调用内部阶段。
+description: Capital Agent 研发入口：按风险选择实现、测试、评审和发布步骤，用户无需调用内部阶段。
 ---
 
 # Capital Agent 轻量研发入口
@@ -53,7 +53,7 @@ L1/L2 无风险时只加载必要 reference 和当前阶段 Skill。L3/L4、安�
 - `mode=local_explicit` / `mode=local_fallback_explicit`：只做本地证据，不写平台 Task/Experience/Delivery/Gate/Outbox，只能称本地 PASS。后者绑定运行会话 + 分支 + Task，新会话或 MCP 加载后失效。
 - 平台已连接或待 MCP 确认：以 Server canonical Task 为权威；直接 HTTP 探测失败但 MCP 已加载时继续用 MCP 确认，不能直接宣称平台断网。
 
-仅在平台已由 MCP 确认可用的团队模式中，`mode=platform_ready` 或 `task.id` 为空时，才必须先调用 `create_or_attach_task`，把 Task/Session 写回 `.cap/STATE.md` 并重跑 compact status，完成前不得进入研发阶段。该规则不适用于 `mode=restart_required`、`mode=local_explicit`、`mode=local_fallback_explicit` 或 `mode=local_degraded`，这些模式不得创建平台 Task 或补写 Delivery。团队模式下 `task.requiresNewSession=true` 时绑定返回的 follow-up `task.id`，不得复用旧 `session_id`，并重新提交本任务的验证命令；`reconciliation.needsDeliveryReconciliation=true` 时先对当前 Task 幂等补记普通 Delivery，不能把它误当候选 Delivery。
+MCP 确认可用的团队模式下，`mode=platform_ready` 或缺 `task.id`：先 `create_or_attach_task`，将 Task/Session 写 STATE 并重跑 compact status，绑定前不得研发。此规则不适用于 `restart_required`、`local_explicit`、`local_fallback_explicit`、`local_degraded`；这些模式不创建 Task 或补写 Delivery。团队 `task.requiresNewSession=true` 则绑定 follow-up Task、新 Session，重提验证命令；`reconciliation.needsDeliveryReconciliation=true` 先幂等补当前 Task 的普通 Delivery，不冒充候选。
 
 `repository.harnessMode=local-only` 的工具/Skills 仓只做本地维护验证；local-only 必须在读取平台凭据前拒绝候选 Push/Harness 动作。`harnessMode=server` 才能进入平台候选 Test/Review。
 
@@ -87,7 +87,7 @@ Server Test/Review 前精确 Commit 须在上游可见。`reconciliation.pushReq
 
 提交前执行目标测试、`bash scripts/validate-skills`（适用时）、`git diff --check`，核对 task-context 范围；行为变更同步 CHANGELOG、版本。
 
-维护 capital-agent-skills 本仓时区分交付意图：**普通维护**按影响面显式选择定向 Node/Python 测试，按改动类型补必要 E2E/eval；仅用户明确要求**正式 Skills 发版**交付时，才必须执行本仓完整发布门禁。行为变更、提交、推送或 `release` 阶段名本身不触发全量检查。复用现有显式命令入口与仓库维护约定，不为测试范围再建自动选择框架；压力测试仍须显式 opt-in。
+capital-agent-skills 本仓普通维护按影响面定向验证；仅用户明确要求正式 Skills 发版才运行完整发布门禁。行为变更、提交、推送或 `release` 阶段不自动触发全量。现有命令入口、Node/Python、E2E/eval 与 opt-in 压力规则见 `CONTRIBUTING.md`，不另建选择框架。
 
 团队按 `skills/harvest-experience/SKILL.md` 回写摘要、路径，不传代码/秘密；本地生成并校验 `.cap/experience.md`。严格 Retire 记录可验证知识处置，完成态不直接移入 stale；按当前阶段 Skill 执行。
 
