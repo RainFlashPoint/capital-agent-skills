@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { captureTaskBaseline } from './cap-worktree-baseline.mjs'
-import { localTestProviderLaunchPolicy, localTestProviderPolicy } from './setup-lib.mjs'
+import { localTestProviderLaunchPolicy, localTestProviderPolicy, localTestProviderSandboxCapability } from './setup-lib.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const runtime = join(root, 'scripts', 'cap-runtime.mjs')
@@ -52,7 +52,7 @@ function runRuntime(args, options = {}) {
   })
 }
 
-test('Windows uses Server/Linux Runner while macOS and Linux keep the required local provider', () => {
+test('local Provider is optional and only enabled when a supported sandbox exists', () => {
   assert.deepEqual(localTestProviderPolicy('win32'), {
     supported: false,
     required: false,
@@ -60,32 +60,45 @@ test('Windows uses Server/Linux Runner while macOS and Linux keep the required l
     detail: 'Windows 原生不启用本机 Test Provider；独立验证由 Server/Linux Runner 执行',
   })
   for (const platform of ['darwin', 'linux']) {
-    assert.deepEqual(localTestProviderPolicy(platform), {
+    assert.deepEqual(localTestProviderPolicy(platform, { capability: { available: true } }), {
       supported: true,
-      required: true,
+      required: false,
       mode: 'local-provider',
-      detail: '本机 Test Provider 必须安装并通过健康检查',
+      detail: '检测到受支持的 OS 沙箱；本机 Test Provider 可作为可选的 test-only Runner',
+    })
+    const remote = localTestProviderPolicy(platform, { capability: { available: false } })
+    assert.equal(remote.supported, false)
+    assert.equal(remote.required, false)
+    assert.equal(remote.mode, 'remote-only')
+    assert.match(remote.detail, /普通本地开发不受影响/)
+    assert.deepEqual(localTestProviderLaunchPolicy(platform, { capability: { available: false } }), {
+      allowed: false,
+      code: 'sandbox_remote_only',
+      detail: remote.detail,
     })
   }
   assert.throws(() => localTestProviderPolicy('freebsd'), /不支持的平台/)
+  assert.deepEqual(localTestProviderSandboxCapability('darwin', value => value === '/usr/bin/sandbox-exec'), { available: true, code: '', executable: '/usr/bin/sandbox-exec' })
+  assert.deepEqual(localTestProviderSandboxCapability('linux', () => false), { available: false, code: 'sandbox_unavailable', executable: '/usr/bin/bwrap' })
   assert.deepEqual(localTestProviderLaunchPolicy('win32'), {
     allowed: false,
     code: 'windows_remote_only',
     detail: 'Windows 原生不启用本机 Test Provider；独立验证由 Server/Linux Runner 执行',
   })
-  for (const platform of ['darwin', 'linux']) assert.equal(localTestProviderLaunchPolicy(platform).allowed, true)
 })
 
-test('Windows Action protocol waits for Server/Linux Runner without weakening POSIX fail-closed behavior', async () => {
+test('remote-only hosts wait for a remote Runner without weakening Provider fail-closed behavior', async () => {
   const cap = await readFile(join(root, 'skills', 'cap', 'SKILL.md'), 'utf8')
   const protocol = await readFile(join(root, 'skills', 'cap-flow', 'references', 'harness-action-protocol.md'), 'utf8')
   const launcher = await readFile(join(root, 'scripts', 'cap-local-test-provider.mjs'), 'utf8')
   for (const document of [cap, protocol]) {
     assert.match(document, /原生 Windows[\s\S]{0,300}(?:Server\/Linux Runner|Server canonical)/)
-    assert.match(document, /macOS\/Linux[\s\S]{0,500}local_provider_unavailable|macOS\/Linux[\s\S]{0,500}本机 Provider 不可用时明确阻塞/)
+    assert.match(document, /macOS\/Linux[\s\S]{0,700}(?:受支持的 OS 沙箱|remote-only)/)
   }
   assert.match(launcher, /localTestProviderLaunchPolicy\(process\.platform\)/)
   assert.match(launcher, /launchPolicy\.code/)
+  assert.match(launcher, /skipped: true, mode: 'remote-only'/)
+  assert.ok(launcher.indexOf('if (!launchPolicy.allowed)') < launcher.indexOf("existsSync(resolve(repo, '.git'))"))
 })
 
 test('PowerShell entry is a thin argument-preserving wrapper around setup.mjs', async () => {
@@ -98,12 +111,15 @@ test('PowerShell entry is a thin argument-preserving wrapper around setup.mjs', 
   assert.doesNotMatch(script, /Set-ExecutionPolicy|Invoke-Expression|iex\b/i)
 })
 
-test('setup applies the Windows Provider exception only around Provider work', async () => {
+test('setup keeps optional Provider readiness out of the overall installation gate', async () => {
   const setup = await readFile(join(root, 'scripts', 'setup.mjs'), 'utf8')
   assert.match(setup, /providerPolicy\.supported\s*\?\s*await inspectLocalTestProvider/)
   assert.match(setup, /!providerPolicy\.required\s*\|\|/)
   assert.match(setup, /SKIP（\$\{providerPolicy\.detail\}）/)
-  assert.match(setup, /if \(providerPolicy\.supported\) \{[\s\S]*bootstrapLocalTestProvider/)
+  assert.match(setup, /WARN（本机 Provider 未就绪；不阻断安装/)
+  assert.match(setup, /providerAvailable \? 'test-only' : 'remote-only'/)
+  assert.match(setup, /if \(providerPolicy\.supported\) \{[\s\S]*try \{[\s\S]*bootstrapLocalTestProvider/)
+  assert.match(setup, /catch \{[\s\S]*核心安装继续，正式 Test Action 将等待远端 Runner/)
   assert.match(setup, /!health\.ok[\s\S]*!mcpTools[\s\S]*!mcpRegistered[\s\S]*!providerReady/)
   assert.match(setup, /Codex Skill:[\s\S]*Claude Skill:[\s\S]*Cursor Skill:/)
   assert.match(setup, /!codexSkill && !claudeSkill && !cursorSkill/)

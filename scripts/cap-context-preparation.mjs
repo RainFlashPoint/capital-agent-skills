@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { writeFile, readFile, rename, rm, open } from 'node:fs/promises'
 import { join, posix } from 'node:path'
 import { captureContextBinding, captureContextPressure, captureCoverageRequirements, capturePublishedPredecessor, inspectSemanticContext, loadContextManifest, readContained, validateRecoveryReceipt } from './cap-context-gate.mjs'
-import { checkpointDigest, createManifest, fileSource, validateCheckpointTransition, validateManifest, planContext } from './cap-context-checkpoint.mjs'
+import { checkpointDigest, createManifest, fileSource, validateCheckpointTransition, validateManifest, planContext, contextReplay } from './cap-context-checkpoint.mjs'
 import { validateSemanticCoverage, semanticProtectionAdvisories } from './cap-context-coverage.mjs'
 import { resolveExecutionStage } from '../runtime/execution/local-support.mjs'
 
@@ -42,12 +42,13 @@ export async function prepareContext(candidate, options = {}) {
   }
 }
 
-async function prepareLocked(repo, { checkpointPath, budgetTokens, event, environment = process.env } = {}) {
+async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferRecovery = false, environment = process.env } = {}) {
   const { inspectTaskContext } = await import('./cap-runtime.mjs')
   let state = await readContained(repo, '.cap/STATE.md')
   const hostEvent = environment.CAPITAL_AGENT_CONTEXT_RESUME_EVENT
   if (event && hostEvent && event !== hostEvent) return failed([problem('context_recovery_event_mismatch')])
   event ||= hostEvent
+  if (deferRecovery && !event) return failed([problem('context_recovery_event_invalid')])
   if (event && (!/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,199}$/.test(event) || event === 'none')) return failed([problem('context_recovery_event_invalid')])
   // A visible event must remain blocking even when reconnaissance/coverage fails.
   if (event && event !== field(state, 'context-recovery-event')) {
@@ -55,6 +56,9 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, enviro
     await replaceState(repo, state, next)
     state = next
   }
+  // A native pre-compaction callback marks the event before the runtime may
+  // discard context. Missing/failed post callbacks must leave stage gates shut.
+  if (deferRecovery) return { valid: true, pending: true, event, errors: [] }
   const errors = []
   const stage = resolveExecutionStage({}, field(state, 'stage').replace(/^cap-/, ''))
   try { await inspectTaskContext(repo, { stage, checkSemantic: false, environment }) }
@@ -89,7 +93,7 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, enviro
   const existing = await inspectSemanticContext(repo, { environment })
   if (same && existing.passed) {
     const snapshot = await loadContextManifest(repo, existing.manifest)
-    if (snapshot.manifest.hotBudgetTokens === budgetTokens) return { valid: true, reused: true, manifest: existing.manifest, digest: existing.digest, errors: [], warnings: semanticProtectionAdvisories(checkpoint, requirements) }
+    if (snapshot.manifest.hotBudgetTokens === budgetTokens && snapshot.manifest.entry.runtimeSessionId === binding.runtimeSessionId) return { valid: true, reused: true, manifest: existing.manifest, digest: existing.digest, errors: [], warnings: semanticProtectionAdvisories(checkpoint, requirements) }
   }
 
   const sources = {}
@@ -128,7 +132,7 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, enviro
       if (validateRecoveryReceipt(old, manifest, checkpoint, binding)) recovery = old
     } catch { /* An absent/stale receipt requires exact replay of this candidate. */ }
     if (!recovery) {
-      recovery = { schemaVersion: 1, event: binding.recoveryEvent, ...Object.fromEntries(['taskId', 'sessionId', 'repo', 'branch', 'commit'].map(key => [key, binding[key]])), digest: manifest.digest, planDigest: hash(manifest.plan), hot: plan.hot.map(atom => checkpoint.atoms.find(item => item.id === atom.id)), warmRefs: plan.warm.flatMap(atom => atom.sourceRefs) }
+      recovery = { schemaVersion: 1, event: binding.recoveryEvent, ...Object.fromEntries(['taskId', 'sessionId', 'repo', 'branch', 'commit'].map(key => [key, binding[key]])), digest: manifest.digest, planDigest: hash(manifest.plan), ...contextReplay(checkpoint, manifest.plan) }
       const path = `.cap/context/recovery-${id}.json`
       await writeFile(join(repo, path), `${JSON.stringify(recovery, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
       const next = setField(state, 'context-recovery-receipt', path)
@@ -138,7 +142,7 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, enviro
     }
   }
   const currentBinding = await captureContextBinding(repo, { environment })
-  for (const key of ['taskId', 'sessionId', 'repo', 'branch', 'commit', 'stage', 'sourceFingerprint', 'semanticsHash', 'recoveryEvent']) if (currentBinding[key] !== binding[key]) return failed([problem('context_inputs_changed', key)])
+  for (const key of ['taskId', 'sessionId', 'runtimeSessionId', 'repo', 'branch', 'commit', 'stage', 'sourceFingerprint', 'semanticsHash', 'recoveryEvent']) if (currentBinding[key] !== binding[key]) return failed([problem('context_inputs_changed', key)])
   if (checkpointDigest(JSON.parse(await readContained(repo, checkpointPath))) !== checkpointDigest(checkpoint)) return failed([problem('context_checkpoint_changed')])
   manifest = makeManifest(currentBinding)
   checked = validateManifest(manifest, { checkpoint, previous: predecessor && !same ? predecessor.checkpoint : null, atomLogContent: log, sourceContents: sources })

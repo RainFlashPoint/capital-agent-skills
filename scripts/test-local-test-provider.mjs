@@ -1,13 +1,73 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'http'
-import { mkdtemp, mkdir, readFile, stat, writeFile } from 'fs/promises'
+import { mkdtemp, mkdir, readFile, stat, writeFile, rm } from 'fs/promises'
+import { existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { spawn, spawnSync } from 'child_process'
+import { sandboxInvocation, isEnvironmentFailure } from '../runtime/local-test-provider.mjs'
 
 const runtime = resolve('runtime/local-test-provider.mjs')
 const git = (repo, args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
+
+const macSandbox = process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec')
+const shellQuote = value => "'" + String(value).replaceAll("'", "'\\''") + "'"
+
+async function sandboxFixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'cap-provider-sandbox-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const cwd = join(root, 'repo'); const home = join(root, 'home')
+  await mkdir(cwd); await mkdir(home)
+  return { root, cwd, home, run: async command => {
+    const invocation = await sandboxInvocation(command, cwd, home)
+    return spawnSync(invocation.command, invocation.args, {
+      cwd, env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, LANG: 'C', LC_ALL: 'C' },
+      encoding: 'utf8', timeout: 15000, killSignal: 'SIGKILL',
+    })
+  } }
+}
+
+test('macOS sandbox permits child termination but denies host signals and file access', { skip: !macSandbox }, async t => {
+  const fixture = await sandboxFixture(t)
+  const secret = join(fixture.root, 'host-secret')
+  await writeFile(secret, 'host-only')
+  const host = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  t.after(() => host.kill('SIGKILL'))
+  const script = `
+    const assert = require('node:assert/strict');
+    assert.throws(() => require('node:fs').readFileSync(${JSON.stringify(secret)}), e => ['EACCES','EPERM'].includes(e.code));
+    assert.throws(() => process.kill(${host.pid}, 'SIGCONT'), e => e.code === 'EPERM');
+    const child = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 1500)'], {stdio:'ignore'});
+    child.on('error', error => { throw error });
+    child.on('close', (code, signal) => assert.equal(signal, 'SIGTERM'));
+    child.on('spawn', () => { child.kill('SIGTERM') });
+  `
+  const result = await fixture.run(`${shellQuote(process.execPath)} -e ${shellQuote(script)}`)
+  assert.equal(result.status, 0, result.stderr || String(result.error))
+  assert.equal(result.stderr, '')
+})
+
+test('macOS sandbox resolves Homebrew PostgreSQL symlinks while retaining shared-memory isolation', { skip: !macSandbox || !existsSync('/opt/homebrew/bin/initdb') || !existsSync('/opt/homebrew/share/postgresql/postgres.bki') }, async t => {
+  const fixture = await sandboxFixture(t)
+  const command = `/opt/homebrew/bin/initdb --no-locale -A trust -L /opt/homebrew/share/postgresql -D ${shellQuote(join(fixture.cwd, 'pgdata'))}`
+  const shown = await fixture.run(`${command} --show`)
+  assert.equal(shown.status, 0, shown.stderr || String(shown.error))
+  assert.doesNotMatch(shown.stderr, /could not resolve path|Operation not permitted|Permission denied/i)
+  const initialized = await fixture.run(command)
+  assert.doesNotMatch(initialized.stderr, /could not resolve path/i)
+  // SysV IPC has no per-clone namespace on macOS. Do not grant global IPC
+  // merely to make this check green; report the actual environment blocker.
+  assert.notEqual(initialized.status, 0)
+  assert.match(initialized.stderr, /could not create shared memory segment: Operation not permitted/i)
+  assert.equal(isEnvironmentFailure(initialized.stderr), true)
+})
+
+test('shared-memory permission denial is an environment blocker, not a business-code failure', () => {
+  assert.equal(isEnvironmentFailure('FATAL: could not create shared memory segment: Operation not permitted'), true)
+  assert.equal(isEnvironmentFailure('DETAIL: Failed system call was shmget(key=123, size=56): Permission denied'), true)
+  assert.equal(isEnvironmentFailure('AssertionError: incorrect account status'), false)
+})
 
 async function identityFixture(t, options = {}) {
   const home = await mkdtemp(join(tmpdir(), 'cap-provider-identity-'))

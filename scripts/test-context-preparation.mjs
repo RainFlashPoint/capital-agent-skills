@@ -9,6 +9,8 @@ import { captureContextBinding, captureCoverageRequirements, inspectSemanticCont
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { prepareContext } from './cap-context-preparation.mjs'
 import { inspectTaskContext } from './cap-runtime.mjs'
+import { handleContextHook } from './cap-context-hooks.mjs'
+import { inspectSessionRoot } from './cap-session-root.mjs'
 
 const packageRoot = fileURLToPath(new URL('..', import.meta.url))
 const environment = { CAPITAL_AGENT_MODE: 'local', PATH: process.env.PATH, HOME: process.env.HOME }
@@ -34,6 +36,24 @@ async function fixture(t, stage = 'implement') {
   return { repo, checkpoint, path }
 }
 
+test('prepare duplicate replay keeps exact coverage and rejects edited alias/source bindings', async t => {
+  const { repo, path, checkpoint } = await fixture(t)
+  const original = checkpoint.atoms[0]
+  checkpoint.atoms.push({ ...original, id: 'duplicate-intent', sourceRefs: [...original.sourceRefs, 'user-message:duplicate'] })
+  writeFileSync(join(repo, path), JSON.stringify(checkpoint))
+  const result = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event: 'host:duplicates', environment })
+  assert.equal(result.valid, true, JSON.stringify(result))
+  const group = result.recovery.hot.find(atom => atom.coveredAtomIds?.includes('duplicate-intent'))
+  assert.deepEqual(group.coveredAtomIds, ['duplicate-intent', original.id].sort())
+  assert.ok(group.sourceRefs.includes('user-message:duplicate'))
+  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const receiptPath = join(repo, state.match(/^context-recovery-receipt: (.+)$/m)[1])
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  receipt.hot.find(atom => atom.coveredAtomIds).coveredAtomIds.pop()
+  writeFileSync(receiptPath, JSON.stringify(receipt))
+  assert.equal((await inspectSemanticContext(repo, { environment })).passed, false)
+})
+
 test('prepare publishes a reviewed initial snapshot and reuses an unchanged binding', async t => {
   const { repo, path } = await fixture(t)
   const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
@@ -44,6 +64,20 @@ test('prepare publishes a reviewed initial snapshot and reuses an unchanged bind
   assert.equal(second.valid, true, JSON.stringify(second))
   assert.equal(second.reused, true)
   assert.deepEqual(readdirSync(join(repo, '.cap/context')), files)
+})
+
+test('unbound legacy runtime accepts a host while a bound runtime rejects another session', async t => {
+  const { repo, path } = await fixture(t)
+  assert.equal((await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })).valid, true)
+  const host = { ...environment, CODEX_THREAD_ID: 'host-one', CAPITAL_AGENT_SESSION_LOCK_DIR: join(repo, '.cap/session-locks') }
+  await inspectSessionRoot({ repoRoot: repo, environment: host, capture: true })
+  assert.equal((await inspectSemanticContext(repo, { environment: host })).passed, true)
+  assert.equal((await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment: host })).valid, true)
+  const otherHost = { ...host, CODEX_THREAD_ID: 'host-two' }
+  await inspectSessionRoot({ repoRoot: repo, environment: otherHost, capture: true })
+  const changedHost = await inspectSemanticContext(repo, { environment: otherHost })
+  assert.equal(changedHost.passed, false)
+  assert.equal(changedHost.reason, 'context_identity_changed')
 })
 
 test('prepare reuses content-identical atoms when only the source binding changes', async t => {
@@ -201,4 +235,118 @@ test('host resume event blocks status, stage guard and execution until replay', 
   const recovered = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment: env })
   assert.equal(recovered.valid, true, JSON.stringify(recovered))
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
+})
+
+async function nativeFixture(t) {
+  const result = await fixture(t)
+  const env = { ...environment, CODEX_THREAD_ID: 'fixture-native-thread', CAPITAL_AGENT_SESSION_LOCK_DIR: join(result.repo, '.cap/local-state/session-locks') }
+  await inspectSessionRoot({ repoRoot: result.repo, environment: env })
+  assert.equal((await prepareContext(result.repo, { checkpointPath: result.path, budgetTokens: 20000, environment: env })).valid, true)
+  const payload = { cwd: result.repo, session_id: env.CODEX_THREAD_ID, turn_id: 'turn-one', trigger: 'auto', transcript_path: '/must/not/read/private.jsonl' }
+  const invoke = (hook_event_name, extra = {}) => handleContextHook({ ...payload, hook_event_name, ...extra }, { environment: env })
+  return { ...result, env, payload, invoke }
+}
+
+test('native compact hooks recover once and inject exact context until the matching tool acknowledgment', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  assert.equal((await invoke('PreCompact')).continue, true)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const event = state.match(/^context-recovery-event: (.+)$/m)[1]
+  assert.match(event, /^codex-native:/)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), state)
+  const replay = await invoke('PreToolUse', { tool_use_id: 'tool-one' })
+  assert.ok(JSON.parse(replay.hookSpecificOutput.additionalContext).hot.length)
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'other-tool' })).continue, true)
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'tool-two' })).hookSpecificOutput)
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'tool-two' })).continue, true)
+  assert.equal((await invoke('PreToolUse', { tool_use_id: 'tool-three' })).hookSpecificOutput, undefined)
+})
+
+test('native callbacks reject another host session and stale source without changing unrelated task state', async t => {
+  const { repo, invoke, payload, env } = await nativeFixture(t)
+  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const wrong = await handleContextHook({ ...payload, hook_event_name: 'PostCompact', session_id: 'other-host' }, { environment: env })
+  assert.equal(wrong.continue, false)
+  assert.match(wrong.stopReason, /hook_session_mismatch/)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
+  assert.equal((await invoke('PreCompact')).continue, true)
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  assert.equal((await invoke('PostCompact')).continue, false)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
+})
+
+test('a missing PostCompact leaves normal stage and execution gates blocked while repair tools remain usable', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
+  assert.equal((await invoke('PreCompact')).continue, true)
+  const notice = await invoke('PreToolUse', { tool_use_id: 'repair-checkpoint' })
+  assert.equal(notice.continue, true)
+  assert.equal(JSON.parse(notice.hookSpecificOutput.additionalContext).reason, 'hook_postcompact_missing')
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
+  const result = spawnSync(process.execPath, [join(packageRoot, 'scripts/cap-execute.mjs'), 'run', '--repo', repo, '--stage', 'implement', '--', process.execPath, '-e', 'process.exit(89)'], { env, encoding: 'utf8' })
+  assert.notEqual(result.status, 89)
+  assert.equal(JSON.parse(result.stdout).contextGate.passed, false)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
+})
+
+test('native PostCompact without PreCompact still binds a real event; tampered replay stays blocked', async t => {
+  const { repo, invoke } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const path = join(repo, state.match(/^context-recovery-receipt: (.+)$/m)[1])
+  const receipt = JSON.parse(readFileSync(path, 'utf8'))
+  receipt.hot[0].assertion = 'unapproved replacement'
+  writeFileSync(path, JSON.stringify(receipt))
+  const denied = await invoke('PreToolUse', { tool_use_id: 'tool-one' })
+  assert.equal(JSON.parse(denied.hookSpecificOutput.additionalContext).kind, 'cap-context-repair-required')
+})
+
+test('native delivery acknowledgment survives a legitimate source edit and a new PostCompact gets a new event', async t => {
+  const { repo, invoke, env } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'edit-source' })).hookSpecificOutput)
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'edit-source' })).continue, true)
+  assert.equal((await invoke('PreToolUse', { tool_use_id: 'refresh-context' })).hookSpecificOutput, undefined)
+  assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, false)
+  writeFileSync(join(repo, 'source.js'), 'export const value = 1\n')
+  assert.equal((await invoke('PostCompact', { turn_id: 'turn-two' })).continue, true)
+  const after = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  assert.notEqual(before.match(/^context-recovery-event: (.+)$/m)[1], after.match(/^context-recovery-event: (.+)$/m)[1])
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'next-tool', turn_id: 'turn-two' })).hookSpecificOutput)
+})
+
+test('native global hooks do not intercept pristine Git repositories or bootstrap', async t => {
+  const repo = mkdtempSync(join(tmpdir(), 'cap-native-pristine-'))
+  t.after(() => rmSync(repo, { recursive: true, force: true }))
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  const payload = { cwd: repo, session_id: 'new-native-session', hook_event_name: 'PreToolUse', tool_use_id: 'bootstrap' }
+  const env = { ...environment, CODEX_THREAD_ID: payload.session_id, CAPITAL_AGENT_SESSION_LOCK_DIR: join(repo, '.cap/local-state/session-locks') }
+  assert.deepEqual(await handleContextHook(payload, { environment: env }), { continue: true, suppressOutput: true })
+  mkdirSync(join(repo, '.cap'), { recursive: true })
+  for (const state of ['stage: understand\ntask-id: \n', 'stage: done\ntask-id: finished-task\n']) {
+    writeFileSync(join(repo, '.cap/STATE.md'), state)
+    for (const hook_event_name of ['PreToolUse', 'PreCompact', 'PostCompact']) {
+      assert.deepEqual(await handleContextHook({ ...payload, hook_event_name }, { environment: env }), { continue: true, suppressOutput: true })
+    }
+  }
+})
+
+test('native hook writer contention fails closed and non-Git directories remain unaffected', async t => {
+  const { repo, invoke, payload, env } = await nativeFixture(t)
+  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const lock = join(repo, '.cap/.context-hook.lock')
+  writeFileSync(lock, 'another writer\n')
+  assert.match((await invoke('PostCompact')).stopReason, /hook_writer_busy/)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), before)
+  assert.equal(readFileSync(lock, 'utf8'), 'another writer\n')
+  rmSync(lock)
+  const outside = mkdtempSync(join(tmpdir(), 'cap-native-no-repo-'))
+  t.after(() => rmSync(outside, { recursive: true, force: true }))
+  assert.equal((await handleContextHook({ ...payload, hook_event_name: 'PreCompact', cwd: outside }, { environment: env })).continue, true)
 })

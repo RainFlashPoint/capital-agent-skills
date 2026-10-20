@@ -114,9 +114,12 @@ if (args.doctor) {
   const mcpTools = mcpRuntime && clientMcpStates.every((state,index) => !state.registered || clientMcpProbes[index])
   const provider = providerPolicy.supported ? await inspectLocalTestProvider(homedir()) : { ok: false, config: {} }
   const providerAuth = providerPolicy.supported && provider.ok ? await checkLocalTestProvider(provider.config) : { ok: false }
-  const providerReady = !providerPolicy.required || (provider.ok && providerAuth.ok)
-  const providerStatus = providerPolicy.supported ? (providerReady ? 'PASS' : 'FAIL') : `SKIP（${providerPolicy.detail}）`
-  const providerPermission = providerPolicy.supported ? (provider.ok ? 'test-only' : '不可用') : 'remote-only'
+  const providerAvailable = providerPolicy.supported && provider.ok && providerAuth.ok
+  const providerReady = !providerPolicy.required || providerAvailable
+  const providerStatus = providerPolicy.supported
+    ? (providerAvailable ? 'PASS' : 'WARN（本机 Provider 未就绪；不阻断安装，正式 Test Action 继续等待远端 Runner）')
+    : `SKIP（${providerPolicy.detail}）`
+  const providerPermission = providerAvailable ? 'test-only' : 'remote-only'
   const targets = skillTargets(homedir())
   const codexSkill = await hasSkillLink(join(root, 'skills'), targets.codex)
   const claudeSkill = await hasSkillLink(join(root, 'skills'), targets.claude)
@@ -179,9 +182,14 @@ if (/\r|\n/.test(serverUrl) || /\r|\n/.test(userKey)) throw new Error('平台配
 await mkdir(configDir,{recursive:true,mode:0o700}); await writeFile(configFile,`CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=${serverUrl}\nCAPITAL_AGENT_USER_KEY=${userKey}\nCAPITAL_AGENT_CLIENT_ID=${clientId}\n`,{mode:0o600}); await chmod(configFile,0o600)
 
 let localProvider = null
+let localProviderIssue = ''
 if (providerPolicy.supported) {
-  const registration = await bootstrapLocalTestProvider(serverUrl,userKey,{clientId,clientName:hostname()})
-  localProvider = await installLocalTestProvider({ home: homedir(), source: join(root,'runtime','local-test-provider.mjs'), serverUrl, registration, clientId })
+  try {
+    const registration = await bootstrapLocalTestProvider(serverUrl,userKey,{clientId,clientName:hostname()})
+    localProvider = await installLocalTestProvider({ home: homedir(), source: join(root,'runtime','local-test-provider.mjs'), serverUrl, registration, clientId })
+  } catch {
+    localProviderIssue = '本机 Test Provider 初始化未完成；核心安装继续，正式 Test Action 将等待远端 Runner'
+  }
 }
 const installedMcpVersion = await readFile(mcpRuntimePackage,'utf8').then(value=>JSON.parse(value).version).catch(()=> '')
 if (installedMcpVersion !== MCP_REMOTE_VERSION) {
@@ -208,7 +216,9 @@ if (!args.configOnly && !args.codexOnly && process.platform === 'win32') await i
 else if (!args.configOnly && !args.codexOnly && commandExists('claude')) { try { run('claude',['mcp','remove','capital-agent','-s','user']) } catch {}; run('claude',['mcp','add','-s','user','capital-agent','--',process.execPath,wrapper]) }
 if (args.project) run(process.execPath,[join(here,'install-git-governance.mjs')])
 await writeInstallManifest(homedir(), root)
-const providerInstallDetail = providerPolicy.supported
+const providerInstallDetail = localProvider
   ? `本地 Test Provider 已启用（按需运行、test-only）。配置仅保存在 ${configFile} 与 ${localProvider.configPath}`
+  : providerPolicy.supported
+  ? `${localProviderIssue || '本机 Test Provider 未启用；正式 Test Action 将等待远端 Runner'}。平台配置仅保存在 ${configFile}`
   : `${providerPolicy.detail}。配置仅保存在 ${configFile}`
 process.stdout.write(`Capital Agent 安装完成。${installed.join('，')}${migrationDetail(legacyMigration)}。真实研发请求将自动进入 Cap；${providerInstallDetail}。\n${clientRestartNotice()}\n`)

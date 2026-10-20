@@ -15,6 +15,7 @@ import {
   createManifest,
   validateManifest,
   validateAtomLog,
+  contextReplay,
 } from './cap-context-checkpoint.mjs'
 
 const script = fileURLToPath(new URL('./cap-context-checkpoint.mjs', import.meta.url))
@@ -57,6 +58,51 @@ function checkpoint(atoms = [atom()], overrides = {}) {
 function codes(result) {
   return result.errors.map(error => error.code)
 }
+
+test('replay coalesces exact semantic duplicates while retaining every audit atom and source', () => {
+  const assertion = 'Preserve the approved task boundary. '.repeat(80)
+  const original = checkpoint([
+    atom({ id: 'a', assertion }),
+    atom({ id: 'b', assertion, sourceRefs: ['user-message:43'] }),
+  ])
+  const before = JSON.stringify(original)
+  const legacy = planContext(original, { budgetTokens: 10000, replayVersion: 0 })
+  const plan = planContext(original, { budgetTokens: 10000 })
+  assert.equal(plan.valid, true)
+  assert.deepEqual(plan.hot.map(a => a.id), ['a', 'b'])
+  assert.ok(plan.hotTokens < legacy.hotTokens)
+  assert.equal(planContext(original, { budgetTokens: plan.hotTokens }).valid, true)
+  assert.equal(planContext(original, { budgetTokens: plan.hotTokens - 1 }).valid, false)
+  const replay = contextReplay(original, { replayVersion: 1, hot: ['a', 'b'], warm: [] })
+  assert.equal(replay.hot.length, 1)
+  assert.deepEqual(replay.hot[0].coveredAtomIds, ['a', 'b'])
+  assert.deepEqual(replay.hot[0].sourceRefs, ['user-message:42', 'user-message:43'])
+  assert.equal(contextReplay(original, { hot: ['a', 'b'], warm: [] }).hot.length, 2)
+  assert.equal(JSON.stringify(original), before)
+})
+
+test('replay never coalesces changed authority, scope, certainty, lineage or protection', () => {
+  for (const change of [
+    { trust: 'user-stated' }, { protection: 'P1', type: 'decision' },
+    { invalidation: ['another boundary'] }, { certainty: 'unknown' },
+    { scopeBinding: 'task' }, { assertion: 'Do NOT implement the approved behavior' },
+    { supersedes: ['ancestor'] }, { recoverability: 'source-backed' },
+  ]) {
+    const original = checkpoint([atom({ id: 'a' }), atom({ id: 'b', ...change })])
+    assert.equal(contextReplay(original, { replayVersion: 1, hot: ['a', 'b'], warm: [] }).hot.length, 2, JSON.stringify(change))
+  }
+})
+
+test('legacy duplicate manifests validate with their original token budget and unknown replay versions fail', () => {
+  const value = checkpoint([atom({ id: 'a' }), atom({ id: 'b' })])
+  const log = value.atoms.map(atom => JSON.stringify(atom)).join('\n') + '\n'
+  const manifest = createManifest(value, { checkpointPath: 'checkpoint.json', atomLogPath: 'atoms.jsonl', atomLogContent: log, budgetTokens: 10000, trigger: 'handoff', pressure: 'unknown' })
+  const legacy = planContext(value, { budgetTokens: 10000, replayVersion: 0 })
+  manifest.plan = { digest: legacy.digest, currentActionIds: [], hotTokens: legacy.hotTokens, ...Object.fromEntries(['hot', 'warm', 'cold', 'dropped'].map(tier => [tier, legacy[tier].map(atom => atom.id)])) }
+  assert.equal(validateManifest(manifest, { checkpoint: value, atomLogContent: log }).valid, true)
+  manifest.plan.replayVersion = 2
+  assert.ok(codes(validateManifest(manifest, { checkpoint: value, atomLogContent: log })).includes('manifest_replay_version_invalid'))
+})
 
 test('empty checkpoints cannot validate or produce a usable context plan', () => {
   assert.equal(validateCheckpoint(checkpoint([])).valid, false)
@@ -203,7 +249,7 @@ test('dynamic score uses focus, freshness, recoverability and duplicate penaltie
     make('focused'), make('normal'), make('stale', { freshness: 'stale' }),
     make('unique', { recoverability: 'irrecoverable' }), make('recompute', { recoverability: 'recomputable' }),
     make('dup-a', { assertion: 'duplicate' }), make('dup-b', { assertion: 'duplicate' }),
-  ]), { budgetTokens: 100, currentActionIds: ['focused'] })
+  ]), { budgetTokens: 100, currentActionIds: ['focused'], replayVersion: 0 })
   const scores = Object.fromEntries(result.hot.map(item => [item.id, item.effectivePriority]))
   assert.ok(scores.focused > scores.normal)
   assert.ok(scores.normal > scores.stale)

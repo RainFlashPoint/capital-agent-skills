@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { chmod, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rename, symlink, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { basename, dirname, join, relative, resolve } from 'path'
@@ -15,7 +15,22 @@ export const minimumMcpNodeVersion = '20.18.1'
 export const minimumLocalNodeVersion = '18.0.0'
 export const clientRestartNotice = () => '重要：已经打开的客户端不会热加载新 Skill/MCP。请完全退出并重新打开 ChatGPT/Codex/Claude/Cursor，然后新建任务继续；现有分支和工作区改动不会丢失。'
 
-export function localTestProviderPolicy(platform = process.platform) {
+export function localTestProviderSandboxCapability(platform = process.platform, pathExists = existsSync) {
+  if (platform === 'win32') {
+    return { available: false, code: 'windows_remote_only', executable: '' }
+  }
+  const executable = platform === 'darwin'
+    ? '/usr/bin/sandbox-exec'
+    : platform === 'linux'
+      ? '/usr/bin/bwrap'
+      : ''
+  if (!executable) throw new Error(`本地 Test Provider 不支持的平台：${platform}`)
+  const available = pathExists(executable)
+  return { available, code: available ? '' : 'sandbox_unavailable', executable }
+}
+
+export function localTestProviderPolicy(platform = process.platform, options = {}) {
+  const capability = options.capability || localTestProviderSandboxCapability(platform, options.pathExists)
   if (platform === 'win32') {
     return {
       supported: false,
@@ -25,21 +40,30 @@ export function localTestProviderPolicy(platform = process.platform) {
     }
   }
   if (platform === 'darwin' || platform === 'linux') {
+    if (!capability.available) {
+      const sandbox = platform === 'darwin' ? 'sandbox-exec' : 'bubblewrap'
+      return {
+        supported: false,
+        required: false,
+        mode: 'remote-only',
+        detail: `当前主机缺少受支持的 ${sandbox} 沙箱；普通本地开发不受影响，正式 Test Action 由 Server/Linux/Docker Runner 执行`,
+      }
+    }
     return {
       supported: true,
-      required: true,
+      required: false,
       mode: 'local-provider',
-      detail: '本机 Test Provider 必须安装并通过健康检查',
+      detail: '检测到受支持的 OS 沙箱；本机 Test Provider 可作为可选的 test-only Runner',
     }
   }
   throw new Error(`本地 Test Provider 不支持的平台：${platform}`)
 }
 
-export function localTestProviderLaunchPolicy(platform = process.platform) {
-  const policy = localTestProviderPolicy(platform)
+export function localTestProviderLaunchPolicy(platform = process.platform, options = {}) {
+  const policy = localTestProviderPolicy(platform, options)
   return policy.supported
     ? { allowed: true, code: '', detail: policy.detail }
-    : { allowed: false, code: 'windows_remote_only', detail: policy.detail }
+    : { allowed: false, code: platform === 'win32' ? 'windows_remote_only' : 'sandbox_remote_only', detail: policy.detail }
 }
 
 function isCompatibleNode(version = '', minimum = [18, 0, 0]) {

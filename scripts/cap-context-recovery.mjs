@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { writeFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { captureContextBinding, loadContextManifest, readContained } from './cap-context-gate.mjs'
-import { validateManifest } from './cap-context-checkpoint.mjs'
+import { validateManifest, contextReplay } from './cap-context-checkpoint.mjs'
 
 const field = (text, key) => text.match(new RegExp(`^(?:- )?${key}:[ \\t]*([^\\r\\n]*)`, 'm'))?.[1]?.trim() || ''
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -30,7 +30,7 @@ export async function observeContextResume(repo, { event = `visible-resume:${ran
   let receipt = null
   if (!errors.length) {
     const { manifest, checkpoint } = snapshot
-    receipt = { schemaVersion: 1, event, taskId: binding.taskId, sessionId: binding.sessionId, repo: binding.repo, branch: binding.branch, commit: binding.commit, digest: manifest.digest, planDigest: hash(manifest.plan), hot: manifest.plan.hot.map(id => checkpoint.atoms.find(atom => atom.id === id)), warmRefs: manifest.plan.warm.flatMap(id => checkpoint.atoms.find(atom => atom.id === id).sourceRefs) }
+    receipt = { schemaVersion: 1, event, taskId: binding.taskId, sessionId: binding.sessionId, repo: binding.repo, branch: binding.branch, commit: binding.commit, digest: manifest.digest, planDigest: hash(manifest.plan), ...contextReplay(checkpoint, manifest.plan) }
     const path = `.cap/context/recovery-${randomUUID()}.json`
     // readContained above verified the context directory's no-symlink chain.
     await writeFile(join(repo, path), `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx', mode: 0o600 })

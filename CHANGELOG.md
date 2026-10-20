@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.2
+
+- 本机 Test Provider 改为能力可选：macOS/Linux 仅在检测到 `sandbox-exec` / `bubblewrap` 时安装并领取正式 Test Action；缺少沙箱与原生 Windows 均为受支持的 `remote-only`，不阻断安装、Doctor、普通本地代码、`cap-execute` 或本地测试，并继续等待 Server/Linux/Docker Runner。Provider 运行时仍保留 `SANDBOX_UNAVAILABLE` fail-closed，绝不无沙箱继承宿主权限执行正式 Action。
+- 新增 Codex 原生压缩 Hook 适配：压缩前校验、压缩后串行恢复，首次工具前注入保护语义，并等待匹配工具完成后确认送达；绑定原生会话与 Task/源码，拒绝跨会话和过期收据，保留不支持宿主的可见摘要降级。
+- 语义去重改为版本化重放投影：完全相同且边界一致的语义只重放一次，保留所有原子 ID、来源、coverage 与撤销谱系；预算计入来源和覆盖 ID，旧 manifest/receipt 仍按原规则验证。
+- 修复 macOS 本地 Test Provider 的 Homebrew PostgreSQL 路径解析：只补既有允许工具目录的祖先元数据权限；允许同一沙箱内进程发送信号，使 Node/Next 子进程正常退出，同时保留宿主文件和外部进程隔离。
+- PostgreSQL 初始化若因沙箱拒绝 SysV 共享内存而失败，归类为 `ENV_BLOCKED`，不再归咎业务代码；不以放开宿主共享内存或跳过原检查伪造通过。
+
 ## 0.13.1
 
 - 增加方案必要性 Gate：迁移、换地址、升级和环境适配先对照既有成功路径与必要差异，明确“重新取证 ≠ 重新实现”；构建工具、基础镜像、源码导出、产物布局或执行拓扑等扩张必须有原始需求或实际失败证据，评审不得让本轮自行生成的 spec/plan 为无关扩张循环背书。

@@ -220,8 +220,9 @@ grep -q 'setup.ps1' README.md || err "README 未公开 Windows PowerShell 安装
 grep -q 'localTestProviderPolicy' scripts/setup.mjs || err "setup 未使用 Windows Provider 能力策略"
 grep -q "platform === 'win32'" scripts/setup-lib.mjs || err "setup 未声明 Windows Provider remote-only 边界"
 grep -q 'cap-runtime.mjs context' "$REF/runtime-adapters/codex.md" || err "Codex adapter 未提供 Windows Node Context Guard"
-grep -q '原生 Windows 不调用该脚本' "$ROOT/cap/SKILL.md" || err "cap 未让 Windows Test Action 等待 Server/Linux Runner"
-grep -q 'Windows 的 `remote-only` 是受支持的执行策略' "$REF/harness-action-protocol.md" || err "Harness 协议仍可能把 Windows remote-only 当成 Provider 失败"
+grep -q '原生 Windows 同样只等待 Server/Linux Runner' "$ROOT/cap/SKILL.md" || err "cap 未让 Windows Test Action 等待 Server/Linux Runner"
+grep -q 'macOS/Linux 缺少 `sandbox-exec` / `bubblewrap`' "$REF/harness-action-protocol.md" || err "Harness 协议未将缺少沙箱声明为 remote-only"
+grep -q '普通本地代码、`cap-execute` 和本地测试不依赖这个 Provider 沙箱' "$REF/harness-action-protocol.md" || err "Harness 协议仍可能让 Provider 沙箱阻断普通本地执行"
 grep -q 'localTestProviderLaunchPolicy(process.platform)' scripts/cap-local-test-provider.mjs || err "本机 Provider 脚本未拒绝 Windows 误调用"
 ok "显式本地运行模式检查完成"
 

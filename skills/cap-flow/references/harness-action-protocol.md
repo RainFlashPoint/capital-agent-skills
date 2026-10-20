@@ -32,9 +32,11 @@ Skills 是 Harness Client，不是可信 Gate 内核。STATE 是游标，不是 
 
 Push 授权必须绑定非空合法 Task、fetch URL、唯一 push URL 与 `repo + task + branch + commit` 的 fingerprint；remote URL 的 HTTP userinfo、query/fragment（含 SCP 风格）、多个 push URL 或任一身份变化都必须在写入前拒绝，标准 SSH 用户名不视作秘密。候选验证必须绑定同一 Commit，重复别名、失败或畸形退出码不能声明 PASS，至少有一条成功命令，命令与环境仅上传哈希，质量资产只能作为补充；远端错误与漂移结果不得回显凭据。候选 Delivery 只能在本次授权下实时发送，发送失败不得写入自动重放 Outbox；历史 Outbox 不继承当前 Task 的 Push/发送授权，也不能抢占当前候选的 Test → Review 主线。
 2. 把返回的 `action_id/run_id` 写入 STATE 的 `Harness actions`，状态记为 `ready/running`，不得提前勾选质量 Gate。
-3. Action 进入 `ready` 后按客户端运行平台选择执行边界：
-   - macOS/Linux：立即执行 package 根 `scripts/cap-local-test-provider.mjs <target-repo> <action-id>` 唤醒一次已注册的本地独立 Test Provider。必须传本次 Action ID，Provider 只能领取这一条，不能领取同仓库其他工作。Provider 使用最小环境、临时 HOME 和受控 OS 沙箱，在隔离 worktree 验证精确 Commit；没有受支持沙箱时必须 fail-closed 为 `ENV_BLOCKED`，禁止回退到继承宿主完整环境的 `bash -lc`。未安装、未授权当前仓库或认证失败时，明确报告 `local_provider_unavailable`，不得让 Server 猜测研发机 Maven/npm/SDK 环境。
-   - 原生 Windows：不得调用本机 Provider 脚本，保持 Action 为 Server canonical 状态并继续有界 `wait_task_action/get_task_action`，由 Server/Linux Runner 领取精确 Action。Windows 的 `remote-only` 是受支持的执行策略，不是 `local_provider_unavailable`；只有 Server 返回 `provider_not_healthy`、`provider_at_capacity`、无匹配 Runner 或其它结构化结果时才进入相应阻塞。这个例外只适用于 Windows，不能扩展成 macOS/Linux 的猜测式回退。
+3. Action 进入 `ready` 后按客户端能力选择执行边界：
+   - macOS/Linux 且检测到受支持的 OS 沙箱：执行 package 根 `scripts/cap-local-test-provider.mjs <target-repo> <action-id>` 唤醒一次已注册的本地独立 Test Provider。必须传本次 Action ID，Provider 只能领取这一条，不能领取同仓库其他工作。Provider 使用最小环境、临时 HOME 和受控 OS 沙箱，在隔离 worktree 验证精确 Commit。未安装、未授权当前仓库或认证失败时，明确报告 `local_provider_unavailable`，再按 Server canonical 状态决定是否有其它 Runner；不得让 Server 猜测研发机 Maven/npm/SDK 环境。
+   - macOS/Linux 缺少 `sandbox-exec` / `bubblewrap`：这是受支持的 `remote-only` 能力状态，不查询、不领取本机 Action，也不上传本机失败证据；保持 Action 为 Server canonical 状态并继续有界 `wait_task_action/get_task_action`，由 Server/Linux/Docker Runner 领取。普通本地代码、`cap-execute` 和本地测试不依赖这个 Provider 沙箱，不能被该能力缺失阻断。
+   - 原生 Windows：不得调用本机 Provider 脚本，同样保持 Action 为 Server canonical 状态并等待 Server/Linux Runner。`remote-only` 不是 `local_provider_unavailable`；只有 Server 返回 `provider_not_healthy`、`provider_at_capacity`、无匹配 Runner 或其它结构化结果时才进入相应阻塞。
+   - 安全底线：任何平台都禁止把正式 Provider Action 回退到继承宿主完整环境的 `bash -lc`。即使能力探测与运行时之间发生漂移，Provider 内部的 `SANDBOX_UNAVAILABLE` 仍必须 fail-closed。
 4. 用 `wait_task_action` 做有界等待；超时后保存当前状态并允许新会话用 `get_task_action` 续接，禁止无限轮询。
 5. 只有 Action 返回 `status=succeeded` 且 machine validation 绑定同一 Commit，才把“独立验证已通过”写进交接。`blocked/needs_human` 按 Server 原因回到实现或人工处理。
 6. 本地命令和 `.cap/verify/*` 是 Provider 输入与诊断资产，不是高风险任务的最终通行证。低风险兼容是否可放行也由 Server Gate Policy 决定，Skills 不自行判断。

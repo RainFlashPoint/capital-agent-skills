@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm } from 'fs/promises'
 import { homedir, hostname, tmpdir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { spawn, spawnSync } from 'child_process'
+import { pathToFileURL } from 'url'
 
 const hash = value => createHash('sha256').update(String(value || '')).digest('hex')
 const configPath = process.env.CAPITAL_AGENT_LOCAL_PROVIDER_CONFIG || join(homedir(), '.capital-agent', 'runner', 'config.json')
@@ -15,7 +16,10 @@ const environmentFailures = [
   /pkix path building failed|unable to find valid certification path/i,
   /(?:401|403).*(?:repository|artifact)|not authorized.*(?:repository|artifact)/i,
   /(?:EPERM|operation not permitted).*(?:lstat|\/private|sandbox)|(?:lstat|\/private|sandbox).*(?:EPERM|operation not permitted)/i,
+  /(?:could not create shared memory segment|shmget|semget).*(?:operation not permitted|permission denied)/i,
 ]
+
+export const isEnvironmentFailure = diagnostic => environmentFailures.some(pattern => pattern.test(diagnostic))
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, { encoding: 'utf8', stdio: 'pipe', ...options })
@@ -113,13 +117,14 @@ function minimalEnvironment(home) {
   return env
 }
 
-async function sandboxInvocation(command, cwd, sandboxHome) {
+export async function sandboxInvocation(command, cwd, sandboxHome) {
   const canonicalCwd = await realpath(cwd)
   const canonicalHome = await realpath(sandboxHome)
   if (process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec')) {
-    const readable = ['/System', '/usr', '/bin', '/sbin', '/opt/homebrew', '/Library/Java', '/private/etc', '/private/var/select/sh', '/dev']
-      .filter(existsSync).map(path => `(subpath ${JSON.stringify(path)})`).join(' ')
-    const metadata = [...new Set([canonicalCwd, canonicalHome].flatMap(path => {
+    const readableRoots = ['/System', '/usr', '/bin', '/sbin', '/opt/homebrew', '/Library/Java', '/private/etc', '/private/var/select/sh', '/dev'].filter(existsSync)
+    const readable = readableRoots.map(path => `(subpath ${JSON.stringify(path)})`).join(' ')
+    // realpath(3) needs metadata on ancestors such as /opt, but no content access.
+    const metadata = [...new Set([canonicalCwd, canonicalHome, ...readableRoots].flatMap(path => {
       const ancestors = []
       let current = dirname(path)
       while (current && current !== dirname(current)) {
@@ -132,6 +137,7 @@ async function sandboxInvocation(command, cwd, sandboxHome) {
 (deny default)
 (import "system.sb")
 (allow process*)
+(allow signal (target same-sandbox))
 (allow network*)
 (allow file-read-metadata ${metadata})
 (allow file-read* ${readable} (subpath ${JSON.stringify(canonicalCwd)}) (subpath ${JSON.stringify(canonicalHome)}))
@@ -217,7 +223,7 @@ async function commandEvidence(action, cwd, leaseState) {
       const diagnostic = `${result.stderrPreview || ''}\n${result.stdoutPreview || ''}\n${result.error?.message || ''}`
       const ok = result.status === 0 && !result.error
       if (ok) passed += 1
-      else failures.push(['ETIMEDOUT', 'SANDBOX_UNAVAILABLE', 'LEASE_LOST'].includes(result.error?.code) || environmentFailures.some(pattern => pattern.test(diagnostic)) ? 'ENV_BLOCKED' : 'CODE_FAILED')
+      else failures.push(['ETIMEDOUT', 'SANDBOX_UNAVAILABLE', 'LEASE_LOST'].includes(result.error?.code) || isEnvironmentFailure(diagnostic) ? 'ENV_BLOCKED' : 'CODE_FAILED')
       receipts.push({
         commandId: `command_${hash(`${action.id}:${check.id}:${startedAt}`).slice(0, 16)}`,
         checkId: check.id,
@@ -325,7 +331,7 @@ async function main() {
   }
 }
 
-main().catch(error => {
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main().catch(error => {
   process.stderr.write(`${JSON.stringify({ ok: false, error: String(error?.message || error) }, null, 2)}\n`)
   process.exit(1)
 })

@@ -11,11 +11,15 @@ function fail(message, detail = '') {
   process.exitCode = 1
 }
 
+function skip(code, detail) {
+  process.stdout.write(`${JSON.stringify({ ok: true, skipped: true, mode: 'remote-only', code, detail }, null, 2)}\n`)
+}
+
 const repo = resolve(process.argv[2] || process.cwd())
 const actionId = String(process.argv[3] || '').trim()
 const launchPolicy = localTestProviderLaunchPolicy(process.platform)
 if (!launchPolicy.allowed) {
-  fail(launchPolicy.code, `${launchPolicy.detail}；客户端应继续等待 Server/Linux Runner，不应在 Windows 唤醒本机 Provider。`)
+  skip(launchPolicy.code, `${launchPolicy.detail}；未查询或领取本机 Action，客户端应继续等待远端 Runner。`)
 } else if (!existsSync(resolve(repo, '.git'))) {
   fail('repo_not_found', repo)
 } else if (!/^action_[a-zA-Z0-9-]+$/.test(actionId)) {

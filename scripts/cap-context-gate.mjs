@@ -5,7 +5,7 @@ import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { checkpointDigest, classifyPressure, validateManifest } from './cap-context-checkpoint.mjs'
+import { checkpointDigest, classifyPressure, validateManifest, contextReplay } from './cap-context-checkpoint.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
@@ -31,8 +31,7 @@ const hash = value => createHash('sha256').update(JSON.stringify(value)).digest(
 // The complete replay payload must match the validated snapshot. Checking only
 // ids permits an edited receipt to silently replace a protected assertion.
 export function validateRecoveryReceipt(receipt, manifest, checkpoint, binding) {
-  const hot = manifest.plan.hot.map(id => checkpoint.atoms.find(atom => atom.id === id))
-  const warmRefs = manifest.plan.warm.flatMap(id => checkpoint.atoms.find(atom => atom.id === id).sourceRefs)
+  const { hot, warmRefs } = contextReplay(checkpoint, manifest.plan)
   return receipt?.schemaVersion === 1 && receipt.event === binding.recoveryEvent
     && receipt.digest === manifest.digest && receipt.planDigest === hash(manifest.plan)
     && ['taskId', 'sessionId', 'repo', 'branch', 'commit'].every(key => receipt[key] === binding[key])
@@ -110,6 +109,7 @@ async function inputs(candidate, options = {}) {
   }
   const binding = {
     schemaVersion: 1,
+    runtimeSessionId: (options.environment || process.env).CODEX_THREAD_ID || (options.environment || process.env).CODEX_SESSION_ID || 'none',
     taskId: field(state, 'task-id'),
     sessionId: field(state, 'session-id'),
     repo: sanitizeRepositoryUrl(git(repo, ['remote', 'get-url', 'origin'])) || repo,
@@ -183,6 +183,7 @@ export async function inspectSemanticContext(candidate, options = {}) {
     if (entry.previousManifest !== (field(state, 'context-previous-manifest') || 'none') || entry.previousDigest !== (publishedPreviousDigest && publishedPreviousDigest !== 'none' ? publishedPreviousDigest : null)) return result('context_predecessor_invalid')
     for (const key of ['taskId', 'repo', 'branch', 'commit']) if (manifest.identity[key] !== binding[key] || entry[key] !== binding[key]) return result('context_identity_changed')
     if (entry.sessionId !== binding.sessionId) return result('context_identity_changed')
+    if (entry.runtimeSessionId && entry.runtimeSessionId !== 'none' && entry.runtimeSessionId !== binding.runtimeSessionId) return result('context_identity_changed')
     if (entry.sourceFingerprint !== binding.sourceFingerprint) return result('context_sources_changed')
     if (manifest.identity.stage !== binding.stage || entry.stage !== binding.stage) return result('context_stage_changed')
     if (entry.semanticsHash !== binding.semanticsHash) return result('context_semantics_changed')

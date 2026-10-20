@@ -117,6 +117,37 @@ function duplicateKey(atom) {
   return `${atom.type}\u0000${atom.assertion}\u0000${JSON.stringify(stableValue(atom.scope))}`
 }
 
+// Only replay is coalesced. Unknown semantic fields participate in the key so
+// future metadata cannot silently weaken this equivalence relation.
+function replayGroups(atoms) {
+  const groups = new Map()
+  for (const atom of atoms) {
+    const { id, sourceRefs, priority, tokenEstimate, ...semantics } = atom
+    const key = JSON.stringify(stableValue(semantics))
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(atom)
+  }
+  return [...groups.values()].map(members => {
+    members.sort((a, b) => ordinalCompare(a.id, b.id))
+    if (members.length === 1) return { members, projection: members[0] }
+    const { tokenEstimate: ignored, ...first } = members[0]
+    return { members, projection: { ...first,
+      priority: Math.max(...members.map(atom => atom.priority)),
+      coveredAtomIds: members.map(atom => atom.id),
+      sourceRefs: [...new Set(members.flatMap(atom => atom.sourceRefs))].sort(ordinalCompare),
+    } }
+  })
+}
+
+export function contextReplay(checkpoint, plan) {
+  const byId = new Map(checkpoint.atoms.map(atom => [atom.id, atom]))
+  const hot = plan.hot.map(id => byId.get(id))
+  const warmRefs = plan.warm.flatMap(id => byId.get(id).sourceRefs)
+  return plan.replayVersion === 1
+    ? { hot: replayGroups(hot).map(group => group.projection), warmRefs: [...new Set(warmRefs)].sort(ordinalCompare) }
+    : { hot, warmRefs }
+}
+
 function scoreAtom(atom, { focusIds = new Set(), duplicate = false } = {}) {
   let score = Number(atom.priority || 0)
   const reasons = [`base:${score}`]
@@ -351,7 +382,7 @@ export function classifyPressure(usedTokens, contextWindow, thresholds = {}) {
   return 'critical'
 }
 
-export function planContext(checkpoint, { budgetTokens, currentActionIds = [] } = {}) {
+function legacyPlanContext(checkpoint, { budgetTokens, currentActionIds = [], penalizeDuplicates = true } = {}) {
   const validation = validateCheckpoint(checkpoint)
   const errors = [...validation.errors]
   const hot = []
@@ -367,7 +398,7 @@ export function planContext(checkpoint, { budgetTokens, currentActionIds = [] } 
   const counts = new Map()
   for (const atom of activeAtoms) counts.set(duplicateKey(atom), (counts.get(duplicateKey(atom)) || 0) + 1)
   const focusIds = new Set(currentActionIds || [])
-  const scored = activeAtoms.map(atom => ({ ...atom, ...scoreAtom(atom, { focusIds, duplicate: (counts.get(duplicateKey(atom)) || 0) > 1 }) }))
+  const scored = activeAtoms.map(atom => ({ ...atom, ...scoreAtom(atom, { focusIds, duplicate: penalizeDuplicates && (counts.get(duplicateKey(atom)) || 0) > 1 }) }))
   const ranked = rankAtoms(scored)
   for (const atom of ranked) {
     const estimate = tokenEstimate(atom)
@@ -413,6 +444,26 @@ export function planContext(checkpoint, { budgetTokens, currentActionIds = [] } 
     warnings: semanticProtectionAdvisories(checkpoint),
     errors,
   }
+}
+
+export function planContext(checkpoint, options = {}) {
+  if (options.replayVersion === 0) return legacyPlanContext(checkpoint, options)
+  if (options.currentActionIds !== undefined && (!Array.isArray(options.currentActionIds) || options.currentActionIds.some(id => !isNonEmptyString(id)))) return legacyPlanContext(checkpoint, options)
+  const checked = validateCheckpoint(checkpoint)
+  if (!checked.valid) return legacyPlanContext(checkpoint, options)
+  const groups = replayGroups(checkpoint.atoms.filter(active))
+  const groupById = new Map(groups.map(group => [group.projection.id, group]))
+  const focus = new Set(options.currentActionIds || [])
+  const planned = legacyPlanContext({ ...checkpoint, atoms: [...groups.map(group => group.projection), ...checkpoint.atoms.filter(atom => !active(atom))] }, {
+    ...options, penalizeDuplicates: false,
+    currentActionIds: groups.filter(group => group.members.some(atom => focus.has(atom.id))).map(group => group.projection.id),
+  })
+  const result = { ...planned, digest: checked.digest, replayVersion: 1 }
+  for (const tier of ['hot', 'warm', 'cold', 'dropped']) result[tier] = planned[tier].flatMap(atom => {
+    const group = groupById.get(atom.id)
+    return group ? group.members.map((member, index) => ({ ...atom, ...member, tokenEstimate: index === 0 ? atom.tokenEstimate : 0 })) : [atom]
+  })
+  return result
 }
 
 function contentHash(content) {
@@ -474,7 +525,7 @@ export function createManifest(checkpoint, { checkpointPath, previous = null, pr
     trigger,
     pressure,
     hotBudgetTokens: budgetTokens,
-    plan: { digest: plan.digest, currentActionIds, hotTokens: plan.hotTokens, ...Object.fromEntries(['hot', 'warm', 'cold', 'dropped'].map(tier => [tier, plan[tier].map(atom => atom.id)])) },
+    plan: { digest: plan.digest, replayVersion: 1, currentActionIds, hotTokens: plan.hotTokens, ...Object.fromEntries(['hot', 'warm', 'cold', 'dropped'].map(tier => [tier, plan[tier].map(atom => atom.id)])) },
     provider,
     validated: validation.valid && plan.valid,
   }
@@ -519,7 +570,8 @@ export function validateManifest(manifest, { checkpoint, previous = null, atomLo
   }
   if (!manifest.plan || !Array.isArray(manifest.plan.currentActionIds)) fail('manifest_plan_missing', 'plan', 'a reproducible context plan is required')
   else {
-    const plan = planContext(checkpoint, { budgetTokens: manifest.hotBudgetTokens, currentActionIds: manifest.plan.currentActionIds })
+    if (manifest.plan.replayVersion !== undefined && manifest.plan.replayVersion !== 1) fail('manifest_replay_version_invalid', 'plan.replayVersion', 'unsupported replay projection')
+    const plan = planContext(checkpoint, { budgetTokens: manifest.hotBudgetTokens, currentActionIds: manifest.plan.currentActionIds, replayVersion: manifest.plan.replayVersion || 0 })
     errors.push(...plan.errors)
     if (manifest.plan.digest !== plan.digest) fail('manifest_plan_digest_mismatch', 'plan.digest', 'plan checkpoint digest does not match')
     if (manifest.plan.hotTokens !== plan.hotTokens) fail('manifest_plan_tokens_mismatch', 'plan.hotTokens', 'hot token count differs')

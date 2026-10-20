@@ -41,7 +41,9 @@ L1/L2 无风险时只加载必要 reference 和当前阶段 Skill。L3/L4、安�
 
 长会话按 `skills/cap-flow/references/context-compaction.md`；`contextGate` 未过按 `nextActions` 补齐重跑，无遥测仍检测阶段/语义变化。
 
-可见压缩/恢复事件触发恢复，**恢复必须先于继续读取业务代码或执行研发动作**：同源运行 `scripts/cap-context-checkpoint.mjs resume <repo> --event <unique-visible-event>`，读 hot 及所需 warm。没有可信压缩回调时不能承诺每次自动监听；摘要不是收据或 Provider 成功。审阅来源后用 `scripts/cap-context-checkpoint.mjs prepare <repo> --checkpoint <path> --budget-tokens <hot-budget>` 预检/恢复/发布，可附 `--event`。详见 reference，沿用授权。
+原生 Hook 见该 reference；注册、信任和真实回调分别取证。
+
+可见压缩/恢复后，**恢复必须先于继续读取业务代码或执行研发动作**：同源运行 `scripts/cap-context-checkpoint.mjs resume <repo> --event <unique-visible-event>`，读 hot 和所需 warm。没有可信压缩回调时不能承诺每次自动监听；摘要不证明恢复成功。审阅来源后用 `scripts/cap-context-checkpoint.mjs prepare`，参数见 reference，沿用授权。
 
 ## 3. 状态分流
 
@@ -75,7 +77,7 @@ Server Test/Review 前精确 Commit 须在上游可见。`reconciliation.pushReq
 
 进入测试或评审时加载 `skills/cap-flow/references/harness-action-protocol.md`：
 
-- 测试：Server 创建/返回 Test Action，再用 `get_task_action` / `wait_task_action` 续接；macOS/Linux 运行 `scripts/cap-local-test-provider.mjs <repo> <action-id>`，本机 Provider 不可用时明确阻塞。原生 Windows 不调用该脚本，只等待 Server/Linux Runner。
+- 测试：Server 创建/返回 Test Action 并续接；macOS/Linux 有沙箱才运行 `scripts/cap-local-test-provider.mjs`，否则 `remote-only` 等待远端 Runner。原生 Windows 同样只等待 Server/Linux Runner；严禁无沙箱执行。细节见 Harness 协议。
 - 评审：Review Action 只读，客户端不能自签 PASS。
 - 代码修复：只续接 Server Review 生成的 Harness Patch Action；新 Commit 必须重新经过对应门禁。
 

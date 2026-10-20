@@ -2,7 +2,7 @@
 
 把 Coding Agent 的需求、实现、测试、评审、发布和经验复用变成一条可恢复、可验证、可移植的研发主线。
 
-<!-- release-version: 0.13.1 -->
+<!-- release-version: 0.13.2 -->
 
 [![CI](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml)
 [![Release Check](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml)
@@ -10,7 +10,7 @@
 
 ## 公开状态与证据
 
-当前候选版本：`v0.13.1`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
+当前候选版本：`v0.13.2`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
 
 公开证据分为三层：
 
@@ -20,7 +20,7 @@
 | GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
 | Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
-截至 2026-10-19，本轮开始时公开 `main` manifest、最新语义版本 Tag 与 GitHub Latest Release 均为 `v0.13.0`；`v0.13.1` 只有在本地门禁、独立复核、合并 Commit、Tag 与 GitHub Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
+截至 2026-10-20，本轮发布前公开 `main`、Git Tag 与 GitHub Latest Release 的真实状态仍需在推送后回读；`v0.13.2` 只有在本地门禁、独立复核、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
 
 可复现入口：
 
@@ -185,7 +185,7 @@ cap（唯一公开入口）
 
 ## 当前版本摘要
 
-`v0.13.1` 候选在 v0.13.0 基础上增加跨会话真值与用户决定对账，并安全发现当前仓显式落地的 incoming handoff 线索，减少旧摘要继续推进、反向执行禁止决定、重复全量验证和旧经验漏召回。
+`v0.13.2` 候选补齐 Codex 原生压缩恢复与版本化语义去重，修复 macOS Provider 的工具路径和子进程兼容，并把本机 Test Provider 改为真正可选能力：无 OS 沙箱时普通本地开发照常运行，正式 Action 保持 remote-only 和 fail-closed。
 
 历史版本与完整变更只维护在 [CHANGELOG.md](CHANGELOG.md)。发布步骤见 [docs/releasing.md](docs/releasing.md)。
 
