@@ -81,7 +81,7 @@ test('macOS sandbox permits child termination but denies host signals and file a
   assert.equal(result.stderr, '')
 })
 
-test('macOS sandbox resolves Homebrew PostgreSQL symlinks while retaining shared-memory isolation', { skip: !macSandbox || !existsSync('/opt/homebrew/bin/initdb') || !existsSync('/opt/homebrew/share/postgresql/postgres.bki') }, async t => {
+test('macOS sandbox resolves Homebrew PostgreSQL symlinks and reports shared-memory blockers', { skip: !macSandbox || !existsSync('/opt/homebrew/bin/initdb') || !existsSync('/opt/homebrew/share/postgresql/postgres.bki') }, async t => {
   const fixture = await sandboxFixture(t)
   const command = `/opt/homebrew/bin/initdb --no-locale -A trust -L /opt/homebrew/share/postgresql -D ${shellQuote(join(fixture.cwd, 'pgdata'))}`
   const shown = await fixture.run(`${command} --show`)
@@ -92,13 +92,14 @@ test('macOS sandbox resolves Homebrew PostgreSQL symlinks while retaining shared
   // SysV IPC has no per-clone namespace on macOS. Do not grant global IPC
   // merely to make this check green; report the actual environment blocker.
   assert.notEqual(initialized.status, 0)
-  assert.match(initialized.stderr, /could not create shared memory segment: Operation not permitted/i)
+  assert.match(initialized.stderr, /could not create shared memory segment: (?:Operation not permitted|No space left on device)/i)
   assert.equal(isEnvironmentFailure(initialized.stderr), true)
 })
 
 test('shared-memory permission denial is an environment blocker, not a business-code failure', () => {
   assert.equal(isEnvironmentFailure('FATAL: could not create shared memory segment: Operation not permitted'), true)
   assert.equal(isEnvironmentFailure('DETAIL: Failed system call was shmget(key=123, size=56): Permission denied'), true)
+  assert.equal(isEnvironmentFailure('FATAL: could not create shared memory segment: No space left on device'), true)
   assert.equal(isEnvironmentFailure('AssertionError: incorrect account status'), false)
 })
 
@@ -130,6 +131,11 @@ async function identityFixture(t, options = {}) {
       const claimed = structuredClone(action)
       if (options.changeClaim) options.changeClaim(claimed)
       if (options.claimStatus) res.statusCode = options.claimStatus
+      if (options.claimResponseLost) {
+        action.status = 'running'
+        res.socket.destroy()
+        return
+      }
       return res.end(JSON.stringify({ code: options.claimStatus || 0, data: options.nullClaim ? null : { action: claimed, lease: { leaseId: 'lease_fixture' } } }))
     }
     res.end(JSON.stringify({ code: 0, data: { ok: true } }))
@@ -221,6 +227,20 @@ test('changed or denied claim cannot start a test', async t => {
   })
 })
 
+test('a lost claim response is never reported as an unclaimed remote-only fallback', async t => {
+  const { received, result } = await identityFixture(t, { claimResponseLost: true })
+  assert.equal(result.status, 1, result.stdout)
+  assert.deepEqual(received.map(req => req.url), [
+    '/api/harness/actions/action_fixture',
+    '/api/execution/runner/heartbeat',
+    '/api/execution/runner/harness/actions/claim',
+    '/api/harness/actions/action_fixture',
+  ])
+  assert.match(result.stderr, /Action 领取结果不确定（平台状态：running）/)
+  assert.doesNotMatch(result.stderr, /"claimed"\s*:\s*false/)
+  assert.match(result.stderr, /"code"\s*:\s*"local_provider_failed"/)
+})
+
 test('configured Server trailing slash does not change runner routes', async t => {
   const { received, result } = await identityFixture(t, { trailingSlash: true, claimStatus: 409 })
   assert.equal(result.status, 1)
@@ -233,7 +253,7 @@ test('redirects never forward platform or runner credentials', async t => {
       const { received, result } = await identityFixture(childTest, options)
       assert.equal(result.status, 1)
       assert.ok(received.every(req => req.url !== '/redirect-target'))
-      assert.equal(received.at(-1).url, options.runnerRedirect || '/api/harness/actions/action_fixture')
+      assert.ok(received.some(req => req.url === (options.runnerRedirect || '/api/harness/actions/action_fixture')))
     })
   }
 })

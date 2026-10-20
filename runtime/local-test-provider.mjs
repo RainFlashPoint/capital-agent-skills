@@ -17,7 +17,7 @@ const environmentFailures = [
   /pkix path building failed|unable to find valid certification path/i,
   /(?:401|403).*(?:repository|artifact)|not authorized.*(?:repository|artifact)/i,
   /(?:EPERM|operation not permitted).*(?:lstat|\/private|sandbox)|(?:lstat|\/private|sandbox).*(?:EPERM|operation not permitted)/i,
-  /(?:could not create shared memory segment|shmget|semget).*(?:operation not permitted|permission denied)/i,
+  /(?:could not create shared memory segment|shmget|semget).*(?:operation not permitted|permission denied|no space left on device)/i,
   /bwrap:.*(?:creating new namespace failed|operation not permitted|permission denied)/i,
   /(?:sandbox-exec|bwrap).*(?:EACCES|ENOEXEC|operation not permitted|permission denied)/i,
 ]
@@ -99,7 +99,7 @@ function actionSource(action, actionId, repoUrl) {
   return source
 }
 
-async function canonicalAction(config, client, actionId) {
+async function canonicalAction(config, client, actionId, { requireReady = true } = {}) {
   // Read-only host-controller lookup. Never persist this identity in the runner
   // config or pass it to commands; owner/scope authorization remains at claim.
   let serverUrl, clientServer
@@ -117,7 +117,7 @@ async function canonicalAction(config, client, actionId) {
   const payload = await response.json().catch(() => ({}))
   if ([401, 403].includes(response.status)) throw providerUnavailable('本地 Test Provider 平台认证失败')
   if (!response.ok || payload.code !== 0) throw new Error(`平台 Action 查询失败：HTTP ${response.status}`)
-  if (payload.data?.status !== 'ready') throw new Error('指定 Test Action 当前不可领取')
+  if (requireReady && payload.data?.status !== 'ready') throw new Error('指定 Test Action 当前不可领取')
   return payload.data
 }
 
@@ -137,7 +137,9 @@ async function post(config, path, body = {}, { beforeClaim = false } = {}) {
   const payload = await response.json().catch(() => ({}))
   if (!response.ok || payload.code !== 0) {
     if (beforeClaim) throw providerUnavailable('本地 Test Provider 配置或认证未就绪')
-    throw new Error(`${path}: HTTP ${response.status} ${payload.msg || 'request failed'}`)
+    const error = new Error(`${path}: HTTP ${response.status} ${payload.msg || 'request failed'}`)
+    error.httpStatus = response.status
+    throw error
   }
   return payload.data
 }
@@ -332,7 +334,24 @@ export async function runLocalTestProviderRuntime({
     hostname: hostname(), version: config.runtimeVersion || 'skills-local-test-provider',
     capabilities: { test: true, patch: false, repositoryIds: [expectedSource.repositoryId], repositories: [repoUrl], runtimes: [`node${process.versions.node.split('.')[0]}`], networkZones: ['local', 'public', 'enterprise'], maxConcurrency: 1 },
   }, { beforeClaim: true })
-  const claim = await post(config, '/api/execution/runner/harness/actions/claim', { actionId }, { beforeClaim: true })
+  let claim
+  try {
+    // Once the claim request has been sent, a lost response is not proof that
+    // the Server did not commit the lease. Never label that state claimed:false.
+    claim = await post(config, '/api/execution/runner/harness/actions/claim', { actionId })
+  } catch (claimError) {
+    if (Number.isInteger(claimError?.httpStatus) && claimError.httpStatus < 500) throw claimError
+    let observed = null
+    try { observed = await canonicalAction(config, client, actionId, { requireReady: false }) } catch {}
+    if (observed?.status === 'ready') {
+      throw providerUnavailable('本地 Test Provider 领取失败，且平台确认 Action 仍为 ready')
+    }
+    const status = String(observed?.status || 'unknown')
+    const error = new Error(`Action 领取结果不确定（平台状态：${status}）；必须重新读取 canonical Action/lease 后再继续`)
+    error.code = 'CLAIM_STATE_UNKNOWN'
+    error.cause = claimError
+    throw error
+  }
   if (!claim?.action) throw new Error('指定 Test Action 当前不可领取')
   const source = actionSource(claim.action, actionId, repoUrl)
   if (source.repositoryId !== expectedSource.repositoryId || source.commitSha !== expectedSource.commitSha || source.branch !== expectedSource.branch) throw new Error('领取的 Action 来源与平台预检结果不一致，停止执行')

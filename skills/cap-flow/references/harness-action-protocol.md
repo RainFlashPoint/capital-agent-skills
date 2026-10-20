@@ -37,6 +37,7 @@ Push 授权必须绑定非空合法 Task、fetch URL、唯一 push URL 与 `repo
    - macOS/Linux 缺少 `sandbox-exec` / `bubblewrap`：这是受支持的 `remote-only` 能力状态，不查询、不领取本机 Action，也不上传本机失败证据；保持 Action 为 Server canonical 状态并继续有界 `wait_task_action/get_task_action`，由 Server/Linux/Docker Runner 领取。普通本地代码、`cap-execute` 和本地测试不依赖这个 Provider 沙箱，不能被该能力缺失阻断。
    - 原生 Windows：不得调用本机 Provider 脚本，同样保持 Action 为 Server canonical 状态并等待 Server/Linux Runner。`remote-only` 不是 `local_provider_unavailable`；只有 Server 返回 `provider_not_healthy`、`provider_at_capacity`、无匹配 Runner 或其它结构化结果时才进入相应阻塞。
    - 安全底线：任何平台都禁止把正式 Provider Action 回退到继承宿主完整环境的 `bash -lc`。即使能力探测与运行时之间发生漂移，Provider 内部的 `SANDBOX_UNAVAILABLE` 仍必须 fail-closed。
+   - 领取请求一旦发送，超时、断连或 5xx 都不能证明 `claimed:false`。Provider 必须重新读取 canonical Action/lease；只有平台明确仍为 `ready` 才可按未领取状态降级，`running` 或无法确认时必须硬失败并等待 canonical 状态续接，不能让另一个 Runner 基于错误的 `remote-only` 结论重复领取。
 4. 用 `wait_task_action` 做有界等待；超时后保存当前状态并允许新会话用 `get_task_action` 续接，禁止无限轮询。
 5. 只有 Action 返回 `status=succeeded` 且 machine validation 绑定同一 Commit，才把“独立验证已通过”写进交接。`blocked/needs_human` 按 Server 原因回到实现或人工处理。
 6. 本地命令和 `.cap/verify/*` 是 Provider 输入与诊断资产，不是高风险任务的最终通行证。低风险兼容是否可放行也由 Server Gate Policy 决定，Skills 不自行判断。

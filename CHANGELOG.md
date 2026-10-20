@@ -2,11 +2,11 @@
 
 ## 0.13.2
 
-- 本机 Test Provider 改为能力可选：macOS/Linux 在查询或领取正式 Test Action 前真实启动 `sandbox-exec` / `bubblewrap` 做无副作用探测，文件存在但不可执行、namespace 被宿主禁用、未安装/未完成配置或认证的 Provider 与原生 Windows 均安全降级为 `remote-only`；正式 Action 只允许运行当前已安装的 test-only runtime，不再回退到旧 Runner 或 PATH 命令。不阻断安装、Doctor、普通本地代码、`cap-execute` 或本地测试，并继续等待 Server/Linux/Docker Runner。沙箱在探测后失效仍归类 `ENV_BLOCKED`，绝不无沙箱继承宿主权限执行正式 Action。
+- 本机 Test Provider 改为能力可选：macOS/Linux 在查询或领取正式 Test Action 前真实启动 `sandbox-exec` / `bubblewrap` 做无副作用探测，文件存在但不可执行、namespace 被宿主禁用、未安装/未完成配置或认证的 Provider 与原生 Windows 均安全降级为 `remote-only`；正式 Action 只允许运行当前已安装的 test-only runtime，不再回退到旧 Runner 或 PATH 命令。不阻断安装、Doctor、普通本地代码、`cap-execute` 或本地测试，并继续等待 Server/Linux/Docker Runner。沙箱在探测后失效仍归类 `ENV_BLOCKED`，绝不无沙箱继承宿主权限执行正式 Action；领取请求发送后的断连/超时/5xx 会重新读取 canonical Action/lease，不能再未经证明声称 `claimed:false`。
 - 新增 Codex 原生压缩 Hook 适配：压缩前校验、压缩后串行恢复，首次工具前注入保护语义，并等待匹配工具完成后确认送达；绑定原生会话与 Task/源码，拒绝跨会话和过期收据。缺失 `PostCompact`、Hook 记录丢失、Task/Session 错绑、收据篡改或恢复过期时，`PreToolUse` 失败关闭，不再以“修复提示”放行原始副作用工具；不支持宿主仍使用可见摘要降级。
 - 语义去重改为版本化重放投影：完全相同且边界一致的语义只重放一次，保留所有原子 ID、来源、coverage 与撤销谱系；预算计入来源和覆盖 ID，旧 manifest/receipt 仍按原规则验证。
 - 修复 macOS 本地 Test Provider 的 Homebrew PostgreSQL 路径解析：只补既有允许工具目录的祖先元数据权限；允许同一沙箱内进程发送信号，使 Node/Next 子进程正常退出，同时保留宿主文件和外部进程隔离。
-- PostgreSQL 初始化若因沙箱拒绝 SysV 共享内存而失败，归类为 `ENV_BLOCKED`，不再归咎业务代码；不以放开宿主共享内存或跳过原检查伪造通过。
+- PostgreSQL 初始化若因沙箱拒绝 SysV 共享内存或宿主共享内存 ID 耗尽而失败，归类为 `ENV_BLOCKED`，不再归咎业务代码；不以放开宿主共享内存或跳过原检查伪造通过。
 
 ## 0.13.1
 
