@@ -16,28 +16,40 @@ const positiveInteger = (value, fallback, label, maximum = Number.MAX_SAFE_INTEG
   return parsed
 }
 
-const delay = ms => new Promise(resolvePromise => setTimeout(resolvePromise, ms))
+const terminations = new WeakMap()
 
-const terminateProcessTree = async (child, graceMs) => {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return
+const terminateProcessTree = (child, graceMs) => {
+  if (!child?.pid) return Promise.resolve()
+  if (terminations.has(child)) return terminations.get(child)
 
-  if (process.platform === 'win32') {
+  const termination = (async () => {
+    if (process.platform === 'win32') {
+      if (child.exitCode !== null || child.signalCode !== null) return
+      await new Promise(resolvePromise => {
+        const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+        killer.once('error', () => resolvePromise())
+        killer.once('close', () => resolvePromise())
+      })
+      return
+    }
+
+    try { process.kill(-child.pid, 'SIGTERM') } catch {}
     await new Promise(resolvePromise => {
-      const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
-      killer.once('error', () => resolvePromise())
-      killer.once('close', () => resolvePromise())
+      const done = () => {
+        clearTimeout(timer)
+        child.removeListener('close', done)
+        resolvePromise()
+      }
+      const timer = setTimeout(done, graceMs)
+      child.once('close', done)
+      if (child.exitCode !== null || child.signalCode !== null) done()
     })
-    return
-  }
-
-  try { process.kill(-child.pid, 'SIGTERM') } catch {}
-  await Promise.race([
-    new Promise(resolvePromise => child.once('close', resolvePromise)),
-    delay(graceMs),
-  ])
-  if (child.exitCode === null && child.signalCode === null) {
+    // A closed leader does not prove its process group is gone. Kill the
+    // remaining group immediately, before reporting completion or reusing IDs.
     try { process.kill(-child.pid, 'SIGKILL') } catch {}
-  }
+  })()
+  terminations.set(child, termination)
+  return termination
 }
 
 export const discoverRegularTestFiles = async (root = process.cwd()) => {
@@ -66,6 +78,7 @@ export async function runTestFiles(files, options = {}) {
     await Promise.all([...active].map(child => terminateProcessTree(child, killGraceMs)))
   }
   const onSignal = signal => {
+    stopScheduling = true
     cleanup().finally(() => {
       process.removeListener(signal, signalHandlers[signal])
       process.kill(process.pid, signal)
@@ -100,8 +113,9 @@ export async function runTestFiles(files, options = {}) {
     }, timeoutMs)
 
     child.once('error', error => { spawnError = error.message })
-    child.once('close', code => {
+    child.once('close', async code => {
       clearTimeout(timer)
+      await terminations.get(child)
       active.delete(child)
       const durationMs = Date.now() - startedAt
       const passed = !timedOut && !spawnError && code === 0

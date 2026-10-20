@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -101,4 +102,68 @@ await new Promise(() => {})
     try { process.kill(descendantPid, 0) } catch { alive = false }
   }
   assert.equal(alive, false, `descendant process ${descendantPid} survived the timeout cleanup`)
+})
+
+test('timeout cleanup kills a TERM-resistant descendant after its leader exits', { skip: process.platform === 'win32', timeout: 10_000 }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cap-node-resistant-'))
+  const pidPath = join(root, 'descendant.pid')
+  t.after(async () => {
+    const pid = Number(await readFile(pidPath, 'utf8').catch(() => ''))
+    if (pid) { try { process.kill(pid, 'SIGKILL') } catch {} }
+    await rm(root, { recursive: true, force: true })
+  })
+  const fixture = join(root, 'test-resistant.mjs')
+  await writeFile(fixture, `
+import { spawn } from 'node:child_process'
+const child = spawn(process.execPath, ['-e', ${JSON.stringify("const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.writeFileSync(" + JSON.stringify(pidPath) + ", String(process.pid)); setInterval(() => {}, 1000)")}], { stdio: 'ignore' })
+setInterval(() => {}, 1000)
+`)
+  const summary = await runTestFiles([fixture], { timeoutMs: 800, killGraceMs: 200, logger: quiet, stdio: 'ignore' })
+  assert.equal(summary.timedOut, 1)
+  const pid = Number(await readFile(pidPath, 'utf8'))
+  let alive = true
+  for (let attempt = 0; attempt < 20 && alive; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+    try { process.kill(pid, 0) } catch { alive = false }
+  }
+  assert.equal(alive, false, `TERM-resistant descendant ${pid} survived cleanup`)
+})
+
+test('interruption cleans resistant descendants and stops scheduling files', { skip: process.platform === 'win32', timeout: 10_000 }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cap-node-interrupt-'))
+  const pidPath = join(root, 'descendant.pid')
+  const marker = join(root, 'should-not-run')
+  const fixture = join(root, 'test-stuck.mjs')
+  const next = join(root, 'test-next.mjs')
+  const harness = join(root, 'harness.mjs')
+  await writeFile(fixture, `
+import { spawn } from 'node:child_process'
+spawn(process.execPath, ['-e', ${JSON.stringify("const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.writeFileSync(" + JSON.stringify(pidPath) + ", String(process.pid)); setInterval(() => {}, 1000)")}], { stdio: 'ignore' })
+setInterval(() => {}, 1000)
+`)
+  await writeFile(next, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'ran')`)
+  await writeFile(harness, `import { runTestFiles } from ${JSON.stringify(new URL('./node-test-runner.mjs', import.meta.url).href)}; await runTestFiles(${JSON.stringify([fixture, next])}, { timeoutMs: 5000, killGraceMs: 200, stdio: 'ignore' })`)
+  const child = spawn(process.execPath, [harness], { stdio: 'ignore' })
+  const closed = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })))
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    const pid = Number(await readFile(pidPath, 'utf8').catch(() => ''))
+    if (pid) { try { process.kill(pid, 'SIGKILL') } catch {} }
+    await rm(root, { recursive: true, force: true })
+  })
+  let pid = 0
+  for (let attempt = 0; attempt < 60 && !pid; attempt += 1) {
+    pid = Number(await readFile(pidPath, 'utf8').catch(() => ''))
+    if (!pid) await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.ok(pid, 'resistant descendant started')
+  child.kill('SIGTERM')
+  assert.equal((await closed).signal, 'SIGTERM')
+  let alive = true
+  for (let attempt = 0; attempt < 20 && alive; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+    try { process.kill(pid, 0) } catch { alive = false }
+  }
+  assert.equal(alive, false, `TERM-resistant descendant ${pid} survived interruption`)
+  await assert.rejects(readFile(marker), { code: 'ENOENT' })
 })

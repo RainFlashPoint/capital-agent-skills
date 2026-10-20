@@ -385,3 +385,51 @@ test('native hook writer contention fails closed and non-Git directories remain 
   t.after(() => rmSync(outside, { recursive: true, force: true }))
   assert.equal((await handleContextHook({ ...payload, hook_event_name: 'PreCompact', cwd: outside }, { environment: env })).continue, true)
 })
+
+test('an old delivered record cannot bypass an interrupted second native compaction', async t => {
+  const { repo, invoke } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'first-tool' })).hookSpecificOutput)
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'first-tool' })).continue, true)
+  const path = join(repo, '.cap/context', readdirSync(join(repo, '.cap/context')).find(name => name.startsWith('codex-hook-')))
+  const delivered = readFileSync(path, 'utf8')
+  assert.equal(JSON.parse(delivered).phase, 'delivered')
+  assert.equal((await invoke('PreCompact', { turn_id: 'turn-two' })).continue, true)
+  // Reproduce failure after pending STATE publication but before replacing the old record.
+  writeFileSync(path, delivered)
+  const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool', turn_id: 'turn-two' })
+  assert.equal(denied.continue, false)
+  assert.match(denied.stopReason, /hook_recovery_stale/)
+})
+
+for (const key of ['task-id', 'session-id']) {
+  test(`a delivered native hook record cannot authorize another ${key}`, async t => {
+    const { repo, invoke } = await nativeFixture(t)
+    assert.equal((await invoke('PostCompact')).continue, true)
+    assert.ok((await invoke('PreToolUse', { tool_use_id: 'first-tool' })).hookSpecificOutput)
+    assert.equal((await invoke('PostToolUse', { tool_use_id: 'first-tool' })).continue, true)
+    const statePath = join(repo, '.cap/STATE.md')
+    writeFileSync(statePath, readFileSync(statePath, 'utf8').replace(new RegExp(`^${key}:.*$`, 'm'), `${key}: another-binding`))
+    const denied = await invoke('PreToolUse', { tool_use_id: 'side-effecting-tool' })
+    assert.equal(denied.continue, false)
+    assert.match(denied.stopReason, /hook_compaction_binding_mismatch/)
+  })
+}
+
+test('a delivered native event permits a legitimate successor checkpoint receipt', async t => {
+  const { repo, invoke, env, checkpoint } = await nativeFixture(t)
+  assert.equal((await invoke('PostCompact')).continue, true)
+  assert.ok((await invoke('PreToolUse', { tool_use_id: 'first-tool' })).hookSpecificOutput)
+  assert.equal((await invoke('PostToolUse', { tool_use_id: 'first-tool' })).continue, true)
+  const before = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const successor = structuredClone(checkpoint)
+  successor.atoms.push({ ...successor.atoms[0], id: 'native-successor-detail', type: 'constraint', protection: 'P2', assertion: 'New reviewed implementation detail' })
+  const nextPath = '.cap/context/checkpoint-native-successor.json'
+  writeFileSync(join(repo, nextPath), JSON.stringify(successor))
+  const result = await prepareContext(repo, { checkpointPath: nextPath, budgetTokens: 20000, environment: env })
+  assert.equal(result.valid, true, JSON.stringify(result))
+  const after = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  assert.equal(before.match(/^context-recovery-event: (.+)$/m)[1], after.match(/^context-recovery-event: (.+)$/m)[1])
+  assert.notEqual(before.match(/^context-recovery-receipt: (.+)$/m)[1], after.match(/^context-recovery-receipt: (.+)$/m)[1])
+  assert.equal((await invoke('PreToolUse', { tool_use_id: 'next-tool' })).continue, true)
+})

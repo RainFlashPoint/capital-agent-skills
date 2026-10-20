@@ -62,12 +62,22 @@ export async function handleContextHook(input, { environment = process.env } = {
       return noop()
     }
     if (event === 'PostToolUse' && !record) return noop()
-    if ((event === 'PreToolUse' || event === 'PostToolUse') && record.phase === 'delivered') return noop()
+    if (event === 'PostToolUse' && record.phase === 'delivered') return noop()
     lock = await open(join(repo, '.cap/.context-hook.lock'), 'wx', 0o600)
     await lock.writeFile(`${process.pid}\n`)
     try { record = JSON.parse(await readContained(repo, recordPath)) }
     catch (cause) { if (cause.code !== 'ENOENT') throw cause }
     state = await readContained(repo, '.cap/STATE.md')
+    if (event === 'PreToolUse' && record?.phase === 'delivered') {
+      if (record.identity.runtimeSessionId !== input.session_id || record.identity.taskId !== field(state, 'task-id') || record.identity.sessionId !== field(state, 'session-id')) throw new Error('hook_compaction_binding_mismatch')
+      // A later PreCompact can publish pending STATE before replacing this
+      // record. Prior delivery never acknowledges that newer recovery event.
+      const receiptPath = field(state, 'context-recovery-receipt')
+      // Normal reviewed checkpoint succession may replace the receipt while
+      // retaining the delivered event. Receipt paths are not lifecycle IDs.
+      if (record.event !== field(state, 'context-recovery-event') || !receiptPath || receiptPath === 'none') throw new Error('hook_recovery_stale')
+      return noop()
+    }
     // Acknowledgment proves delivery of the pre-tool payload, not freshness
     // after a tool that may legitimately edit sources, commit, or change stage.
     if (event === 'PostToolUse') {

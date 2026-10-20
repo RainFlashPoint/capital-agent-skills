@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 import { inspectCapStatus, reconcileRepositoryState, resolveNextAction } from './cap-status.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
@@ -590,12 +590,19 @@ test('matching local remote and delivered heads require no reconciliation', () =
   assert.equal(result.pushRequired, false)
 })
 
-test('status exposes install drift but refuses automatic upgrade while the package worktree is modified', async () => {
+test('status exposes install drift but refuses automatic upgrade while the package worktree is modified', async t => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-skill-drift-'))
-  const sourceRoot = fileURLToPath(new URL('..', import.meta.url))
+  const sourceRoot = await fixture()
+  t.after(() => Promise.all([repo, home, sourceRoot].map(path => rm(path, { recursive: true, force: true }))))
+  const packageRoot = fileURLToPath(new URL('..', import.meta.url))
+  for (const path of ['scripts', 'runtime', 'ontology', 'skills', '.claude-plugin', 'README.md', 'CHANGELOG.md']) await cp(join(packageRoot, path), join(sourceRoot, path), { recursive: true })
+  execFileSync('git', ['add', '.'], { cwd: sourceRoot })
+  execFileSync('git', ['commit', '-qm', 'isolated package fixture'], { cwd: sourceRoot })
+  await writeFile(join(sourceRoot, 'README.md'), 'intentional fixture source modification\n')
+  const { inspectCapStatus: inspectFixtureStatus } = await import(pathToFileURL(join(sourceRoot, 'scripts/cap-status.mjs')).href)
   await mkdir(join(home, '.capital-agent'), { recursive: true })
   await writeFile(join(home, '.capital-agent', 'install-manifest.json'), JSON.stringify({ schemaVersion: 1, sourceRoot, sourceCommit: 'old', version: '0.0.0', files: [] }))
-  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
+  const result = await inspectFixtureStatus({ repoRoot: repo, homeDir: home, offline: true, environment: { CAPITAL_AGENT_MODE: 'local' }, mcpRuntime: 'missing' })
   assert.equal(result.installation.status, 'working_tree_modified')
   assert.ok(result.installation.conditions.includes('working_tree_modified'))
   assert.equal(result.installation.safeToUpgrade, false)
