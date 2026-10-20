@@ -19,8 +19,11 @@ node scripts/eval-cap.mjs
 echo '== Public local end-to-end fixture =='
 node examples/e2e-local/run.mjs
 
-echo '== Node behavior and adversarial regression =='
-node --test scripts/test-*.mjs
+echo '== Node behavior regression (bounded regular profile) =='
+node scripts/node-test-runner.mjs
+
+echo '== Release-only concurrency stress =='
+node scripts/node-test-runner.mjs --stress
 
 echo '== Python behavior regression =='
 python3 -m unittest discover -s scripts -p 'test_*.py' -v

@@ -2,6 +2,7 @@
 
 ## 0.13.2
 
+- Node 全量回归改为逐文件可观察的有界编排：默认串行运行测试文件（可显式调高上限），每个文件有 180 秒硬超时，超时或中断会终止完整进程组；Outbox 的 40 次多进程竞争从常规回归拆到发布前压力阶段，保留总写入覆盖但默认最多 4 个活跃子进程，并为每个子进程设置 15 秒超时和清理。
 - 本机 Test Provider 改为能力可选：macOS/Linux 在查询或领取正式 Test Action 前真实启动 `sandbox-exec` / `bubblewrap` 做无副作用探测，文件存在但不可执行、namespace 被宿主禁用、未安装 Provider 与原生 Windows 均安全降级为 `remote-only`；不阻断安装、Doctor、普通本地代码、`cap-execute` 或本地测试，并继续等待 Server/Linux/Docker Runner。沙箱在探测后失效仍归类 `ENV_BLOCKED`，绝不无沙箱继承宿主权限执行正式 Action。
 - 新增 Codex 原生压缩 Hook 适配：压缩前校验、压缩后串行恢复，首次工具前注入保护语义，并等待匹配工具完成后确认送达；绑定原生会话与 Task/源码，拒绝跨会话和过期收据。缺失 `PostCompact`、Task/Session 错绑、收据篡改或恢复过期时，`PreToolUse` 失败关闭，不再以“修复提示”放行原始副作用工具；不支持宿主仍使用可见摘要降级。
 - 语义去重改为版本化重放投影：完全相同且边界一致的语义只重放一次，保留所有原子 ID、来源、coverage 与撤销谱系；预算计入来源和覆盖 ID，旧 manifest/receipt 仍按原规则验证。
