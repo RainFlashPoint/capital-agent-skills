@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "taskId": "task_3a0bec12-1045-41bb-91e2-53a2a0f0c8dc",
+  "parentTaskId": "",
+  "title": "v0.13.1 跨会话真值与 Provider 身份修复",
+  "intentSummary": "修复跨会话真值、交接召回、重复实现与Provider身份，完成本地验证独立复核及正式公开发布",
+  "keywords": [],
+  "branch": "codex/cross-session-truth",
+  "baseCommit": "6e2ad1cf3dd4a29e51414bd46b2fb66244fcf962",
+  "deliveryCommit": "5340b41f0f5660c28bcfcfb3a7041164dacce25f",
+  "completedAt": "2026-10-19",
+  "status": "completed",
+  "knowledgeDisposition": "local-only",
+  "artifactRoot": ".cap/history/task_3a0bec12-1045-41bb-91e2-53a2a0f0c8dc",
+  "experienceIndex": {
+    "schema": "cap-experience-index/v1",
+    "title": "跨会话恢复先核对当前真值与必要差异，禁止用旧摘要扩大实现或继承验证",
+    "sourceCommit": "5340b41f0f5660c28bcfcfb3a7041164dacce25f",
+    "retrievalCues": [
+      "当长会话恢复、另一个会话已推进、跨项目交接或迁移现有成功实现时。",
+      "cross-session truth、incoming handoff、solution necessity、旧状态、重复实现、Provider lease。",
+      "旧摘要称未发布但远端已变化；交接文件存在却召回不到；重新验收扩大为重建成功路径。"
+    ],
+    "problemPatterns": [
+      "过期 STATE 和摘要可能覆盖用户决定，跨项目摘要可能遗漏或被误当成可信证据。",
+      "不同事实领域的权威来源未区分，召回窗口会隐藏无关键词重合的交接，模型自写计划会循环证明无必要扩张。"
+    ],
+    "decisionRules": [
+      "当恢复会话或执行外部动作时，必须先回读对应 Git、Provider 与原始用户决定；当已有成功实现时，必须先证明必要差异，重新取证不等于重新实现。"
+    ],
+    "invalidationSignals": [
+      "仓库身份、Task、源码树、授权、记录器或 handoff schema 变化时，必须重新核对绑定。"
+    ],
+    "entryPoints": [
+      "scripts/cap-runtime.mjs 的阶段 Context Guard；scripts/cap-history-recon.mjs 的 incoming 召回。"
+    ],
+    "symbols": [
+      "Context",
+      "Guard",
+      "Task",
+      "Session",
+      "Gate",
+      "PASS",
+      "Delivery",
+      "Outbox"
+    ],
+    "invariants": [
+      "交接不能继承 Task、Session、Gate、PASS、Delivery 或 Outbox；失败回滚不能删除其他会话替换文件；失租必须终止整个进程组；本地 PASS 不能冒充云端或 Server Gate。"
+    ],
+    "codePaths": [
+      "scripts/cap-runtime.mjs",
+      "scripts/cap-history-recon.mjs",
+      "scripts/cap-session-root.mjs",
+      "runtime/local-test-provider.mjs",
+      "skills/cap-flow/references/solution-necessity.md"
+    ],
+    "path": ".cap/history/task_3a0bec12-1045-41bb-91e2-53a2a0f0c8dc/experience.md"
+  }
+}
