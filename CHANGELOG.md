@@ -4,7 +4,7 @@
 
 ## 0.14.0
 
-- `cap-test` 新增仅作用于本地 `stage=test` 的硬状态机：先登记影响分析和互不重叠的定向/full 命令计划，定向回归全部通过且 canonical gate evidence 回验有效后冻结候选，再以独占消费账本约束同一源码快照唯一一次最终全量；删除任一活动状态或消费账本、源码 A→B→A 往返都不能重置次数，崩溃恢复沿用既有 execution owner 锁，Task/Session/分支/Commit/源码变化会使旧活动状态失效，implement、release、CI、Server Harness 与平台 Test Action 保持原行为。
+- `cap-test` 新增仅作用于本地 `stage=test` 的硬状态机：先登记影响分析和互不重叠的定向/full 命令计划，定向回归全部通过且 canonical gate evidence 回验有效后冻结候选，再以独占消费账本约束同一源码快照唯一一次最终全量；删除任一活动状态或消费账本、源码 A→B→A 往返都不能重置次数，崩溃恢复沿用既有 execution owner 锁，已知长时正式门禁须在冻结前配置足够的显式超时且超时同样消费 full 尝试，Task/Session/分支/Commit/源码变化会使旧活动状态失效，implement、release、CI、Server Harness 与平台 Test Action 保持原行为。
 
 ## 0.13.5
 

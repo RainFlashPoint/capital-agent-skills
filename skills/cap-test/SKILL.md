@@ -144,6 +144,8 @@ impact_ready → targeted_passed → candidate_frozen → full_passed | full_fai
 - 最终全量命令只能以 `--test-scope full` 执行一次。无论 PASS、失败或中断，这次尝试都已消耗；同一源码
   快照的独占消费记录保存在 `.cap/execution/test-full-attempts/`，删除或重建活动状态、A→B→A 往返以及重新登记
   影响分析都不能绕过。需要再跑时，先形成新的源码快照并重新做影响分析与定向回归。
+- 冻结前必须按该项目正式门禁的已知耗时为最终全量配置足够的显式执行超时；不能让已知长时套件依赖本地记录器
+  的通用默认值。超时同样会消费唯一 full 尝试，不能用“只是超时”作为同快照重跑理由。
 - Task、Session、仓库、分支、Commit、源码指纹或记录器版本变化都会使旧状态和旧证据失效。
 
 这条状态机**只约束 `stage=test` 的本地命令执行**。implement、release、CI、Server Harness 和平台 Test
