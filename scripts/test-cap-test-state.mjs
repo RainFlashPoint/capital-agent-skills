@@ -575,6 +575,30 @@ test('clean-tree baseline audit requires an explicit full-chain journey plan', a
   assert.deepEqual(state.plan.changedFiles, [])
 })
 
+test('baseline audit rejects dirty tracked, staged, and untracked snapshots', async t => {
+  const options = {
+    planMode: 'baseline-audit',
+    auditScope: 'full-chain',
+    changedFiles: [],
+    activeChecks: ['journey'],
+    targetedCommands: [passing],
+    fullCommand: fullPassing,
+  }
+
+  const tracked = await fixture(t)
+  await writeFile(join(tracked, 'source.txt'), 'dirty tracked\n')
+  await assert.rejects(createTestImpact(tracked, options), /test_baseline_audit_source_dirty/)
+
+  const staged = await fixture(t)
+  await writeFile(join(staged, 'source.txt'), 'dirty staged\n')
+  git(staged, 'add', 'source.txt')
+  await assert.rejects(createTestImpact(staged, options), /test_baseline_audit_source_dirty/)
+
+  const untracked = await fixture(t)
+  await writeFile(join(untracked, 'untracked.txt'), 'dirty untracked\n')
+  await assert.rejects(createTestImpact(untracked, options), /test_baseline_audit_source_dirty/)
+})
+
 test('an interrupted full attempt reports source change instead of an impossible retry', async t => {
   const root = await fixture(t)
   const slowFull = [process.execPath, '-e', 'setTimeout(() => process.exit(0), 5000)']

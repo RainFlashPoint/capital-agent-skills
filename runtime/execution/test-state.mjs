@@ -23,6 +23,7 @@ const phases = new Set(['impact_ready', 'targeted_passed', 'candidate_frozen', '
 const checks = /^(?:logic|model|journey(?::(?:Web|OpenAPI|App))?)$/
 const hashPattern = /^[a-f0-9]{64}$/
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/
+const emptyFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
 const same = (left, right) => canonical(left) === canonical(right)
 const validDate = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
 
@@ -51,6 +52,10 @@ function commandHashes(commands) {
   const hashes = commands.map(command => digest(argvCheck(command)))
   if (new Set(hashes).size !== hashes.length) fail('test_targeted_commands_invalid')
   return hashes
+}
+
+function cleanSourceSnapshot(snapshot) {
+  return ['index', 'worktree', 'untracked'].every(key => snapshot?.[key] === emptyFingerprint)
 }
 
 async function facts(repoCandidate) {
@@ -89,7 +94,7 @@ function validateState(state) {
     fail('test_state_invalid')
   }
   if (planMode === 'change' && (plan.changedFiles.length === 0 || (plan.auditScope !== undefined && plan.auditScope !== null))) fail('test_state_invalid')
-  if (planMode === 'baseline-audit' && (plan.changedFiles.length !== 0 || plan.auditScope !== 'full-chain' || !plan.activeChecks.some(check => check === 'journey' || check.startsWith('journey:')))) fail('test_state_invalid')
+  if (planMode === 'baseline-audit' && (plan.changedFiles.length !== 0 || plan.auditScope !== 'full-chain' || !plan.activeChecks.some(check => check === 'journey' || check.startsWith('journey:')) || !cleanSourceSnapshot(state.snapshot))) fail('test_state_invalid')
   if (!Array.isArray(plan.targetedCommandHashes) || !plan.targetedCommandHashes.length || typeof plan.fullCommandHash !== 'string') fail('test_state_invalid')
   if (!plan.targetedCommandHashes.every(hash => hashPattern.test(hash)) || new Set(plan.targetedCommandHashes).size !== plan.targetedCommandHashes.length || !hashPattern.test(plan.fullCommandHash)) fail('test_state_invalid')
   if (plan.targetedCommandHashes.includes(plan.fullCommandHash)) fail('test_state_invalid')
@@ -273,6 +278,7 @@ export async function createTestImpact(repoCandidate = '.', options = {}) {
     if (!['change', 'baseline-audit'].includes(planMode)) fail('test_impact_mode_invalid')
     const activeChecks = uniqueStrings(options.activeChecks, 'test_active_checks_invalid', checks).sort()
     if (planMode === 'baseline-audit' && (options.auditScope !== 'full-chain' || !activeChecks.some(check => check === 'journey' || check.startsWith('journey:')))) fail('test_baseline_audit_checks_invalid')
+    if (planMode === 'baseline-audit' && !cleanSourceSnapshot(current.snapshot)) fail('test_baseline_audit_source_dirty')
     if (planMode === 'change' && options.auditScope !== undefined && options.auditScope !== null) fail('test_impact_mode_invalid')
     const plan = {
       mode: planMode,
