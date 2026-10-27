@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTestImpact, freezeTestCandidate } from '../runtime/execution/test-state.mjs'
+import { createTestImpact, freezeTestCandidate, inspectTestState } from '../runtime/execution/test-state.mjs'
 import { runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, repositoryUrlHasEmbeddedCredentials } from './client-delivery.mjs'
 import { parseArguments, runPushCandidateDelivery } from './cap-push-candidate.mjs'
@@ -110,7 +110,15 @@ test('controlled candidate delivery pushes, reads the exact remote ref, records 
   assert.equal(requests[0].body.idempotency_key, `delivery-candidate:${source.taskId}:${source.head}:${fingerprint}`)
   assert.equal(requests[0].body.verification.authorizationFingerprint, fingerprint)
   assert.equal(requests[0].body.verification.remoteReadbackSha, source.head)
-  assert.match(requests[0].body.verification.commands[0].commandHash, /^sha256:[0-9a-f]{64}$/)
+  const testState = await inspectTestState(source.repo)
+  assert.deepEqual(requests[0].body.verification.commands, [
+    ...testState.plan.targetedCommandHashes,
+    testState.plan.fullCommandHash,
+  ].map(commandHash => ({ commandHash: `sha256:${commandHash}`, exitCode: 0 })))
+  const fullEvidence = JSON.parse(await readFile(join(source.repo, '.cap/execution', testState.fullAttempt.actionId, 'gate.json'), 'utf8'))
+  assert.equal(requests[0].body.verification.executedAt, fullEvidence.receipt.finishedAt)
+  assert.notEqual(requests[0].body.verification.executedAt, verificationFor(source).executedAt)
+  assert.notEqual(requests[0].body.verification.environmentFingerprint, normalizeCandidateVerification(verificationFor(source), source.head).verification.environmentFingerprint)
   assert.equal(JSON.stringify(requests[0].body.verification).includes('scripts/test-push-candidate.mjs'), false)
   assert.equal(git(source.repo, ['rev-parse', '@{upstream}']), source.head)
 })

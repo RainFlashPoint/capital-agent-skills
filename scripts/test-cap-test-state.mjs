@@ -10,6 +10,7 @@ import {
   inspectTestState,
 } from '../runtime/execution/test-state.mjs'
 import { executionNextActions, inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
+import { executionFailurePayload } from './cap-execute.mjs'
 import { switchTaskState } from './cap-task-state-switch.mjs'
 import { parseArguments as parseTestStateArguments } from './cap-test-state.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
@@ -590,6 +591,22 @@ test('frozen targeted evidence loss requires a new source snapshot', () => {
   ])
 })
 
+test('cap-execute catch path preserves frozen phase for targeted evidence loss', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  const state = await inspectTestState(root)
+  const actionId = state.targetedResults[state.plan.targetedCommandHashes[0]].actionId
+  await rm(join(root, '.cap/execution', actionId, 'gate.json'))
+  const payload = await executionFailurePayload(root, { stage: 'test', action: 'test' }, new Error('test_targeted_evidence_invalid'))
+  assert.deepEqual(payload.nextActions.map(action => [action.kind, action.requiresSourceChange]), [
+    ['change_source_then_refresh_test_impact', true],
+  ])
+})
+
 test('untracked executable mode is normalized independently of other permission bits', async t => {
   const root = await fixture(t)
   const script = join(root, 'mode-probe.sh')
@@ -637,6 +654,59 @@ test('tracked executable mode drift is visible when core.fileMode is false', asy
   const state = await inspectTestState(root)
   assert.equal(state.valid, false)
   assert.equal(state.reason, 'test_source_changed')
+})
+
+test('submodule dirt remains visible under ignore-all configuration', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cap-test-submodule-parent-'))
+  const child = await mkdtemp(join(tmpdir(), 'cap-test-submodule-child-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  t.after(() => rm(child, { recursive: true, force: true }))
+  git(child, 'init', '-q')
+  git(child, 'config', 'user.email', 'fixture@example.invalid')
+  git(child, 'config', 'user.name', 'Fixture')
+  await writeFile(join(child, 'dep.txt'), 'base\n')
+  git(child, 'add', 'dep.txt')
+  git(child, 'commit', '-qm', 'child base')
+  git(root, 'init', '-q')
+  git(root, 'config', 'user.email', 'fixture@example.invalid')
+  git(root, 'config', 'user.name', 'Fixture')
+  await writeFile(join(root, '.gitignore'), '.cap/\n')
+  await writeFile(join(root, 'source.txt'), 'base\n')
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', child, 'vendor/dep')
+  git(root, 'add', '.')
+  git(root, 'commit', '-qm', 'parent base')
+  const baseCommit = git(root, 'rev-parse', 'HEAD')
+  await captureTaskBaseline(root, 'task-test-state')
+  await writeFile(join(root, 'source.txt'), 'feature\n')
+  git(root, 'add', 'source.txt')
+  git(root, 'commit', '-qm', 'feature')
+  await mkdir(join(root, '.cap'), { recursive: true })
+  await writeFile(join(root, '.cap/STATE.md'), [
+    'stage: test',
+    'status: in-progress',
+    'task-id: task-test-state',
+    'session-id: session-test-state',
+    `branch: ${git(root, 'branch', '--show-current')}`,
+    `base-commit: ${baseCommit}`,
+    `worktree: ${root}`,
+    '',
+  ].join('\n'))
+  await createTestImpact(root, {
+    changedFiles: ['source.txt'], activeChecks: ['logic'], targetedCommands: [passing], fullCommand: fullPassing,
+  })
+  const before = await inspectContextFingerprint(root)
+  git(root, 'config', 'submodule.vendor/dep.ignore', 'all')
+  git(root, 'config', 'diff.ignoreSubmodules', 'all')
+  await writeFile(join(root, 'vendor/dep/dep.txt'), 'dirty\n')
+  await writeFile(join(root, 'vendor/dep/untracked.txt'), 'dirty\n')
+  const after = await inspectContextFingerprint(root)
+  assert.notEqual(after.worktree, before.worktree)
+  const state = await inspectTestState(root)
+  assert.equal(state.valid, false)
+  assert.equal(state.reason, 'test_source_changed')
+  await assert.rejects(createTestImpact(root, {
+    changedFiles: ['source.txt'], activeChecks: ['logic'], targetedCommands: [passing], fullCommand: fullPassing,
+  }), /test_impact_changed_files_mismatch/)
 })
 
 test('a targeted result locks the same-snapshot impact plan', async t => {

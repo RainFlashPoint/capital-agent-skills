@@ -7,6 +7,7 @@ import { acknowledgeOutboxEvent, enqueueOutboxEvent, inspectOutbox, markOutboxAt
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { inspectLocalExecution } from '../runtime/execution/local-flow.mjs'
 import { inspectTestState } from '../runtime/execution/test-state.mjs'
+import { digest } from '../runtime/ontology/schema.mjs'
 
 const text = value => String(value || '').trim()
 const git = (repo, args) => { try { return text(execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] })) } catch { return '' } }
@@ -167,7 +168,35 @@ export async function inspectCandidateSourceEvidence(repoRoot, commitSha = '') {
   if (!execution.passed || execution.gate?.envelopeId !== state.fullAttempt.actionId) {
     return { ok: false, reason: 'candidate_execution_evidence_invalid' }
   }
-  return { ok: true, sourceFingerprint: state.sourceFingerprint, snapshot }
+  let evidence
+  try { evidence = JSON.parse(await readFile(join(repoRoot, execution.artifactDir, 'gate.json'), 'utf8')) } catch { return { ok: false, reason: 'candidate_execution_evidence_invalid' } }
+  const envelope = evidence?.envelope
+  const receipt = evidence?.receipt
+  if (evidence?.schemaVersion !== 3 || evidence.status !== 'terminal'
+    || evidence.envelopeHash !== digest(envelope) || evidence.receiptHash !== digest(receipt)
+    || evidence.diagnosticHash !== digest(evidence.diagnostic)
+    || envelope?.id !== state.fullAttempt.actionId || envelope.commandHash !== state.plan.fullCommandHash
+    || evidence.envelopeHash !== state.fullAttempt.requestHash || evidence.receiptHash !== state.fullAttempt.receiptHash
+    || receipt?.envelopeId !== envelope.id || receipt.envelopeHash !== evidence.envelopeHash
+    || receipt.status !== 'passed' || receipt.exitCode !== 0 || receipt.signal
+    || !Number.isFinite(Date.parse(receipt.finishedAt))) {
+    return { ok: false, reason: 'candidate_execution_evidence_invalid' }
+  }
+  const commandHashes = [...state.plan.targetedCommandHashes, state.plan.fullCommandHash]
+  return {
+    ok: true,
+    sourceFingerprint: state.sourceFingerprint,
+    snapshot,
+    verification: {
+      passed: true,
+      status: 'PASS',
+      outcome: 'PASS',
+      sourceCommit: state.identity.commit,
+      executedAt: receipt.finishedAt,
+      environmentFingerprint: `sha256:${digest(receipt.runtime)}`,
+      commands: commandHashes.map(commandHash => ({ commandHash: `sha256:${commandHash}`, exitCode: 0 })),
+    },
+  }
 }
 
 export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '', remoteName = 'origin', pushUrl = '' } = {}) {
@@ -190,7 +219,7 @@ export async function buildCandidateDelivery(repoRoot, { verification = {}, auth
     ok: true,
     expectedFingerprint,
     remoteCommitSha,
-    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}:${expectedFingerprint}`, delivery_candidate: true, verification: { ...normalized.verification, sourceFingerprint: sourceEvidence.sourceFingerprint, authorizationFingerprint: expectedFingerprint, remoteReadbackSha: remoteCommitSha } } },
+    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}:${expectedFingerprint}`, delivery_candidate: true, verification: { ...normalized.verification, ...sourceEvidence.verification, sourceFingerprint: sourceEvidence.sourceFingerprint, authorizationFingerprint: expectedFingerprint, remoteReadbackSha: remoteCommitSha } } },
   }
 }
 

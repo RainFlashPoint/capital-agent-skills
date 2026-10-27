@@ -70,9 +70,9 @@ function gitPaths(repo, args) {
 
 function actualChangedFiles(repo, base) {
   const files = new Set([
-    ...gitPaths(repo, ['diff', '--no-renames', '--name-only', `${base}...HEAD`]),
-    ...gitPaths(repo, ['diff', '--no-renames', '--name-only']),
-    ...gitPaths(repo, ['diff', '--cached', '--no-renames', '--name-only']),
+    ...gitPaths(repo, ['diff', '--no-renames', '--name-only', '--ignore-submodules=none', `${base}...HEAD`]),
+    ...gitPaths(repo, ['diff', '--no-renames', '--name-only', '--ignore-submodules=none']),
+    ...gitPaths(repo, ['diff', '--cached', '--no-renames', '--name-only', '--ignore-submodules=none']),
     ...gitPaths(repo, ['ls-files', '--others', '--exclude-standard']),
   ])
   return changedFiles([...files], { allowEmpty: true })

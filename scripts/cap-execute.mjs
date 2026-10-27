@@ -4,6 +4,7 @@ import { runLocalAction, doctorLocalExecution, inspectLocalExecution, recoverLoc
 import { parseJson } from '../runtime/ontology/json.mjs'
 import { inspectSemanticContext } from './cap-context-gate.mjs'
 import { inspectTaskContext } from './cap-runtime.mjs'
+import { inspectTestState } from '../runtime/execution/test-state.mjs'
 
 export function parseArguments(argv) {
  const out={operation:'run',repo:'.'};let i=0
@@ -26,9 +27,17 @@ export function parseArguments(argv) {
  if(out.compact&&out.operation!=='run')throw new Error('execution_compact_run_only')
  return out
 }
+export async function executionFailurePayload(repo='.', options={}, error=new Error('execution_failed')) {
+ const message=String(error.message)
+ const code=/^(execution_|test_|json_|session_root_)[A-Za-z0-9_]+/.exec(message)?.[0]||'execution_failed'
+ const testState=code.startsWith('test_')?await inspectTestState(repo).catch(()=>null):null
+ const nextActions=executionNextActions(code,{stage:options.stage||'',action:options.action||'',testPhase:testState?.phase||''})
+ return {code,nextActions,remediation:code==='execution_command_missing'?'补充 .cap/execution-config.json、PROFILE.test-commands 或项目测试脚本后重试':'按 nextActions 处理后使用新的 action ID 重试'}
+}
 export async function main(argv=process.argv.slice(2)) {
+ let options={operation:'run',repo:'.'}
  try {
-  const options=parseArguments(argv)
+  options=parseArguments(argv)
   if(options.help){process.stdout.write('Local execution recorder — no account or secret required.\nUsage: node scripts/cap-execute.mjs [run|doctor|status|recover] --repo <repository> [--stage test --test-scope targeted|full] [--json|--compact] [--timeout-ms 120000] [-- <executable> <arguments...>]\n--compact returns a small PASS projection and automatically includes bounded redacted diagnostics for non-PASS results. Test-stage runs require an impact plan and explicit scope; other stages are unchanged.\nWithout argv, use .cap/execution-config.json or a declared package.json script. No implicit shell or wildcard expansion.\n');return 0}
   let result
   if(options.operation==='doctor')result=await doctorLocalExecution(options.repo)
@@ -56,9 +65,7 @@ export async function main(argv=process.argv.slice(2)) {
   process.stdout.write(`${JSON.stringify(result,null,2)}\n`)
   return options.operation==='run'&&!result.gate.passed?1:0
  }catch(error){
-  const message=String(error.message)
-  const code=/^(execution_|test_|json_|session_root_)[A-Za-z0-9_]+/.exec(message)?.[0]||'execution_failed'
-  const payload={code,nextActions:executionNextActions(code),remediation:code==='execution_command_missing'?'补充 .cap/execution-config.json、PROFILE.test-commands 或项目测试脚本后重试':'按 nextActions 处理后使用新的 action ID 重试'}
+  const payload=await executionFailurePayload(options.repo,options,error)
   process.stderr.write(`cap-execute: ${JSON.stringify(payload)}\n`);return 1
  }
 }

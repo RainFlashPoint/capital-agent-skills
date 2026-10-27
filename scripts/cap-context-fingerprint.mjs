@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { lstat, readFile, readlink, realpath } from 'node:fs/promises'
+import { lstat, readFile, readlink, realpath, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -62,17 +62,45 @@ async function trackedModeDrift(repo) {
   return Buffer.from(drift.sort().join(''))
 }
 
+async function submoduleDrift(repo) {
+  const raw = git(repo, ['ls-files', '--stage', '-z', '--', '.', ':(exclude).cap/**'], 'buffer')
+  const entries = []
+  for (const entry of raw.toString('utf8').split('\0').filter(Boolean)) {
+    const separator = entry.indexOf('\t')
+    if (separator < 0) continue
+    const metadata = entry.slice(0, separator).split(' ')
+    const path = entry.slice(separator + 1)
+    if (metadata.length !== 3 || metadata[0] !== '160000' || metadata[2] !== '0') continue
+    const absolute = resolve(repo, path)
+    const stat = await lstat(absolute).catch(error => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (!stat?.isDirectory()) continue
+    let root = ''
+    try { root = await realpath(String(git(absolute, ['rev-parse', '--show-toplevel'])).trim()) } catch {}
+    if (root !== await realpath(absolute)) {
+      if ((await readdir(absolute)).length) entries.push(Buffer.from(`${path}\0uninitialized-content\0`))
+      continue
+    }
+    const status = git(absolute, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=none'], 'buffer')
+    if (status.length) entries.push(Buffer.concat([Buffer.from(`${path}\0`), status, Buffer.from('\0')]))
+  }
+  return Buffer.concat(entries.sort((left, right) => Buffer.compare(left, right)))
+}
+
 export async function inspectContextFingerprint(repoPath = '.', options = {}) {
   const requested = resolve(repoPath)
   const root = await realpath(String(git(requested, ['rev-parse', '--show-toplevel'])).trim())
   assertVisibleTrackedFiles(root, options)
-  const indexPatch = git(root, ['diff', '--cached', '--binary', '--no-ext-diff', '--no-renames', '--', '.', ':(exclude).cap/**'], 'buffer')
-  const worktreePatch = git(root, ['diff', '--binary', '--no-ext-diff', '--no-renames', '--', '.', ':(exclude).cap/**'], 'buffer')
+  const indexPatch = git(root, ['diff', '--cached', '--binary', '--no-ext-diff', '--no-renames', '--ignore-submodules=none', '--', '.', ':(exclude).cap/**'], 'buffer')
+  const worktreePatch = git(root, ['diff', '--binary', '--no-ext-diff', '--no-renames', '--ignore-submodules=none', '--', '.', ':(exclude).cap/**'], 'buffer')
   const modeDrift = await trackedModeDrift(root)
+  const submodules = await submoduleDrift(root)
   return {
     root,
     index: digest(indexPatch),
-    worktree: digest(Buffer.concat([worktreePatch, modeDrift])),
+    worktree: digest(Buffer.concat([worktreePatch, modeDrift, submodules])),
     untracked: await untrackedFingerprint(root),
   }
 }

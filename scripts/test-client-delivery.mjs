@@ -86,6 +86,13 @@ test('candidate delivery is bound to exact task repo branch HEAD and passed loca
   assert.equal(candidate.item.payload.delivery_candidate, true)
   assert.equal(candidate.item.payload.commit_sha, head)
   assert.equal(candidate.item.payload.verification.sourceFingerprint, testState.sourceFingerprint)
+  assert.deepEqual(candidate.item.payload.verification.commands, [
+    ...testState.plan.targetedCommandHashes,
+    testState.plan.fullCommandHash,
+  ].map(commandHash => ({ commandHash: `sha256:${commandHash}`, exitCode: 0 })))
+  const fullEvidence = JSON.parse(await readFile(join(repo, '.cap/execution', testState.fullAttempt.actionId, 'gate.json'), 'utf8'))
+  assert.equal(candidate.item.payload.verification.executedAt, fullEvidence.receipt.finishedAt)
+  assert.match(candidate.item.payload.verification.environmentFingerprint, /^sha256:[0-9a-f]{64}$/)
   const stale = await buildCandidateDelivery(repo, { authorizedFingerprint: 'stale', verification: { passed: true, status: 'PASS' } })
   assert.equal(stale.reason, 'push_authorization_required')
   await assert.rejects(queueCommitDelivery(repo, candidate.item), /candidate_delivery_requires_live_authorization/)
