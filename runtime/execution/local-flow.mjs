@@ -5,7 +5,7 @@ import { digest, canonical } from '../ontology/schema.mjs'
 import { inspectContextFingerprint } from '../../scripts/cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from '../../scripts/cap-session-root.mjs'
 import { fail, field, stageName, resolveExecutionStage, git, repoRoot, safePath, jsonFile, textFile, atomicJson, executionContract, versions, commandFor, argvCheck, timeoutCheck, observeCommand } from './local-support.mjs'
-import { completeTestRun, reconcileTerminalTestRun, reserveTestRun, testExecutionGate } from './test-state.mjs'
+import { completeTestRun, inspectTestState, reconcileTerminalTestRun, reserveTestRun, testExecutionGate } from './test-state.mjs'
 export { executionContract } from './local-support.mjs'
 
 const hashPattern=/^[a-f0-9]{64}$/
@@ -64,11 +64,23 @@ export function executionNextActions(reason='', { stage='', action='', testPhase
  if(code==='test_candidate_frozen') return [make('run_full_test_once','对冻结候选执行唯一一次最终全量测试')]
  if(code==='test_full_failed'||code==='test_full_already_attempted') return [make('change_source_then_refresh_test_impact','修复源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
  if(code==='test_full_command_overlaps_targeted') return [make('refresh_test_impact','将最终全量命令从定向命令集合中移除后重新登记影响分析')]
- if(code==='test_targeted_evidence_invalid') return ['candidate_frozen','full_passed','full_failed'].includes(testPhase)
+ if(code==='test_targeted_evidence_invalid') return ['targeted_passed','candidate_frozen','full_passed','full_failed'].includes(testPhase)
   ? [make('change_source_then_refresh_test_impact','修改源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
   : [make('refresh_test_impact','重新登记影响分析并重跑定向测试')]
+ if(code==='test_full_evidence_invalid'||code==='test_full_evidence_mismatch') return [make('change_source_then_refresh_test_impact','修改源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
  if(code==='test_full_attempt_incomplete') return [make('recover_interrupted_execution','检查并清理中断的全量执行'),make('change_source_then_refresh_test_impact','修改源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
  return reason? [make('inspect_local_execution','检查本地执行状态')]:[]
+}
+async function missingTestEvidence(repo,pointer,{stage,action,artifactDir}) {
+ const state=await inspectTestState(repo).catch(()=>null)
+ if(!state)return null
+ let reason=''
+ if(Object.values(state.targetedResults||{}).some(result=>result?.actionId===pointer.id))reason='test_targeted_evidence_invalid'
+ else if(state.fullAttempt?.actionId===pointer.id)reason=state.fullAttempt.status==='running'?'test_full_attempt_incomplete':'test_full_evidence_invalid'
+ if(!reason)return null
+ const recoveryContext={stage,action,testPhase:state.phase||''}
+ const nextActions=executionNextActions(reason,recoveryContext)
+ return {required:true,stage,action,passed:false,reason,artifactDir,nextActions,remediation:'当前测试证据已丢失；冻结或终态快照必须修改源码后重新登记影响分析'}
 }
 async function facts(path,options={}) {
  const repo=await repoRoot(path)
@@ -179,7 +191,13 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
   const pointer=await jsonFile(repo,`.cap/execution/latest-${stage}.json`).catch(e=>{if(e.code==='ENOENT')return null;throw e})
   if(!pointer){const reason='execution_missing';return {required,stage,action,passed:false,reason,artifactDir:'',nextActions:executionNextActions(reason,{stage,action}),remediation:'发现或补齐本地执行命令'} }
   if(pointer.schemaVersion!==2||!idPattern.test(pointer.id)||!hashPattern.test(pointer.requestHash))fail('execution_index_invalid')
-  const dir=`.cap/execution/${pointer.id}`,evidence=await jsonFile(repo,`${dir}/gate.json`).catch(e=>{if(e.code==='ENOENT')fail('execution_pending_or_interrupted');throw e})
+  const dir=`.cap/execution/${pointer.id}`,evidence=await jsonFile(repo,`${dir}/gate.json`).catch(async e=>{
+   if(e.code!=='ENOENT')throw e
+   if(stage==='test')return {missingTestEvidence:await missingTestEvidence(repo,pointer,{stage,action,artifactDir:dir})}
+   fail('execution_pending_or_interrupted')
+  })
+  if(evidence.missingTestEvidence)return evidence.missingTestEvidence
+  if(Object.hasOwn(evidence,'missingTestEvidence'))fail('execution_pending_or_interrupted')
   if(evidence.schemaVersion===3) {
    const request=evidence.envelope
    if(request?.task!==f.identity.task||request?.session!==f.identity.session)return {required,stage,action,passed:false,reason:'execution_identity_changed',artifactDir:dir}

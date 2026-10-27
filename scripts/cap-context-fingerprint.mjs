@@ -84,7 +84,20 @@ async function submoduleDrift(repo) {
       continue
     }
     const status = git(absolute, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=none'], 'buffer')
-    if (status.length) entries.push(Buffer.concat([Buffer.from(`${path}\0`), status, Buffer.from('\0')]))
+    const modeDrift = await trackedModeDrift(absolute)
+    const nested = await submoduleDrift(absolute)
+    if (status.length || modeDrift.length || nested.length) {
+      const indexPatch = git(absolute, ['diff', '--cached', '--binary', '--no-ext-diff', '--no-renames', '--ignore-submodules=none', '--', '.', ':(exclude).cap/**'], 'buffer')
+      const worktreePatch = git(absolute, ['diff', '--binary', '--no-ext-diff', '--no-renames', '--ignore-submodules=none', '--', '.', ':(exclude).cap/**'], 'buffer')
+      const untracked = await untrackedFingerprint(absolute)
+      entries.push(Buffer.from([
+        path,
+        digest(indexPatch),
+        digest(Buffer.concat([worktreePatch, modeDrift, nested])),
+        untracked,
+        '',
+      ].join('\0')))
+    }
   }
   return Buffer.concat(entries.sort((left, right) => Buffer.compare(left, right)))
 }

@@ -697,16 +697,66 @@ test('submodule dirt remains visible under ignore-all configuration', async t =>
   const before = await inspectContextFingerprint(root)
   git(root, 'config', 'submodule.vendor/dep.ignore', 'all')
   git(root, 'config', 'diff.ignoreSubmodules', 'all')
+  git(join(root, 'vendor/dep'), 'config', 'core.fileMode', 'false')
+  await chmod(join(root, 'vendor/dep/dep.txt'), 0o755)
+  const modeOnly = await inspectContextFingerprint(root)
+  assert.notEqual(modeOnly.worktree, before.worktree)
+  await chmod(join(root, 'vendor/dep/dep.txt'), 0o644)
+  assert.equal((await inspectContextFingerprint(root)).worktree, before.worktree)
   await writeFile(join(root, 'vendor/dep/dep.txt'), 'dirty\n')
   await writeFile(join(root, 'vendor/dep/untracked.txt'), 'dirty\n')
   const after = await inspectContextFingerprint(root)
   assert.notEqual(after.worktree, before.worktree)
+  await writeFile(join(root, 'vendor/dep/dep.txt'), 'different dirty content\n')
+  await writeFile(join(root, 'vendor/dep/untracked.txt'), 'different untracked content\n')
+  const changedDirtyContent = await inspectContextFingerprint(root)
+  assert.notEqual(changedDirtyContent.worktree, after.worktree)
+  await chmod(join(root, 'vendor/dep/dep.txt'), 0o755)
+  const changedExecutableMode = await inspectContextFingerprint(root)
+  assert.notEqual(changedExecutableMode.worktree, changedDirtyContent.worktree)
   const state = await inspectTestState(root)
   assert.equal(state.valid, false)
   assert.equal(state.reason, 'test_source_changed')
   await assert.rejects(createTestImpact(root, {
     changedFiles: ['source.txt'], activeChecks: ['logic'], targetedCommands: [passing], fullCommand: fullPassing,
   }), /test_impact_changed_files_mismatch/)
+})
+
+test('missing targeted evidence after candidate freeze requires a new source snapshot', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  const targeted = await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await rm(join(targeted.artifactDir, 'gate.json'))
+
+  const status = await inspectLocalExecution(root)
+  assert.equal(status.reason, 'test_targeted_evidence_invalid')
+  assert.deepEqual(status.nextActions.map(action => action.kind), [
+    'change_source_then_refresh_test_impact',
+  ])
+  assert.equal(status.nextActions[0].requiresSourceChange, true)
+})
+
+test('missing full evidence after full pass requires a new source snapshot', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  const full = await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+  await rm(join(full.artifactDir, 'gate.json'))
+
+  const status = await inspectLocalExecution(root)
+  assert.equal(status.reason, 'test_full_evidence_invalid')
+  assert.deepEqual(status.nextActions.map(action => action.kind), [
+    'change_source_then_refresh_test_impact',
+  ])
+  assert.equal(status.nextActions[0].requiresSourceChange, true)
 })
 
 test('a targeted result locks the same-snapshot impact plan', async t => {

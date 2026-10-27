@@ -14,6 +14,7 @@
 - 候选 Push 与 Delivery 现在要求 canonical test-state 处于同一精确 Commit 的 `full_passed`，从已重验的 full Action 派生 `sourceFingerprint`，并在远端写入前拒绝 staged、unstaged、untracked、executable-mode 漂移；缺失、损坏或属于旧 Commit 的执行证据全部失败关闭。普通 evidence-only Delivery、local-only 仓策略和 Server Harness 保持原行为。
 - 同一源码快照一旦任一定向命令产生结果，impact 计划即锁定，不能通过重登记更宽松命令清除失败证据；完全相同计划在未冻结、未消费 full 的 `impact_ready` 状态保持幂等。源码指纹独立对比 index 与可见跟踪文件的规范化 executable bit，即使 `core.fileMode=false` 也能拒绝执行位漂移；`-z` Git 路径通过未裁剪 buffer 解码，前导空白和换行文件名不再失真。
 - 最终候选 Delivery 的命令 hash、执行时间与运行时指纹改由 canonical targeted/full Action 和终态 receipt 派生，调用方提供的命令、时间或环境声明不再进入候选证据；源码指纹与 impact diff 显式覆盖被 `submodule.*.ignore=all` / `diff.ignoreSubmodules=all` 隐藏的 submodule 修改和未跟踪内容。`cap-execute` 的异常出口同时读取真实 test phase，冻结或终态证据损坏只返回“修改源码形成新快照”恢复动作，不再建议同快照刷新 impact。
+- 最终独立复核收口后，缺失 canonical `gate.json` 会按 test-state 中的 Action 归属与阶段区分定向证据、全量证据和中断尝试；冻结或终态证据丢失只允许修改源码后重建完整测试链。初始化子模块的指纹进一步绑定其 index/worktree/untracked 内容、嵌套子模块与规范化 executable mode，dirty A→dirty B 即使在 ignore-all 配置下也会使旧定向证据失效。
 
 ## 0.13.5
 
