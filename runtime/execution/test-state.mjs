@@ -63,9 +63,7 @@ function gitPaths(repo, args) {
   return output ? output.split('\0').filter(Boolean) : []
 }
 
-function actualChangedFiles(repo, state) {
-  const base = field(state, 'base-commit')
-  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(base)) fail('test_base_commit_missing')
+function actualChangedFiles(repo, base) {
   const files = new Set([
     ...gitPaths(repo, ['diff', '--no-renames', '--name-only', `${base}...HEAD`]),
     ...gitPaths(repo, ['diff', '--no-renames', '--name-only']),
@@ -73,6 +71,18 @@ function actualChangedFiles(repo, state) {
     ...gitPaths(repo, ['ls-files', '--others', '--exclude-standard']),
   ])
   return changedFiles([...files], { allowEmpty: true })
+}
+
+async function trustedTaskBaseCommit(repo, task) {
+  if (!idPattern.test(task)) fail('test_identity_missing')
+  const baseline = await jsonFile(repo, `.cap/local-state/task-baselines/${task}.json`).catch(error => {
+    if (error.code === 'ENOENT') fail('test_task_baseline_missing')
+    throw error
+  })
+  if (baseline?.schema !== 1 || baseline.taskId !== task || !Array.isArray(baseline.dirtyPaths) || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(baseline.head || '')) fail('test_task_baseline_invalid')
+  const baselineRepo = await realpath(resolve(baseline.repo || '')).catch(() => null)
+  if (baselineRepo !== repo) fail('test_task_baseline_invalid')
+  return baseline.head
 }
 
 async function facts(repoCandidate) {
@@ -85,8 +95,10 @@ async function facts(repoCandidate) {
   if (!task || !branch || !commit) fail('test_identity_missing')
   if (field(state, 'branch') && field(state, 'branch') !== branch) fail('test_identity_changed')
   if (field(state, 'worktree') && await realpath(resolve(field(state, 'worktree'))).catch(() => null) !== repo) fail('test_identity_changed')
-  const snapshot = await inspectContextFingerprint(repo)
-  const identity = { repo, task, session, branch, commit }
+  const baseCommit = await trustedTaskBaseCommit(repo, task)
+  if (field(state, 'base-commit') !== baseCommit) fail('test_base_commit_mismatch')
+  const snapshot = await inspectContextFingerprint(repo, { rejectSkipWorktree: true })
+  const identity = { repo, task, session, branch, commit, baseCommit }
   const sourceFingerprint = digest({ identity, snapshot })
   const consumptionFingerprint = digest({
     commit,
@@ -94,7 +106,7 @@ async function facts(repoCandidate) {
     worktree: snapshot.worktree,
     untracked: snapshot.untracked,
   })
-  return { repo, stage: stageName(field(state, 'stage')), identity, snapshot, sourceFingerprint, consumptionFingerprint, recorderVersion: versions.recorder, actualChangedFiles: actualChangedFiles(repo, state) }
+  return { repo, stage: stageName(field(state, 'stage')), identity, snapshot, sourceFingerprint, consumptionFingerprint, recorderVersion: versions.recorder, actualChangedFiles: actualChangedFiles(repo, baseCommit) }
 }
 
 function validateState(state) {

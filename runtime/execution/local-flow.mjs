@@ -44,7 +44,7 @@ export function compactExecutionResult(run={}) {
 // Stable, model-facing recovery contract.  These are recommendations for the
 // local workflow, not permissions or an execution policy.  A model can carry
 // them out without asking the user to memorise cap-execute flags.
-export function executionNextActions(reason='', { stage='', action='' } = {}) {
+export function executionNextActions(reason='', { stage='', action='', testPhase='' } = {}) {
  const code=String(reason||'').split(':')[0]
  if(code==='verified_local_evidence') return []
  const context={stage,action}
@@ -64,7 +64,9 @@ export function executionNextActions(reason='', { stage='', action='' } = {}) {
  if(code==='test_candidate_frozen') return [make('run_full_test_once','对冻结候选执行唯一一次最终全量测试')]
  if(code==='test_full_failed'||code==='test_full_already_attempted') return [make('change_source_then_refresh_test_impact','修复源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
  if(code==='test_full_command_overlaps_targeted') return [make('refresh_test_impact','将最终全量命令从定向命令集合中移除后重新登记影响分析')]
- if(code==='test_targeted_evidence_invalid') return [make('refresh_test_impact','重新登记影响分析并重跑定向测试')]
+ if(code==='test_targeted_evidence_invalid') return ['candidate_frozen','full_passed','full_failed'].includes(testPhase)
+  ? [make('change_source_then_refresh_test_impact','修改源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
+  : [make('refresh_test_impact','重新登记影响分析并重跑定向测试')]
  if(code==='test_full_attempt_incomplete') return [make('recover_interrupted_execution','检查并清理中断的全量执行'),make('change_source_then_refresh_test_impact','修改源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
  return reason? [make('inspect_local_execution','检查本地执行状态')]:[]
 }
@@ -194,7 +196,7 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
    if(stage==='test') {
     const sequence=await testExecutionGate(repo,request)
     const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid'].includes(sequence.reason)
-    if(!sequence.passed&&sequenceOwnsRecovery){const reason=sequence.reason;return {required:true,stage,action,passed:false,reason,artifactDir:dir,gate:{...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,{stage,action}),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'},nextActions:executionNextActions(reason,{stage,action}),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'} }
+    if(!sequence.passed&&sequenceOwnsRecovery){const reason=sequence.reason,recoveryContext={stage,action,testPhase:sequence.state?.phase||''};return {required:true,stage,action,passed:false,reason,artifactDir:dir,gate:{...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,recoveryContext),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'},nextActions:executionNextActions(reason,recoveryContext),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'} }
    }
    const reason=gate.blockers[0]||'verified_local_evidence'
    return {required,stage,action,passed:gate.passed,reason,artifactDir:dir,gate,nextActions:gate.nextActions,remediation:gate.remediation}
@@ -212,7 +214,7 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
   if(stage==='test') {
    const sequence=await testExecutionGate(repo,request)
    const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid'].includes(sequence.reason)
-   if(!sequence.passed&&sequenceOwnsRecovery){const reason=sequence.reason;return {required:true,stage,action,passed:false,reason,artifactDir:dir,gate:{...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,{stage,action}),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'},nextActions:executionNextActions(reason,{stage,action}),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'} }
+   if(!sequence.passed&&sequenceOwnsRecovery){const reason=sequence.reason,recoveryContext={stage,action,testPhase:sequence.state?.phase||''};return {required:true,stage,action,passed:false,reason,artifactDir:dir,gate:{...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,recoveryContext),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'},nextActions:executionNextActions(reason,recoveryContext),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'} }
   }
   const reason=gate.blockers[0]||'verified_local_evidence'
   return {required,stage,action,passed:gate.passed,reason,artifactDir:dir,gate,nextActions:gate.nextActions,remediation:gate.remediation}

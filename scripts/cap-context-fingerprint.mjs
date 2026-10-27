@@ -12,11 +12,11 @@ function git(repo, args, encoding = 'utf8') {
   return execFileSync('git', ['-C', repo, ...args], { encoding, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 })
 }
 
-function assertVisibleTrackedFiles(repo) {
+function assertVisibleTrackedFiles(repo, { rejectSkipWorktree = false } = {}) {
   const raw = git(repo, ['ls-files', '-v', '-z', '--', '.', ':(exclude).cap/**'], 'buffer')
   const hidden = raw.toString('utf8').split('\0').filter(Boolean).filter(entry => {
     const flag = entry[0]
-    return flag === 'S' || /^[a-z]$/.test(flag)
+    return (rejectSkipWorktree && flag === 'S') || /^[a-z]$/.test(flag)
   })
   if (hidden.length) {
     const error = new Error('context_fingerprint_hidden_index_flags')
@@ -35,16 +35,16 @@ async function untrackedFingerprint(repo) {
     const stat = await lstat(absolute)
     hash.update(path).update('\0')
     if (stat.isSymbolicLink()) hash.update('symlink\0').update(await readlink(absolute))
-    else hash.update('file\0').update(await readFile(absolute))
+    else hash.update('file\0').update(stat.mode & 0o111 ? 'executable\0' : 'non-executable\0').update(await readFile(absolute))
     hash.update('\0')
   }
   return hash.digest('hex')
 }
 
-export async function inspectContextFingerprint(repoPath = '.') {
+export async function inspectContextFingerprint(repoPath = '.', options = {}) {
   const requested = resolve(repoPath)
   const root = await realpath(String(git(requested, ['rev-parse', '--show-toplevel'])).trim())
-  assertVisibleTrackedFiles(root)
+  assertVisibleTrackedFiles(root, options)
   const indexPatch = git(root, ['diff', '--cached', '--binary', '--no-ext-diff', '--no-renames', '--', '.', ':(exclude).cap/**'], 'buffer')
   const worktreePatch = git(root, ['diff', '--binary', '--no-ext-diff', '--no-renames', '--', '.', ':(exclude).cap/**'], 'buffer')
   return {

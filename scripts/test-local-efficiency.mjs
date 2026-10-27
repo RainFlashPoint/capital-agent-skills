@@ -12,6 +12,7 @@ import { captureContextBinding, captureCoverageRequirements } from './cap-contex
 import { createManifest } from './cap-context-checkpoint.mjs'
 import { digest } from '../runtime/ontology/schema.mjs'
 import { createTestImpact, freezeTestCandidate } from '../runtime/execution/test-state.mjs'
+import { captureTaskBaseline } from './cap-worktree-baseline.mjs'
 
 const cli=fileURLToPath(new URL('./cap-execute.mjs',import.meta.url))
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()
@@ -20,8 +21,9 @@ async function fixture(t, stage = 'implement') {
  git(root,'init','-q');git(root,'config','user.email','fixture@example.invalid');git(root,'config','user.name','Fixture')
  await writeFile(join(root,'.gitignore'),'.cap/\n');await writeFile(join(root,'source.txt'),'base\n');git(root,'add','.');git(root,'commit','-qm','fixture')
  const baseCommit=git(root,'rev-parse','HEAD')
+ await captureTaskBaseline(root,'task-a')
  if(stage==='test'){await writeFile(join(root,'source.txt'),'feature\n');git(root,'add','source.txt');git(root,'commit','-qm','feature')}
- await mkdir(join(root,'.cap'));await writeFile(join(root,'.cap/STATE.md'),`stage: ${stage}\nstatus: in-progress\ntask-id: task-a\nsession-id: session-a\nbranch: ${git(root,'branch','--show-current')}\nbase-commit: ${baseCommit}\nworktree: ${root}\nexecution-required: true\n- [x] test: logic\n`)
+ await mkdir(join(root,'.cap'),{recursive:true});await writeFile(join(root,'.cap/STATE.md'),`stage: ${stage}\nstatus: in-progress\ntask-id: task-a\nsession-id: session-a\nbranch: ${git(root,'branch','--show-current')}\nbase-commit: ${baseCommit}\nworktree: ${root}\nexecution-required: true\n- [x] test: logic\n`)
  return root
 }
 const opts={environment:{},command:[process.execPath,'-e','process.stdout.write("ok; still argv")']}

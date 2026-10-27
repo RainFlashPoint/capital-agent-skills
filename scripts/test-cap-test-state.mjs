@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { lstat, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -9,10 +9,11 @@ import {
   freezeTestCandidate,
   inspectTestState,
 } from '../runtime/execution/test-state.mjs'
-import { inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
+import { executionNextActions, inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { switchTaskState } from './cap-task-state-switch.mjs'
 import { parseArguments as parseTestStateArguments } from './cap-test-state.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
+import { captureTaskBaseline } from './cap-worktree-baseline.mjs'
 
 const git = (root, ...args) => execFileSync('git', args, {
   cwd: root,
@@ -33,12 +34,13 @@ async function fixture(t, stage = 'test', changed = true) {
   git(root, 'add', '.')
   git(root, 'commit', '-qm', 'fixture')
   const baseCommit = git(root, 'rev-parse', 'HEAD')
+  await captureTaskBaseline(root, 'task-test-state')
   if (changed) {
     await writeFile(join(root, 'source.txt'), 'feature\n')
     git(root, 'add', 'source.txt')
     git(root, 'commit', '-qm', 'feature')
   }
-  await mkdir(join(root, '.cap'))
+  await mkdir(join(root, '.cap'), { recursive: true })
   await writeFile(join(root, '.cap/STATE.md'), [
     `stage: ${stage}`,
     'status: in-progress',
@@ -174,8 +176,37 @@ test('changing the declared base cannot shrink an already registered impact plan
   await writeFile(statePath, state.replace(/^base-commit: .+$/m, `base-commit: ${git(root, 'rev-parse', 'HEAD')}`))
   await assert.rejects(
     runLocalAction(root, { environment: {}, stage: 'test', testScope: 'targeted', command: passing }),
-    /test_impact_changed_files_mismatch/,
+    /test_base_commit_mismatch/,
   )
+})
+
+test('first impact registration rejects a STATE base that differs from the immutable Task baseline', async t => {
+  const root = await fixture(t)
+  const statePath = join(root, '.cap/STATE.md')
+  const state = await readFile(statePath, 'utf8')
+  await writeFile(statePath, state.replace(/^base-commit: .+$/m, `base-commit: ${git(root, 'rev-parse', 'HEAD')}`))
+  await assert.rejects(
+    createTestImpact(root, {
+      planMode: 'baseline-audit',
+      auditScope: 'full-chain',
+      changedFiles: [],
+      activeChecks: ['journey'],
+      targetedCommands: [passing],
+      fullCommand: fullPassing,
+    }),
+    /test_base_commit_mismatch/,
+  )
+})
+
+test('legitimate sparse checkout remains compatible with non-test local execution', async t => {
+  const root = await fixture(t, 'implement', false)
+  git(root, 'sparse-checkout', 'init', '--no-cone')
+  git(root, 'sparse-checkout', 'set', '/.gitignore', '/source.txt')
+  assert.match(git(root, 'ls-files', '-v'), /^S /m)
+  const run = await runLocalAction(root, {
+    environment: {}, stage: 'implement', command: passing,
+  })
+  assert.equal(run.gate.passed, true)
 })
 
 test('targeted command must be declared by the current impact analysis', async t => {
@@ -342,11 +373,13 @@ test('Task and Session rotation cannot reset a consumed source snapshot', async 
   await runLocalAction(root, {
     environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
   })
+  await captureTaskBaseline(root, 'task-rotated')
   const statePath = join(root, '.cap/STATE.md')
   const state = await readFile(statePath, 'utf8')
   await writeFile(statePath, state
     .replace('task-id: task-test-state', 'task-id: task-rotated')
-    .replace('session-id: session-test-state', 'session-id: session-rotated'))
+    .replace('session-id: session-test-state', 'session-id: session-rotated')
+    .replace(/^base-commit: .+$/m, `base-commit: ${git(root, 'rev-parse', 'HEAD')}`))
   await assert.rejects(impact(root), /test_full_already_attempted/)
 })
 
@@ -388,7 +421,7 @@ test('branch relabelling cannot reset a consumed source snapshot', async t => {
   await assert.rejects(impact(root), /test_full_already_attempted/)
 })
 
-test('moving the same worktree cannot reset a consumed source snapshot', async t => {
+test('moving the same worktree fails closed before a consumed source can be replayed', async t => {
   const root = await fixture(t)
   await impact(root)
   await runLocalAction(root, {
@@ -404,7 +437,7 @@ test('moving the same worktree cannot reset a consumed source snapshot', async t
   const statePath = join(moved, '.cap/STATE.md')
   const state = await readFile(statePath, 'utf8')
   await writeFile(statePath, state.replace(/^worktree: .*$/m, `worktree: ${moved}`))
-  await assert.rejects(impact(moved), /test_full_already_attempted/)
+  await assert.rejects(impact(moved), /test_task_baseline_invalid/)
 })
 
 test('a sibling worktree cannot reset a consumed source snapshot', async t => {
@@ -422,14 +455,15 @@ test('a sibling worktree cannot reset a consumed source snapshot', async t => {
   t.after(() => rm(sibling, { recursive: true, force: true }))
   const siblingBranch = `sibling-${Date.now()}-${process.pid}`
   git(root, 'worktree', 'add', '-qb', siblingBranch, sibling, 'HEAD')
-  await mkdir(join(sibling, '.cap'))
+  await captureTaskBaseline(sibling, 'task-sibling')
+  await mkdir(join(sibling, '.cap'), { recursive: true })
   await writeFile(join(sibling, '.cap/STATE.md'), [
     'stage: test',
     'status: in-progress',
     'task-id: task-sibling',
     'session-id: session-sibling',
     `branch: ${siblingBranch}`,
-    `base-commit: ${git(sibling, 'rev-parse', 'HEAD^')}`,
+    `base-commit: ${git(sibling, 'rev-parse', 'HEAD')}`,
     `worktree: ${sibling}`,
     '',
   ].join('\n'))
@@ -529,6 +563,53 @@ test('full command does not start after frozen targeted evidence is removed', as
     /test_targeted_evidence_invalid/,
   )
   await assert.rejects(readFile(marker), error => error.code === 'ENOENT')
+})
+
+test('frozen targeted evidence loss requires a new source snapshot', () => {
+  const actions = executionNextActions('test_targeted_evidence_invalid', {
+    stage: 'test',
+    action: 'test',
+    testPhase: 'candidate_frozen',
+  })
+  assert.deepEqual(actions.map(action => [action.kind, action.requiresSourceChange]), [
+    ['change_source_then_refresh_test_impact', true],
+  ])
+})
+
+test('untracked executable mode is normalized independently of other permission bits', async t => {
+  const root = await fixture(t)
+  const script = join(root, 'mode-probe.sh')
+  await writeFile(script, '#!/bin/sh\nexit 0\n', { mode: 0o600 })
+  const nonExecutable = (await inspectContextFingerprint(root)).untracked
+  await chmod(script, 0o644)
+  assert.equal((await inspectContextFingerprint(root)).untracked, nonExecutable)
+  await chmod(script, 0o700)
+  const executable = (await inspectContextFingerprint(root)).untracked
+  assert.notEqual(executable, nonExecutable)
+  await chmod(script, 0o755)
+  assert.equal((await inspectContextFingerprint(root)).untracked, executable)
+})
+
+test('post-freeze chmod of an untracked command invalidates the source snapshot', async t => {
+  const root = await fixture(t)
+  const script = join(root, 'probe.sh')
+  await writeFile(script, '#!/bin/sh\nexit 0\n', { mode: 0o644 })
+  const full = ['./probe.sh']
+  await createTestImpact(root, {
+    changedFiles: ['probe.sh', 'source.txt'],
+    activeChecks: ['logic'],
+    targetedCommands: [passing],
+    fullCommand: full,
+  })
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await chmod(script, 0o755)
+  await assert.rejects(
+    runLocalAction(root, { environment: {}, stage: 'test', testScope: 'full', command: full }),
+    /test_source_changed/,
+  )
 })
 
 test('candidate freeze is immutable on the same source snapshot', async t => {
