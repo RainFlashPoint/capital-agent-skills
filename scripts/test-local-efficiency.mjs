@@ -23,6 +23,7 @@ async function fixture(t, stage = 'implement') {
  return root
 }
 const opts={environment:{},command:[process.execPath,'-e','process.stdout.write("ok; still argv")']}
+const fullOptsCommand=[process.execPath,'-e','process.stdout.write("full-suite")']
 
 async function prepareCliContext(root) {
  const f=await inspectContextFingerprint(root),branch=git(root,'branch','--show-current'),head=git(root,'rev-parse','HEAD')
@@ -47,7 +48,7 @@ async function prepareCliContext(root) {
  await writeFile(join(root,'.cap/STATE.md'),sources['.cap/STATE.md']+`\ncontext-manifest: .cap/context/manifest.json\ncontext-checkpoint: .cap/context/checkpoint.json\ncontext-checkpoint-digest: ${manifest.digest}\ncontext-previous-manifest: none\ncontext-previous-digest: none\n`)
 }
 
-async function completeTestSequence(root, targetedCommand, fullCommand = targetedCommand) {
+async function completeTestSequence(root, targetedCommand, fullCommand = fullOptsCommand) {
  await createTestImpact(root,{changedFiles:['source.txt'],activeChecks:['logic'],targetedCommands:[targetedCommand],fullCommand})
  const targeted=await runLocalAction(root,{environment:{},stage:'test',testScope:'targeted',command:targetedCommand})
  if(!targeted.gate.passed)return {targeted,full:null}
@@ -178,7 +179,7 @@ test('cap-status consumes real evidence and blocks stale or failed results despi
  await writeFile(join(root,'source.txt'),'changed\n')
  report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test');assert.equal(report.nextActions[0].kind,'inspect_source_changes');assert.equal(report.nextActions[1].kind,'rerun_with_new_action_id');assert.equal(report.nextActions[0].requiresUser,false)
  const failed=[process.execPath,'-e','process.exit(2)']
- await createTestImpact(root,{changedFiles:['source.txt'],activeChecks:['logic'],targetedCommands:[failed],fullCommand:failed})
+ await createTestImpact(root,{changedFiles:['source.txt'],activeChecks:['logic'],targetedCommands:[failed],fullCommand:fullOptsCommand})
  await runLocalAction(root,{environment:{},stage:'test',testScope:'targeted',command:failed})
  report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test');assert.equal(report.nextActions[0].kind,'diagnose_command_failure');assert.equal(report.nextActions[1].kind,'rerun_with_new_action_id')
 })

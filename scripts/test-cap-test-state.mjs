@@ -41,12 +41,13 @@ async function fixture(t, stage = 'test') {
 }
 
 const passing = [process.execPath, '-e', 'process.exit(0)']
+const fullPassing = [process.execPath, '-e', 'process.stdout.write("full-pass")']
 const failing = [process.execPath, '-e', 'process.exit(7)']
 const impact = root => createTestImpact(root, {
   changedFiles: ['source.txt'],
   activeChecks: ['logic'],
   targetedCommands: [passing],
-  fullCommand: passing,
+  fullCommand: fullPassing,
 })
 
 test('targeted test is blocked before impact analysis and command is not executed', async t => {
@@ -91,7 +92,7 @@ test('every planned targeted command must pass before candidate freeze', async t
     changedFiles: ['source.txt'],
     activeChecks: ['logic'],
     targetedCommands: [passing, second],
-    fullCommand: passing,
+    fullCommand: fullPassing,
   })
   await runLocalAction(root, {
     environment: {}, stage: 'test', testScope: 'targeted', command: passing,
@@ -110,7 +111,7 @@ test('candidate freeze requires every planned targeted command to pass', async t
     changedFiles: ['source.txt'],
     activeChecks: ['logic'],
     targetedCommands: [failing],
-    fullCommand: passing,
+    fullCommand: fullPassing,
   })
   await assert.rejects(freezeTestCandidate(root), /test_targeted_not_passed/)
   const run = await runLocalAction(root, {
@@ -156,14 +157,14 @@ test('impact, targeted pass, freeze and one full attempt form the only happy pat
   await freezeTestCandidate(root)
   assert.equal((await inspectTestState(root)).phase, 'candidate_frozen')
   const full = await runLocalAction(root, {
-    environment: {}, stage: 'test', testScope: 'full', command: passing,
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
   })
   assert.equal(full.gate.gate, 'PASS')
   state = await inspectTestState(root)
   assert.equal(state.phase, 'full_passed')
   assert.equal(state.fullAttempt.status, 'passed')
   await assert.rejects(
-    runLocalAction(root, { environment: {}, stage: 'test', testScope: 'full', command: passing }),
+    runLocalAction(root, { environment: {}, stage: 'test', testScope: 'full', command: fullPassing }),
     /test_full_already_attempted/,
   )
   await assert.rejects(impact(root), /test_full_already_attempted/)
@@ -204,7 +205,7 @@ test('full-attempt ledger survives state deletion and A-to-B-to-A source changes
   })
   await freezeTestCandidate(root)
   await runLocalAction(root, {
-    environment: {}, stage: 'test', testScope: 'full', command: passing,
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
   })
   await rm(join(root, '.cap/execution/test-state.json'))
   await assert.rejects(impact(root), /test_full_already_attempted/)
@@ -298,6 +299,45 @@ test('candidate freeze is immutable on the same source snapshot', async t => {
   })
   await freezeTestCandidate(root)
   await assert.rejects(impact(root), /test_candidate_frozen/)
+})
+
+test('the final full command cannot also be registered as a targeted command', async t => {
+  const root = await fixture(t)
+  await assert.rejects(
+    createTestImpact(root, {
+      changedFiles: ['source.txt'],
+      activeChecks: ['logic'],
+      targetedCommands: [passing],
+      fullCommand: passing,
+    }),
+    /test_full_command_overlaps_targeted/,
+  )
+})
+
+test('deleting only the full-attempt ledger cannot reset a terminal source snapshot', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+  const terminal = await inspectTestState(root)
+  await rm(join(root, '.cap/execution/test-full-attempts', `${terminal.sourceFingerprint}.json`))
+  const inspected = await inspectTestState(root)
+  assert.equal(inspected.valid, false)
+  assert.equal(inspected.reason, 'test_full_attempt_incomplete')
+  await assert.rejects(impact(root), /test_full_already_attempted/)
+})
+
+test('obsolete secondary state-lock debris cannot permanently block transitions', async t => {
+  const root = await fixture(t)
+  await mkdir(join(root, '.cap/execution'), { recursive: true })
+  await mkdir(join(root, '.cap/execution/.test-state.lock'))
+  await impact(root)
+  assert.equal((await inspectTestState(root)).phase, 'impact_ready')
 })
 
 test('impact analysis cannot replace the plan while a targeted command is running', async t => {

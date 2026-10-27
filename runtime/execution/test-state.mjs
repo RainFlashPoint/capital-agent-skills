@@ -79,6 +79,7 @@ function validateState(state) {
   }
   if (!Array.isArray(plan.targetedCommandHashes) || !plan.targetedCommandHashes.length || typeof plan.fullCommandHash !== 'string') fail('test_state_invalid')
   if (!plan.targetedCommandHashes.every(hash => hashPattern.test(hash)) || new Set(plan.targetedCommandHashes).size !== plan.targetedCommandHashes.length || !hashPattern.test(plan.fullCommandHash)) fail('test_state_invalid')
+  if (plan.targetedCommandHashes.includes(plan.fullCommandHash)) fail('test_state_invalid')
   if (!state.targetedResults || typeof state.targetedResults !== 'object' || Array.isArray(state.targetedResults)) fail('test_state_invalid')
   if (state.fullAttempt !== null && (typeof state.fullAttempt !== 'object' || !idPattern.test(state.fullAttempt.actionId || ''))) fail('test_state_invalid')
   if (digest({ identity: state.identity, snapshot: state.snapshot }) !== state.sourceFingerprint) fail('test_state_invalid')
@@ -206,22 +207,6 @@ async function withExecutionLock(repo, operation, action) {
   }
 }
 
-async function withStateLock(repo, operation) {
-  await safePath(repo, '.cap/execution', { create: true })
-  const lock = join(repo, '.cap/execution/.test-state.lock')
-  try {
-    await mkdir(lock)
-  } catch (error) {
-    if (error.code === 'EEXIST') fail('test_state_busy')
-    throw error
-  }
-  try {
-    return await operation()
-  } finally {
-    await rm(lock, { recursive: true, force: true })
-  }
-}
-
 async function writeState(repo, state) {
   await atomicJson(join(repo, statePath), state)
   return state
@@ -238,23 +223,25 @@ export async function createTestImpact(repoCandidate = '.', options = {}) {
       targetedCommandHashes: commandHashes(options.targetedCommands).sort(),
       fullCommandHash: digest(argvCheck(options.fullCommand)),
     }
-    return withStateLock(repo, async () => {
-      const existing = await readState(repo)
-      if (await readFullReservation(repo, current.sourceFingerprint)) fail('test_full_already_attempted')
-      if (existing && !freshness(existing, current) && existing.phase === 'candidate_frozen') fail('test_candidate_frozen')
-      return writeState(repo, {
-        schemaVersion: 1,
-        phase: 'impact_ready',
-        identity: current.identity,
-        snapshot: current.snapshot,
-        sourceFingerprint: current.sourceFingerprint,
-        recorderVersion: current.recorderVersion,
-        plan,
-        targetedResults: Object.fromEntries(plan.targetedCommandHashes.map(hash => [hash, { status: 'pending' }])),
-        frozenAt: null,
-        fullAttempt: null,
-        updatedAt: isoNow(),
-      })
+    if (plan.targetedCommandHashes.includes(plan.fullCommandHash)) fail('test_full_command_overlaps_targeted')
+    const existing = await readState(repo)
+    if (await readFullReservation(repo, current.sourceFingerprint)) fail('test_full_already_attempted')
+    if (existing && !freshness(existing, current)) {
+      if (existing.fullAttempt || ['full_passed', 'full_failed'].includes(existing.phase)) fail('test_full_already_attempted')
+      if (existing.phase === 'candidate_frozen') fail('test_candidate_frozen')
+    }
+    return writeState(repo, {
+      schemaVersion: 1,
+      phase: 'impact_ready',
+      identity: current.identity,
+      snapshot: current.snapshot,
+      sourceFingerprint: current.sourceFingerprint,
+      recorderVersion: current.recorderVersion,
+      plan,
+      targetedResults: Object.fromEntries(plan.targetedCommandHashes.map(hash => [hash, { status: 'pending' }])),
+      frozenAt: null,
+      fullAttempt: null,
+      updatedAt: isoNow(),
     })
   })
 }
@@ -265,6 +252,9 @@ export async function inspectTestState(repoCandidate = '.') {
   const reservation = await readFullReservation(current.repo, current.sourceFingerprint)
   if (!state) return { schemaVersion: 1, valid: false, phase: 'missing', reason: reservation ? 'test_full_already_attempted' : 'test_impact_missing', statePath }
   const reason = freshness(state, current)
+  if (!reason && state.fullAttempt && !reservation) {
+    return { ...state, valid: false, reason: 'test_full_attempt_incomplete', statePath }
+  }
   if (!reason && reservation && (!state.fullAttempt || state.fullAttempt.actionId !== reservation.actionId)) {
     return { ...state, valid: false, reason: 'test_full_attempt_incomplete', statePath }
   }
@@ -276,16 +266,14 @@ export async function freezeTestCandidate(repoCandidate = '.') {
   return withExecutionLock(repo, 'freeze', async () => {
     const current = await facts(repo)
     if (current.stage !== 'test') fail('test_stage_required')
-    return withStateLock(repo, async () => {
-      const state = await readState(repo)
-      if (!state) fail('test_impact_missing')
-      const reason = freshness(state, current)
-      if (reason) fail(reason)
-      if (state.phase !== 'targeted_passed') fail('test_targeted_not_passed')
-      if (!state.plan.targetedCommandHashes.every(hash => state.targetedResults[hash]?.status === 'passed')) fail('test_targeted_not_passed')
-      await verifyAllTargetedEvidence(repo, state)
-      return writeState(repo, { ...state, phase: 'candidate_frozen', frozenAt: isoNow(), updatedAt: isoNow() })
-    })
+    const state = await readState(repo)
+    if (!state) fail('test_impact_missing')
+    const reason = freshness(state, current)
+    if (reason) fail(reason)
+    if (state.phase !== 'targeted_passed') fail('test_targeted_not_passed')
+    if (!state.plan.targetedCommandHashes.every(hash => state.targetedResults[hash]?.status === 'passed')) fail('test_targeted_not_passed')
+    await verifyAllTargetedEvidence(repo, state)
+    return writeState(repo, { ...state, phase: 'candidate_frozen', frozenAt: isoNow(), updatedAt: isoNow() })
   })
 }
 
@@ -296,30 +284,28 @@ export async function reserveTestRun(repoCandidate = '.', { scope, command, acti
   if (current.stage !== 'test') fail('test_stage_required')
   await assertExecutionOwner(current.repo, actionId)
   const commandHash = digest(argvCheck(command))
-  return withStateLock(current.repo, async () => {
-    const state = await readState(current.repo)
-    if (!state) fail('test_impact_missing')
-    const reason = freshness(state, current)
-    if (reason) fail(reason)
-    if (scope === 'targeted') {
-      if (!state.plan.targetedCommandHashes.includes(commandHash)) fail('test_targeted_command_unplanned')
-      if (state.phase === 'targeted_passed') fail('test_targeted_complete')
-      if (state.phase !== 'impact_ready') fail('test_candidate_frozen')
-      return { state, commandHash, current }
-    }
-    if (state.plan.fullCommandHash !== commandHash) fail('test_full_command_unplanned')
-    if (state.fullAttempt || await readFullReservation(current.repo, state.sourceFingerprint) || ['full_passed', 'full_failed'].includes(state.phase)) fail('test_full_already_attempted')
-    if (state.phase !== 'candidate_frozen') fail('test_candidate_not_frozen')
-    await verifyAllTargetedEvidence(current.repo, state)
-    const reservation = await reserveFullAttempt(current.repo, state, actionId, commandHash)
-    const next = {
-      ...state,
-      fullAttempt: { actionId, commandHash, status: 'running', startedAt: reservation.startedAt, finishedAt: null },
-      updatedAt: isoNow(),
-    }
-    await writeState(current.repo, next)
-    return { state: next, commandHash, current }
-  })
+  const state = await readState(current.repo)
+  if (!state) fail('test_impact_missing')
+  const reason = freshness(state, current)
+  if (reason) fail(reason)
+  if (scope === 'targeted') {
+    if (!state.plan.targetedCommandHashes.includes(commandHash)) fail('test_targeted_command_unplanned')
+    if (state.phase === 'targeted_passed') fail('test_targeted_complete')
+    if (state.phase !== 'impact_ready') fail('test_candidate_frozen')
+    return { state, commandHash, current }
+  }
+  if (state.plan.fullCommandHash !== commandHash) fail('test_full_command_unplanned')
+  if (state.fullAttempt || await readFullReservation(current.repo, state.sourceFingerprint) || ['full_passed', 'full_failed'].includes(state.phase)) fail('test_full_already_attempted')
+  if (state.phase !== 'candidate_frozen') fail('test_candidate_not_frozen')
+  await verifyAllTargetedEvidence(current.repo, state)
+  const reservation = await reserveFullAttempt(current.repo, state, actionId, commandHash)
+  const next = {
+    ...state,
+    fullAttempt: { actionId, commandHash, status: 'running', startedAt: reservation.startedAt, finishedAt: null },
+    updatedAt: isoNow(),
+  }
+  await writeState(current.repo, next)
+  return { state: next, commandHash, current }
 }
 
 export async function completeTestRun(repoCandidate = '.', { scope, commandHash, actionId, passed, resultStatus = '', requestHash = '', receiptHash = '' } = {}) {
@@ -327,30 +313,28 @@ export async function completeTestRun(repoCandidate = '.', { scope, commandHash,
   if (!hashPattern.test(requestHash) || !hashPattern.test(receiptHash)) fail('test_evidence_hash_invalid')
   const repo = await repoRoot(repoCandidate)
   await assertExecutionOwner(repo, actionId)
-  return withStateLock(repo, async () => {
-    const state = await readState(repo)
-    if (!state) fail('test_impact_missing')
-    const finishedAt = isoNow()
-    if (scope === 'targeted') {
-      if (!state.plan.targetedCommandHashes.includes(commandHash)) fail('test_targeted_command_unplanned')
-      const targetedResults = {
-        ...state.targetedResults,
-        [commandHash]: { status: passed ? 'passed' : 'failed', actionId, requestHash, receiptHash, finishedAt, resultStatus },
-      }
-      const phase = state.plan.targetedCommandHashes.every(hash => targetedResults[hash]?.status === 'passed')
-        ? 'targeted_passed'
-        : 'impact_ready'
-      return writeState(repo, { ...state, phase, targetedResults, updatedAt: finishedAt })
+  const state = await readState(repo)
+  if (!state) fail('test_impact_missing')
+  const finishedAt = isoNow()
+  if (scope === 'targeted') {
+    if (!state.plan.targetedCommandHashes.includes(commandHash)) fail('test_targeted_command_unplanned')
+    const targetedResults = {
+      ...state.targetedResults,
+      [commandHash]: { status: passed ? 'passed' : 'failed', actionId, requestHash, receiptHash, finishedAt, resultStatus },
     }
-    if (state.fullAttempt?.actionId !== actionId || state.fullAttempt?.commandHash !== commandHash) fail('test_full_reservation_mismatch')
-    const reservation = await readFullReservation(repo, state.sourceFingerprint)
-    if (!reservation || reservation.actionId !== actionId || reservation.commandHash !== commandHash) fail('test_full_reservation_mismatch')
-    return writeState(repo, {
-      ...state,
-      phase: passed ? 'full_passed' : 'full_failed',
-      fullAttempt: { ...state.fullAttempt, status: passed ? 'passed' : 'failed', requestHash, receiptHash, resultStatus, finishedAt },
-      updatedAt: finishedAt,
-    })
+    const phase = state.plan.targetedCommandHashes.every(hash => targetedResults[hash]?.status === 'passed')
+      ? 'targeted_passed'
+      : 'impact_ready'
+    return writeState(repo, { ...state, phase, targetedResults, updatedAt: finishedAt })
+  }
+  if (state.fullAttempt?.actionId !== actionId || state.fullAttempt?.commandHash !== commandHash) fail('test_full_reservation_mismatch')
+  const reservation = await readFullReservation(repo, state.sourceFingerprint)
+  if (!reservation || reservation.actionId !== actionId || reservation.commandHash !== commandHash) fail('test_full_reservation_mismatch')
+  return writeState(repo, {
+    ...state,
+    phase: passed ? 'full_passed' : 'full_failed',
+    fullAttempt: { ...state.fullAttempt, status: passed ? 'passed' : 'failed', requestHash, receiptHash, resultStatus, finishedAt },
+    updatedAt: finishedAt,
   })
 }
 
