@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { lstat, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,7 @@ import {
   freezeTestCandidate,
   inspectTestState,
 } from '../runtime/execution/test-state.mjs'
-import { inspectLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
+import { inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { switchTaskState } from './cap-task-state-switch.mjs'
 
 const git = (root, ...args) => execFileSync('git', args, {
@@ -406,6 +406,67 @@ test('deleting only the full-attempt ledger cannot reset a terminal source snaps
   assert.equal(inspected.valid, false)
   assert.equal(inspected.reason, 'test_full_attempt_incomplete')
   await assert.rejects(impact(root), /test_full_already_attempted/)
+})
+
+test('an interrupted full attempt reports source change instead of an impossible retry', async t => {
+  const root = await fixture(t)
+  const slowFull = [process.execPath, '-e', 'setTimeout(() => process.exit(0), 5000)']
+  await createTestImpact(root, {
+    changedFiles: ['source.txt'],
+    activeChecks: ['logic'],
+    targetedCommands: [passing],
+    fullCommand: slowFull,
+  })
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  const pending = join(root, '.cap/execution/latest-test.json')
+  const previousPointer = JSON.parse(await readFile(pending, 'utf8'))
+
+  const moduleUrl = new URL('../runtime/execution/local-flow.mjs', import.meta.url).href
+  const runner = spawn(process.execPath, [
+    '--input-type=module',
+    '-e',
+    `import { runLocalAction } from ${JSON.stringify(moduleUrl)}; await runLocalAction(process.argv[1], { environment: {}, stage: 'test', testScope: 'full', command: JSON.parse(process.argv[2]), timeoutMs: 60000 })`,
+    root,
+    JSON.stringify(slowFull),
+  ], { stdio: 'ignore' })
+  t.after(() => { if (runner.exitCode === null) runner.kill('SIGKILL') })
+
+  let interruptedPointer = null
+  for (let attempts = 0; attempts < 200; attempts += 1) {
+    const lockOwner = await lstat(join(root, '.cap/execution/.lock/owner.json')).catch(() => null)
+    const pointer = await readFile(pending, 'utf8').then(JSON.parse).catch(() => null)
+    const gate = pointer?.id
+      ? await readFile(join(root, '.cap/execution', pointer.id, 'gate.json'), 'utf8').then(JSON.parse).catch(() => null)
+      : null
+    if (lockOwner && pointer?.id !== previousPointer.id && gate?.status === 'pending') {
+      interruptedPointer = pointer
+      break
+    }
+    if (runner.exitCode !== null) assert.fail(`full runner exited before publishing pending evidence: ${runner.exitCode}`)
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.ok(interruptedPointer, 'full runner did not publish pending evidence')
+
+  runner.kill('SIGKILL')
+  await new Promise(resolve => runner.once('exit', resolve))
+  await recoverLocalExecution(root)
+
+  const status = await inspectLocalExecution(root)
+  assert.equal(status.reason, 'test_full_attempt_incomplete')
+  assert.deepEqual(status.nextActions.map(action => action.kind), [
+    'recover_interrupted_execution',
+    'change_source_then_refresh_test_impact',
+  ])
+  assert.equal(status.nextActions[1].requiresSourceChange, true)
+  await assert.rejects(
+    runLocalAction(root, {
+      environment: {}, stage: 'test', testScope: 'full', command: slowFull,
+    }),
+    /test_full_already_attempted/,
+  )
 })
 
 test('obsolete secondary state-lock debris cannot permanently block transitions', async t => {

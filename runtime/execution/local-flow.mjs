@@ -63,7 +63,7 @@ export function executionNextActions(reason='', { stage='', action='' } = {}) {
  if(code==='test_full_failed'||code==='test_full_already_attempted') return [make('change_source_then_refresh_test_impact','修复源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
  if(code==='test_full_command_overlaps_targeted') return [make('refresh_test_impact','将最终全量命令从定向命令集合中移除后重新登记影响分析')]
  if(code==='test_targeted_evidence_invalid') return [make('refresh_test_impact','重新登记影响分析并重跑定向测试')]
- if(code==='test_full_attempt_incomplete') return [make('recover_interrupted_execution','检查并清理中断的全量执行'),make('refresh_test_impact','确认命令未在运行后，修改源码或重新分析新的源码快照')]
+ if(code==='test_full_attempt_incomplete') return [make('recover_interrupted_execution','检查并清理中断的全量执行'),make('change_source_then_refresh_test_impact','修改源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
  return reason? [make('inspect_local_execution','检查本地执行状态')]:[]
 }
 async function facts(path,options={}) {
@@ -178,6 +178,13 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
    const request=evidence.envelope
    if(request?.task!==f.identity.task||request?.session!==f.identity.session)return {required,stage,action,passed:false,reason:'execution_identity_changed',artifactDir:dir}
    required=true
+   if(stage==='test'&&evidence.status==='pending'&&request?.testScope==='full') {
+    const sequence=await testExecutionGate(repo,request)
+    if(!sequence.passed&&sequence.reason==='test_full_attempt_incomplete') {
+     const reason=sequence.reason,nextActions=executionNextActions(reason,{stage,action})
+     return {required:true,stage,action,passed:false,reason,artifactDir:dir,nextActions,remediation:'中断的全量尝试已消耗；修改源码形成新快照后重新登记影响分析'}
+    }
+   }
    const gate=verifyCanonicalEvidence(evidence,pointer,{...f,stage})
    if(stage==='test') {
     const sequence=await testExecutionGate(repo,request)
