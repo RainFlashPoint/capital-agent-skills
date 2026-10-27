@@ -19,7 +19,9 @@ async function fixture(t, stage = 'implement') {
  const root=await mkdtemp(join(tmpdir(),'cap-efficiency-'));t.after(()=>rm(root,{recursive:true,force:true}))
  git(root,'init','-q');git(root,'config','user.email','fixture@example.invalid');git(root,'config','user.name','Fixture')
  await writeFile(join(root,'.gitignore'),'.cap/\n');await writeFile(join(root,'source.txt'),'base\n');git(root,'add','.');git(root,'commit','-qm','fixture')
- await mkdir(join(root,'.cap'));await writeFile(join(root,'.cap/STATE.md'),`stage: ${stage}\nstatus: in-progress\ntask-id: task-a\nsession-id: session-a\nbranch: ${git(root,'branch','--show-current')}\nworktree: ${root}\nexecution-required: true\n- [x] test: logic\n`)
+ const baseCommit=git(root,'rev-parse','HEAD')
+ if(stage==='test'){await writeFile(join(root,'source.txt'),'feature\n');git(root,'add','source.txt');git(root,'commit','-qm','feature')}
+ await mkdir(join(root,'.cap'));await writeFile(join(root,'.cap/STATE.md'),`stage: ${stage}\nstatus: in-progress\ntask-id: task-a\nsession-id: session-a\nbranch: ${git(root,'branch','--show-current')}\nbase-commit: ${baseCommit}\nworktree: ${root}\nexecution-required: true\n- [x] test: logic\n`)
  return root
 }
 const opts={environment:{},command:[process.execPath,'-e','process.stdout.write("ok; still argv")']}
@@ -177,7 +179,7 @@ test('cap-status consumes real evidence and blocks stale or failed results despi
  await completeTestSequence(root,opts.command)
  let report=await status();assert.equal(report.task.localExecution.executionGate,'PASS');assert.equal(report.workflow.stage,'review');assert.deepEqual(report.task.localExecution.nextActions,[])
  await writeFile(join(root,'source.txt'),'changed\n')
- report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test');assert.equal(report.nextActions[0].kind,'inspect_source_changes');assert.equal(report.nextActions[1].kind,'rerun_with_new_action_id');assert.equal(report.nextActions[0].requiresUser,false)
+ report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test');assert.equal(report.nextActions[0].kind,'refresh_test_impact');assert.equal(report.nextActions.length,1);assert.equal(report.nextActions[0].requiresUser,false)
  const failed=[process.execPath,'-e','process.exit(2)']
  await createTestImpact(root,{changedFiles:['source.txt'],activeChecks:['logic'],targetedCommands:[failed],fullCommand:fullOptsCommand})
  await runLocalAction(root,{environment:{},stage:'test',testScope:'targeted',command:failed})

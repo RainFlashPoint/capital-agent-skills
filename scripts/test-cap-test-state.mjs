@@ -19,7 +19,7 @@ const git = (root, ...args) => execFileSync('git', args, {
   stdio: ['ignore', 'pipe', 'pipe'],
 }).trim()
 
-async function fixture(t, stage = 'test') {
+async function fixture(t, stage = 'test', changed = true) {
   const root = await mkdtemp(join(tmpdir(), 'cap-test-state-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   git(root, 'init', '-q')
@@ -29,6 +29,12 @@ async function fixture(t, stage = 'test') {
   await writeFile(join(root, 'source.txt'), 'base\n')
   git(root, 'add', '.')
   git(root, 'commit', '-qm', 'fixture')
+  const baseCommit = git(root, 'rev-parse', 'HEAD')
+  if (changed) {
+    await writeFile(join(root, 'source.txt'), 'feature\n')
+    git(root, 'add', 'source.txt')
+    git(root, 'commit', '-qm', 'feature')
+  }
   await mkdir(join(root, '.cap'))
   await writeFile(join(root, '.cap/STATE.md'), [
     `stage: ${stage}`,
@@ -36,6 +42,7 @@ async function fixture(t, stage = 'test') {
     'task-id: task-test-state',
     'session-id: session-test-state',
     `branch: ${git(root, 'branch', '--show-current')}`,
+    `base-commit: ${baseCommit}`,
     `worktree: ${root}`,
     '',
   ].join('\n'))
@@ -78,6 +85,45 @@ test('targeted test is blocked before impact analysis and command is not execute
     /test_impact_missing/,
   )
   await assert.rejects(readFile(marker), error => error.code === 'ENOENT')
+})
+
+test('authoritative test stage rejects stage and action overrides before command launch', async t => {
+  for (const override of [{ stage: 'implement' }, { action: 'build' }]) {
+    const root = await fixture(t)
+    const marker = `${root}-override-marker`
+    t.after(() => rm(marker, { force: true }))
+    const command = [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`]
+    await assert.rejects(
+      runLocalAction(root, { environment: {}, ...override, command }),
+      /execution_test_stage_override_forbidden/,
+    )
+    await assert.rejects(readFile(marker), error => error.code === 'ENOENT')
+  }
+})
+
+test('impact analysis must cover the complete base-to-source change set', async t => {
+  const root = await fixture(t)
+  await writeFile(join(root, 'second.txt'), 'second\n')
+  await assert.rejects(impact(root), /test_impact_changed_files_mismatch/)
+  const state = await createTestImpact(root, {
+    changedFiles: ['second.txt', 'source.txt'],
+    activeChecks: ['logic'],
+    targetedCommands: [passing],
+    fullCommand: fullPassing,
+  })
+  assert.deepEqual(state.plan.changedFiles, ['second.txt', 'source.txt'])
+})
+
+test('changing the declared base cannot shrink an already registered impact plan', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  const statePath = join(root, '.cap/STATE.md')
+  const state = await readFile(statePath, 'utf8')
+  await writeFile(statePath, state.replace(/^base-commit: .+$/m, `base-commit: ${git(root, 'rev-parse', 'HEAD')}`))
+  await assert.rejects(
+    runLocalAction(root, { environment: {}, stage: 'test', testScope: 'targeted', command: passing }),
+    /test_impact_changed_files_mismatch/,
+  )
 })
 
 test('targeted command must be declared by the current impact analysis', async t => {
@@ -230,7 +276,7 @@ test('full-attempt ledger survives state deletion and A-to-B-to-A source changes
 
   await writeFile(join(root, 'source.txt'), 'source-b\n')
   await impact(root)
-  await writeFile(join(root, 'source.txt'), 'base\n')
+  await writeFile(join(root, 'source.txt'), 'feature\n')
   await assert.rejects(impact(root), /test_full_already_attempted/)
 })
 
@@ -331,6 +377,7 @@ test('a sibling worktree cannot reset a consumed source snapshot', async t => {
     'task-id: task-sibling',
     'session-id: session-sibling',
     `branch: ${siblingBranch}`,
+    `base-commit: ${git(sibling, 'rev-parse', 'HEAD^')}`,
     `worktree: ${sibling}`,
     '',
   ].join('\n'))
@@ -349,6 +396,25 @@ test('source changes invalidate impact analysis before another command runs', as
   const state = await inspectTestState(root)
   assert.equal(state.valid, false)
   assert.equal(state.reason, 'test_source_changed')
+})
+
+test('test-stage source drift recovery refreshes impact instead of recommending a direct retry', async t => {
+  const root = await fixture(t)
+  const mutating = [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(join(root, 'source.txt'))}, 'mutated\\n')`]
+  await createTestImpact(root, {
+    changedFiles: ['source.txt'],
+    activeChecks: ['logic'],
+    targetedCommands: [mutating],
+    fullCommand: fullPassing,
+  })
+  const run = await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: mutating,
+  })
+  assert.equal(run.gate.passed, false)
+  assert.equal(run.gate.blockers[0], 'source_changed_during_execution')
+  const status = await inspectLocalExecution(root)
+  assert.equal(status.reason, 'execution_source_changed')
+  assert.deepEqual(status.nextActions.map(action => action.kind), ['refresh_test_impact'])
 })
 
 test('tampered state cannot self-certify the final full-suite gate', async t => {
@@ -540,7 +606,7 @@ test('tampered terminal full evidence cannot reconcile a crash window', async t 
 })
 
 test('clean-tree baseline audit requires an explicit full-chain journey plan', async t => {
-  const root = await fixture(t)
+  const root = await fixture(t, 'test', false)
   await assert.rejects(
     createTestImpact(root, {
       changedFiles: [],
@@ -585,16 +651,16 @@ test('baseline audit rejects dirty tracked, staged, and untracked snapshots', as
     fullCommand: fullPassing,
   }
 
-  const tracked = await fixture(t)
+  const tracked = await fixture(t, 'test', false)
   await writeFile(join(tracked, 'source.txt'), 'dirty tracked\n')
   await assert.rejects(createTestImpact(tracked, options), /test_baseline_audit_source_dirty/)
 
-  const staged = await fixture(t)
+  const staged = await fixture(t, 'test', false)
   await writeFile(join(staged, 'source.txt'), 'dirty staged\n')
   git(staged, 'add', 'source.txt')
   await assert.rejects(createTestImpact(staged, options), /test_baseline_audit_source_dirty/)
 
-  const untracked = await fixture(t)
+  const untracked = await fixture(t, 'test', false)
   await writeFile(join(untracked, 'untracked.txt'), 'dirty untracked\n')
   await assert.rejects(createTestImpact(untracked, options), /test_baseline_audit_source_dirty/)
 })

@@ -20,7 +20,9 @@ PASS、失败或中断都通过仓库共享 `git-common-dir` 的 `capital-agent/
 同一 Commit + 内容指纹的消费记录；Task、Session、
 分支、Commit 或源码指纹变化仍会让旧活动状态失效。terminal execution evidence 已写出而 test-state 尚未完成时，
 读取端只在锁内严格重验 pointer/envelope/receipt/reservation/identity/snapshot/hash 后幂等补写终态。常规变更计划要求
-非空 changed-files；只有显式 `baseline-audit + full-chain journey` 允许 clean-tree 空改动集。状态机机械证明的是已登记计划的顺序与证据，不重新实现 role-routing，也不自动证明登记内容完整。
+changed-files 精确覆盖 `STATE.base-commit...HEAD` 与当前 staged/unstaged/untracked 的路径并集；只有显式
+`baseline-audit + full-chain journey` 允许 clean-tree 空改动集。STATE 的权威阶段为 test 时，非 test 的 stage/action 覆盖在命令启动前拒绝；
+执行期间发生源码漂移则回到 `refresh_test_impact`。状态机不重新实现 role-routing，active checks 的语义完整性仍由 cap-test 与评审负责。
 该状态机**只约束 `stage=test` 的本地命令执行**，不改变 implement、release、CI、Server Harness 或平台 Test Action。
 
 ## 什么使证据失效

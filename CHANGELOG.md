@@ -8,6 +8,7 @@
 - 中断的最终全量现在优先返回 `test_full_attempt_incomplete`，明确要求修改源码形成新快照后再登记影响分析，不再给出同一快照更换 Action ID 重试的无效恢复建议；回归覆盖真实 pending evidence、死进程锁恢复和重复执行拒绝。
 - full-attempt 账本移入同仓 worktree 共享的 `git-common-dir`，关闭 sibling worktree 重置唯一 full 配额的绕过；terminal evidence 已落盘而 test-state 未完成时，经锁内完整证据重验后幂等补写终态，损坏证据失败关闭。
 - impact 计划新增显式 `change` / `baseline-audit` 模式：普通变更继续强制非空改动集，只有真实 index/worktree/untracked 指纹均为空、绑定 `full-chain` 且包含 journey check 的 clean-tree baseline audit 允许空改动集；调用方不能用空 `changedFiles` 隐藏脏快照。
+- test 阶段现在以 STATE 为权威拒绝 `--stage implement` / `--action build` 等执行覆盖，避免绕开 impact/freeze/full 账本；普通变更的 `changed-files` 必须精确覆盖 `base-commit...HEAD` 与当前 staged/unstaged/untracked 的并集，登记后漂移也会在冻结前失败关闭。test 命令导致源码变化时，恢复动作直接回到 `refresh_test_impact`，不再建议必然失败的换 Action ID 重跑。
 
 ## 0.13.5
 

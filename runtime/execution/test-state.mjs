@@ -58,6 +58,23 @@ function cleanSourceSnapshot(snapshot) {
   return ['index', 'worktree', 'untracked'].every(key => snapshot?.[key] === emptyFingerprint)
 }
 
+function gitPaths(repo, args) {
+  const output = git(repo, [...args, '-z'])
+  return output ? output.split('\0').filter(Boolean) : []
+}
+
+function actualChangedFiles(repo, state) {
+  const base = field(state, 'base-commit')
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(base)) fail('test_base_commit_missing')
+  const files = new Set([
+    ...gitPaths(repo, ['diff', '--name-only', `${base}...HEAD`]),
+    ...gitPaths(repo, ['diff', '--name-only']),
+    ...gitPaths(repo, ['diff', '--cached', '--name-only']),
+    ...gitPaths(repo, ['ls-files', '--others', '--exclude-standard']),
+  ])
+  return changedFiles([...files], { allowEmpty: true })
+}
+
 async function facts(repoCandidate) {
   const repo = await repoRoot(repoCandidate)
   const state = await textFile(repo, '.cap/STATE.md')
@@ -77,7 +94,7 @@ async function facts(repoCandidate) {
     worktree: snapshot.worktree,
     untracked: snapshot.untracked,
   })
-  return { repo, stage: stageName(field(state, 'stage')), identity, snapshot, sourceFingerprint, consumptionFingerprint, recorderVersion: versions.recorder }
+  return { repo, stage: stageName(field(state, 'stage')), identity, snapshot, sourceFingerprint, consumptionFingerprint, recorderVersion: versions.recorder, actualChangedFiles: actualChangedFiles(repo, state) }
 }
 
 function validateState(state) {
@@ -128,6 +145,8 @@ function freshness(state, current) {
   if (!same(state.identity, current.identity)) return 'test_identity_changed'
   if (state.recorderVersion !== current.recorderVersion) return 'test_recorder_changed'
   if (!same(state.snapshot, current.snapshot) || state.sourceFingerprint !== current.sourceFingerprint) return 'test_source_changed'
+  if (state.plan.mode === 'change' && !same(state.plan.changedFiles, current.actualChangedFiles)) return 'test_impact_changed_files_mismatch'
+  if (state.plan.mode === 'baseline-audit' && current.actualChangedFiles.length) return 'test_impact_changed_files_mismatch'
   return ''
 }
 
@@ -274,23 +293,25 @@ export async function createTestImpact(repoCandidate = '.', options = {}) {
   return withExecutionLock(repo, 'impact', async () => {
     const current = await facts(repo)
     if (current.stage !== 'test') fail('test_stage_required')
+    if (await readFullReservation(repo, current.consumptionFingerprint)) fail('test_full_already_attempted')
     const planMode = options.planMode || 'change'
     if (!['change', 'baseline-audit'].includes(planMode)) fail('test_impact_mode_invalid')
     const activeChecks = uniqueStrings(options.activeChecks, 'test_active_checks_invalid', checks).sort()
     if (planMode === 'baseline-audit' && (options.auditScope !== 'full-chain' || !activeChecks.some(check => check === 'journey' || check.startsWith('journey:')))) fail('test_baseline_audit_checks_invalid')
     if (planMode === 'baseline-audit' && !cleanSourceSnapshot(current.snapshot)) fail('test_baseline_audit_source_dirty')
     if (planMode === 'change' && options.auditScope !== undefined && options.auditScope !== null) fail('test_impact_mode_invalid')
+    const declaredChangedFiles = changedFiles(options.changedFiles, { allowEmpty: planMode === 'baseline-audit' })
+    if (!same(declaredChangedFiles, current.actualChangedFiles)) fail('test_impact_changed_files_mismatch')
     const plan = {
       mode: planMode,
       auditScope: planMode === 'baseline-audit' ? options.auditScope : null,
-      changedFiles: changedFiles(options.changedFiles, { allowEmpty: planMode === 'baseline-audit' }),
+      changedFiles: declaredChangedFiles,
       activeChecks,
       targetedCommandHashes: commandHashes(options.targetedCommands).sort(),
       fullCommandHash: digest(argvCheck(options.fullCommand)),
     }
     if (plan.targetedCommandHashes.includes(plan.fullCommandHash)) fail('test_full_command_overlaps_targeted')
     const existing = await readState(repo)
-    if (await readFullReservation(repo, current.consumptionFingerprint)) fail('test_full_already_attempted')
     if (existing && !freshness(existing, current)) {
       if (existing.fullAttempt || ['full_passed', 'full_failed'].includes(existing.phase)) fail('test_full_already_attempted')
       if (existing.phase === 'candidate_frozen') fail('test_candidate_frozen')

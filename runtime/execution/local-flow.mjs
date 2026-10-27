@@ -51,12 +51,14 @@ export function executionNextActions(reason='', { stage='', action='' } = {}) {
  const make=(kind,label,extra={})=>({kind,label,reason:String(reason||''),requiresUser:false,...context,...extra})
  if(code==='execution_missing'||code==='execution_command_missing'||code==='execution_command_disabled') return [make('configure_execution_command',code==='execution_command_disabled'?'PROFILE 明确声明当前阶段没有执行套件':'发现或补齐本地执行命令')]
  if(code==='command_failed'||code==='timed_out'||code==='output_limit'||code==='spawn_failed') return [make('diagnose_command_failure','检查失败输出并修复实现或测试命令'),make('rerun_with_new_action_id','修复后重新执行', {requiresSourceChange:false})]
- if(code==='source_changed_during_execution'||code==='execution_source_changed') return [make('inspect_source_changes','检查执行期间发生的源码变化'),make('rerun_with_new_action_id','确认代码稳定后重新执行')]
+ if(code==='source_changed_during_execution'||code==='execution_source_changed') return stage==='test'
+  ? [make('refresh_test_impact','按新源码快照重新登记影响分析')]
+  : [make('inspect_source_changes','检查执行期间发生的源码变化'),make('rerun_with_new_action_id','确认代码稳定后重新执行')]
  if(code==='execution_pending_or_interrupted'||code==='execution_in_progress_or_interrupted') return [make('recover_interrupted_execution','恢复或清理中断的本地执行'),make('rerun_with_new_action_id','恢复后重新执行')]
  if(code==='execution_version_changed') return [make('upgrade_local_skills','升级本地 Skills 后重新检查'),make('rerun_with_new_action_id','使用新版本重新执行')]
  if(code==='execution_identity_changed'||code==='execution_contract_mismatch') return [make('rebind_current_task','按当前 Task、分支和阶段重新生成执行证据'),make('rerun_with_new_action_id','绑定完成后重新执行')]
  if(code==='execution_index_invalid'||code==='execution_request_invalid'||code==='execution_bundle_invalid'||code==='execution_artifact_invalid') return [make('repair_execution_evidence','修复损坏或不完整的本地执行证据'),make('rerun_with_new_action_id','修复后重新执行')]
- if(code==='test_impact_missing'||code==='test_source_changed'||code==='test_identity_changed') return [make('refresh_test_impact','重新登记当前源码快照的影响分析')]
+ if(code==='test_impact_missing'||code==='test_impact_changed_files_mismatch'||code==='test_source_changed'||code==='test_identity_changed') return [make('refresh_test_impact','重新登记当前源码快照的影响分析')]
  if(code==='test_impact_ready') return [make('run_targeted_tests','执行影响分析中登记的定向测试')]
  if(code==='test_targeted_passed') return [make('freeze_test_candidate','冻结已通过定向测试的候选快照')]
  if(code==='test_candidate_frozen') return [make('run_full_test_once','对冻结候选执行唯一一次最终全量测试')]
@@ -85,6 +87,7 @@ function makeEnvelope(f,options,stage,contract,command) {
 export async function buildLocalEnvelope(repoPath='.',options={}) {
  const f=await facts(repoPath,{...options,checkSession:true})
  const stage=resolveExecutionStage(options,f.stage),contract=executionContract(stage)
+ if(f.stage==='test'&&stage!=='test')fail('execution_test_stage_override_forbidden')
  if(!contract.action)fail('execution_stage_uses_artifacts')
  if(options.action&&options.action!==contract.action)fail('execution_action_stage_mismatch')
  if(options.constraints&&!same(options.constraints,contract.constraints))fail('execution_constraints_not_supported')
@@ -124,6 +127,7 @@ function verifyCanonicalEvidence(evidence,pointer,expected) {
 export async function runLocalAction(repoPath='.',options={}) {
  const initial=await facts(repoPath,{...options,checkSession:true}),repo=initial.identity.repo
  const stage=resolveExecutionStage(options,initial.stage),contract=executionContract(stage)
+ if(initial.stage==='test'&&stage!=='test')fail('execution_test_stage_override_forbidden')
  if(!contract.action)fail('execution_stage_uses_artifacts')
  if(options.action&&options.action!==contract.action)fail('execution_action_stage_mismatch')
  if(options.constraints&&!same(options.constraints,contract.constraints))fail('execution_constraints_not_supported')
