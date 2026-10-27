@@ -146,8 +146,10 @@ impact_ready → targeted_passed → candidate_frozen → full_passed | full_fai
   PASS 后才能冻结候选。冻结与最终 Gate 会回验对应 request / bundle / receipt，不能只改状态 JSON 自报 PASS。
 - 冻结通过 `scripts/cap-test-state.mjs` 完成。冻结前不得执行最终全量；冻结后不得继续追加定向命令。
 - 最终全量命令只能以 `--test-scope full` 执行一次。无论 PASS、失败或中断，这次尝试都已消耗；同一源码
-  快照的独占消费记录保存在 `.cap/execution/test-full-attempts/`，删除或重建活动状态、A→B→A 往返以及重新登记
-  影响分析、轮换 Task 或 Session 都不能绕过。需要再跑时，先形成新的源码快照并重新做影响分析与定向回归。
+  快照的独占消费记录保存在任务生命周期之外的 `.cap/local-state/test-full-attempts/`，删除或重建活动状态、
+  A→B→A 往返、重新登记影响分析、Task 切换、Retire、轮换 Task/Session、分支改名或工作树路径变化都不能绕过。
+  消费键只绑定 Commit 与 index/worktree/untracked 内容指纹；Task/Session/branch/root 仍保留在执行证据和新鲜度检查中。
+  需要再跑时，先形成新的源码快照并重新做影响分析与定向回归。
 - 冻结前必须按该项目正式门禁的已知耗时为最终全量配置足够的显式执行超时；不能让已知长时套件依赖本地记录器
   的通用默认值。超时同样会消费唯一 full 尝试，不能用“只是超时”作为同快照重跑理由。
 - Task、Session、仓库、分支、Commit、源码指纹或记录器版本变化都会使旧状态和旧证据失效。

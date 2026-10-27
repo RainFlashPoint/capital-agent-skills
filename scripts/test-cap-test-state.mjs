@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { lstat, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -10,6 +10,7 @@ import {
   inspectTestState,
 } from '../runtime/execution/test-state.mjs'
 import { inspectLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
+import { switchTaskState } from './cap-task-state-switch.mjs'
 
 const git = (root, ...args) => execFileSync('git', args, {
   cwd: root,
@@ -234,6 +235,63 @@ test('Task and Session rotation cannot reset a consumed source snapshot', async 
   await assert.rejects(impact(root), /test_full_already_attempted/)
 })
 
+test('the real Task switch preserves the consumed full-attempt ledger', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+  await switchTaskState({
+    repoRoot: root,
+    taskId: 'task-after-switch',
+    sessionId: 'session-after-switch',
+    expectedOldTaskId: 'task-test-state',
+    stage: 'test',
+    title: 'same source after task switch',
+  })
+  await assert.rejects(impact(root), /test_full_already_attempted/)
+})
+
+test('branch relabelling cannot reset a consumed source snapshot', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+  git(root, 'switch', '-qc', 'same-tree-new-label')
+  const statePath = join(root, '.cap/STATE.md')
+  const state = await readFile(statePath, 'utf8')
+  await writeFile(statePath, state.replace(/^branch: .*$/m, 'branch: same-tree-new-label'))
+  await assert.rejects(impact(root), /test_full_already_attempted/)
+})
+
+test('moving the same worktree cannot reset a consumed source snapshot', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+  const moved = `${root}-moved`
+  t.after(() => rm(moved, { recursive: true, force: true }))
+  await rename(root, moved)
+  const statePath = join(moved, '.cap/STATE.md')
+  const state = await readFile(statePath, 'utf8')
+  await writeFile(statePath, state.replace(/^worktree: .*$/m, `worktree: ${moved}`))
+  await assert.rejects(impact(moved), /test_full_already_attempted/)
+})
+
 test('source changes invalidate impact analysis before another command runs', async t => {
   const root = await fixture(t)
   await impact(root)
@@ -343,7 +401,7 @@ test('deleting only the full-attempt ledger cannot reset a terminal source snaps
     environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
   })
   const terminal = await inspectTestState(root)
-  await rm(join(root, '.cap/execution/test-full-attempts', `${terminal.consumptionFingerprint}.json`))
+  await rm(join(root, '.cap/local-state/test-full-attempts', `${terminal.consumptionFingerprint}.json`))
   const inspected = await inspectTestState(root)
   assert.equal(inspected.valid, false)
   assert.equal(inspected.reason, 'test_full_attempt_incomplete')

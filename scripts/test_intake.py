@@ -1031,6 +1031,11 @@ class RetireTest(unittest.TestCase):
                 os.makedirs(os.path.join(cap, name))
                 with open(os.path.join(cap, name, "evidence.md"), "w", encoding="utf-8") as f:
                     f.write(name)
+            ledger_dir = os.path.join(cap, "local-state", "test-full-attempts")
+            os.makedirs(ledger_dir)
+            ledger_path = os.path.join(ledger_dir, "a" * 64 + ".json")
+            with open(ledger_path, "w", encoding="utf-8") as f:
+                f.write('{"schemaVersion":1}\n')
             with open(os.path.join(cap, "STATE.md"), "w", encoding="utf-8") as f:
                 f.write("stage: done\ntask-id: task_exec\n")
             r = run_retire("--cap", cap, "--slug", "feat", "--date", "2026-07-29",
@@ -1046,6 +1051,8 @@ class RetireTest(unittest.TestCase):
             self.assertIn("release/evidence.md", paths)
             self.assertFalse(os.path.exists(os.path.join(cap, "execution")))
             self.assertFalse(os.path.exists(os.path.join(cap, "release")))
+            self.assertTrue(os.path.isfile(ledger_path))
+            self.assertNotIn("local-state/test-full-attempts/" + "a" * 64 + ".json", paths)
 
     def test_strict_retire_refuses_without_done_and_preserves_active_files(self):
         with tempfile.TemporaryDirectory() as cap:

@@ -18,7 +18,7 @@ import {
 } from './local-support.mjs'
 
 const statePath = '.cap/execution/test-state.json'
-const fullAttemptsPath = '.cap/execution/test-full-attempts'
+const fullAttemptsPath = '.cap/local-state/test-full-attempts'
 const phases = new Set(['impact_ready', 'targeted_passed', 'candidate_frozen', 'full_passed', 'full_failed'])
 const checks = /^(?:logic|model|journey(?::(?:Web|OpenAPI|App))?)$/
 const hashPattern = /^[a-f0-9]{64}$/
@@ -64,7 +64,12 @@ async function facts(repoCandidate) {
   const snapshot = await inspectContextFingerprint(repo)
   const identity = { repo, task, session, branch, commit }
   const sourceFingerprint = digest({ identity, snapshot })
-  const consumptionFingerprint = digest({ source: { repo, branch, commit }, snapshot })
+  const consumptionFingerprint = digest({
+    commit,
+    index: snapshot.index,
+    worktree: snapshot.worktree,
+    untracked: snapshot.untracked,
+  })
   return { repo, stage: stageName(field(state, 'stage')), identity, snapshot, sourceFingerprint, consumptionFingerprint, recorderVersion: versions.recorder }
 }
 
@@ -85,7 +90,7 @@ function validateState(state) {
   if (!state.targetedResults || typeof state.targetedResults !== 'object' || Array.isArray(state.targetedResults)) fail('test_state_invalid')
   if (state.fullAttempt !== null && (typeof state.fullAttempt !== 'object' || !idPattern.test(state.fullAttempt.actionId || ''))) fail('test_state_invalid')
   if (digest({ identity: state.identity, snapshot: state.snapshot }) !== state.sourceFingerprint) fail('test_state_invalid')
-  if (digest({ source: { repo: state.identity.repo, branch: state.identity.branch, commit: state.identity.commit }, snapshot: state.snapshot }) !== state.consumptionFingerprint) fail('test_state_invalid')
+  if (digest({ commit: state.identity.commit, index: state.snapshot.index, worktree: state.snapshot.worktree, untracked: state.snapshot.untracked }) !== state.consumptionFingerprint) fail('test_state_invalid')
   const resultKeys = Object.keys(state.targetedResults).sort()
   if (!same(resultKeys, [...plan.targetedCommandHashes].sort())) fail('test_state_invalid')
   if (resultKeys.some(hash => {
@@ -131,7 +136,7 @@ function fullAttemptPath(consumptionFingerprint) {
 function validateFullReservation(value, consumptionFingerprint) {
   if (!value || value.schemaVersion !== 1 || value.consumptionFingerprint !== consumptionFingerprint || !hashPattern.test(value.sourceFingerprint || '') || !idPattern.test(value.actionId || '') || !hashPattern.test(value.commandHash || '')) fail('test_full_reservation_invalid')
   if (!value.identity || !value.snapshot || digest({ identity: value.identity, snapshot: value.snapshot }) !== value.sourceFingerprint) fail('test_full_reservation_invalid')
-  if (digest({ source: { repo: value.identity.repo, branch: value.identity.branch, commit: value.identity.commit }, snapshot: value.snapshot }) !== consumptionFingerprint) fail('test_full_reservation_invalid')
+  if (digest({ commit: value.identity.commit, index: value.snapshot.index, worktree: value.snapshot.worktree, untracked: value.snapshot.untracked }) !== consumptionFingerprint) fail('test_full_reservation_invalid')
   return value
 }
 
