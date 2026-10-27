@@ -119,6 +119,20 @@ test('impact analysis must cover the complete base-to-source change set', async 
   assert.deepEqual(state.plan.changedFiles, ['second.txt', 'source.txt'])
 })
 
+test('impact analysis preserves NUL-delimited paths verbatim', async t => {
+  const root = await fixture(t)
+  const paths = [' leading.txt', 'line\nbreak.txt']
+  for (const path of paths) await writeFile(join(root, path), 'changed\n')
+  const changedFiles = [...paths, 'source.txt'].sort()
+  const state = await createTestImpact(root, {
+    changedFiles,
+    activeChecks: ['logic'],
+    targetedCommands: [passing],
+    fullCommand: fullPassing,
+  })
+  assert.deepEqual(state.plan.changedFiles, changedFiles)
+})
+
 test('hidden tracked changes fail closed before impact analysis', async t => {
   for (const flag of ['--assume-unchanged', '--skip-worktree']) {
     const root = await fixture(t)
@@ -610,6 +624,44 @@ test('post-freeze chmod of an untracked command invalidates the source snapshot'
     runLocalAction(root, { environment: {}, stage: 'test', testScope: 'full', command: full }),
     /test_source_changed/,
   )
+})
+
+test('tracked executable mode drift is visible when core.fileMode is false', async t => {
+  const root = await fixture(t)
+  git(root, 'config', 'core.fileMode', 'false')
+  await impact(root)
+  const before = await inspectContextFingerprint(root)
+  await chmod(join(root, 'source.txt'), 0o755)
+  const after = await inspectContextFingerprint(root)
+  assert.notEqual(after.worktree, before.worktree)
+  const state = await inspectTestState(root)
+  assert.equal(state.valid, false)
+  assert.equal(state.reason, 'test_source_changed')
+})
+
+test('a targeted result locks the same-snapshot impact plan', async t => {
+  const root = await fixture(t)
+  await createTestImpact(root, {
+    changedFiles: ['source.txt'],
+    activeChecks: ['logic'],
+    targetedCommands: [failing],
+    fullCommand: fullPassing,
+  })
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: failing,
+  })
+  const failed = await inspectTestState(root)
+  assert.equal(failed.targetedResults[failed.plan.targetedCommandHashes[0]].status, 'failed')
+  await assert.rejects(impact(root), /test_impact_plan_locked/)
+  const repeated = await createTestImpact(root, {
+    changedFiles: ['source.txt'],
+    activeChecks: ['logic'],
+    targetedCommands: [failing],
+    fullCommand: fullPassing,
+  })
+  assert.deepEqual(repeated.plan, failed.plan)
+  assert.deepEqual(repeated.targetedResults, failed.targetedResults)
+  assert.equal(repeated.updatedAt, failed.updatedAt)
 })
 
 test('candidate freeze is immutable on the same source snapshot', async t => {

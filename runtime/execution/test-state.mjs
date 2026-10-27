@@ -8,6 +8,7 @@ import {
   fail,
   field,
   git,
+  gitBuffer,
   jsonFile,
   repoRoot,
   safePath,
@@ -40,7 +41,11 @@ function uniqueStrings(values, code, pattern = null) {
 
 function changedFiles(values, { allowEmpty = false } = {}) {
   if (allowEmpty && Array.isArray(values) && values.length === 0) return []
-  const files = uniqueStrings(values, 'test_impact_changed_files_invalid')
+  if (!Array.isArray(values) || !values.length || values.some(value => typeof value !== 'string' || !value.length || value.includes('\0'))) {
+    fail('test_impact_changed_files_invalid')
+  }
+  const files = [...values]
+  if (new Set(files).size !== files.length) fail('test_impact_changed_files_invalid')
   if (files.some(path => isAbsolute(path) || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..'))) {
     fail('test_impact_changed_files_invalid')
   }
@@ -59,7 +64,7 @@ function cleanSourceSnapshot(snapshot) {
 }
 
 function gitPaths(repo, args) {
-  const output = git(repo, [...args, '-z'])
+  const output = gitBuffer(repo, [...args, '-z']).toString('utf8')
   return output ? output.split('\0').filter(Boolean) : []
 }
 
@@ -327,6 +332,8 @@ export async function createTestImpact(repoCandidate = '.', options = {}) {
     if (existing && !freshness(existing, current)) {
       if (existing.fullAttempt || ['full_passed', 'full_failed'].includes(existing.phase)) fail('test_full_already_attempted')
       if (existing.phase === 'candidate_frozen') fail('test_candidate_frozen')
+      if (same(existing.plan, plan)) return existing
+      if (Object.values(existing.targetedResults).some(result => result.status !== 'pending')) fail('test_impact_plan_locked')
     }
     return writeState(repo, {
       schemaVersion: 1,

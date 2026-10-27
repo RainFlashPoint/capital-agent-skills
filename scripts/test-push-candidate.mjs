@@ -149,6 +149,7 @@ test('candidate Push rejects staged, unstaged, untracked and executable-mode sou
       await writeFile(join(source.repo, 'untracked.txt'), 'untracked\n')
     }],
     ['executable-mode', async source => {
+      git(source.repo, ['config', 'core.fileMode', 'false'])
       await chmod(join(source.repo, 'source.txt'), 0o755)
     }],
   ]

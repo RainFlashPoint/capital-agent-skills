@@ -12,6 +12,7 @@
 - impact 与测试阶段源码指纹在建档及后续 freshness 检查时拒绝 `assume-unchanged` 和 `skip-worktree` 隐藏条目，防止真实修改逃过影响集、漂移检测和 full-attempt 消费键；严格 hidden-index 拒绝仅作用于 `cap-test`，implement/release 仍兼容合法 sparse checkout。所有 Git diff 显式关闭 rename detection，把重命名稳定视为旧路径删除 + 新路径新增，不再受本机 `diff.renames` 配置影响。
 - 独立复核后的收口修复补齐四个精确边界：未跟踪普通文件的 fingerprint 纳入规范化 executable mode；首次 impact 必须读取不可变 Task baseline，且可编辑的 `STATE.base-commit` 只能一致、不能改写真值；冻结后的定向证据损坏必须先形成新源码快照，不能在同一快照重新登记；受影响的 local-efficiency fixture 同步建立 Task baseline。Delivery 与发布证据继续绑定精确 Commit 和源码 fingerprint，不接受 `implementation-equivalent`。
 - 候选 Push 与 Delivery 现在要求 canonical test-state 处于同一精确 Commit 的 `full_passed`，从已重验的 full Action 派生 `sourceFingerprint`，并在远端写入前拒绝 staged、unstaged、untracked、executable-mode 漂移；缺失、损坏或属于旧 Commit 的执行证据全部失败关闭。普通 evidence-only Delivery、local-only 仓策略和 Server Harness 保持原行为。
+- 同一源码快照一旦任一定向命令产生结果，impact 计划即锁定，不能通过重登记更宽松命令清除失败证据；完全相同计划在未冻结、未消费 full 的 `impact_ready` 状态保持幂等。源码指纹独立对比 index 与可见跟踪文件的规范化 executable bit，即使 `core.fileMode=false` 也能拒绝执行位漂移；`-z` Git 路径通过未裁剪 buffer 解码，前导空白和换行文件名不再失真。
 
 ## 0.13.5
 

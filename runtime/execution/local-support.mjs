@@ -18,6 +18,10 @@ export function git(repo,args) {
  try { return execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','ignore'],maxBuffer:64*1024*1024}).trim() }
  catch { fail('execution_git_failed') }
 }
+export function gitBuffer(repo,args) {
+ try { return execFileSync('git',['-C',repo,...args],{stdio:['ignore','pipe','ignore'],maxBuffer:64*1024*1024}) }
+ catch { fail('execution_git_failed') }
+}
 export async function repoRoot(path) { return realpath(git(resolve(path),['rev-parse','--show-toplevel'])) }
 export async function safePath(root, subpath, { create=false }={}) {
  if(isAbsolute(subpath)||subpath.includes('\\')||subpath.split('/').some(x=>!x||x==='.'||x==='..'))fail('execution_path_invalid')

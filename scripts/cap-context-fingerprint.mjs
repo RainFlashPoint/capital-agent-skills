@@ -41,16 +41,38 @@ async function untrackedFingerprint(repo) {
   return hash.digest('hex')
 }
 
+async function trackedModeDrift(repo) {
+  const raw = git(repo, ['ls-files', '--stage', '-z', '--', '.', ':(exclude).cap/**'], 'buffer')
+  const drift = []
+  for (const entry of raw.toString('utf8').split('\0').filter(Boolean)) {
+    const separator = entry.indexOf('\t')
+    if (separator < 0) continue
+    const metadata = entry.slice(0, separator).split(' ')
+    const path = entry.slice(separator + 1)
+    if (metadata.length !== 3 || metadata[2] !== '0' || !['100644', '100755'].includes(metadata[0])) continue
+    const stat = await lstat(resolve(repo, path)).catch(error => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (!stat?.isFile()) continue
+    const indexExecutable = metadata[0] === '100755'
+    const worktreeExecutable = Boolean(stat.mode & 0o111)
+    if (indexExecutable !== worktreeExecutable) drift.push(`${path}\0${indexExecutable ? 'executable' : 'non-executable'}\0${worktreeExecutable ? 'executable' : 'non-executable'}\0`)
+  }
+  return Buffer.from(drift.sort().join(''))
+}
+
 export async function inspectContextFingerprint(repoPath = '.', options = {}) {
   const requested = resolve(repoPath)
   const root = await realpath(String(git(requested, ['rev-parse', '--show-toplevel'])).trim())
   assertVisibleTrackedFiles(root, options)
   const indexPatch = git(root, ['diff', '--cached', '--binary', '--no-ext-diff', '--no-renames', '--', '.', ':(exclude).cap/**'], 'buffer')
   const worktreePatch = git(root, ['diff', '--binary', '--no-ext-diff', '--no-renames', '--', '.', ':(exclude).cap/**'], 'buffer')
+  const modeDrift = await trackedModeDrift(root)
   return {
     root,
     index: digest(indexPatch),
-    worktree: digest(worktreePatch),
+    worktree: digest(Buffer.concat([worktreePatch, modeDrift])),
     untracked: await untrackedFingerprint(root),
   }
 }
