@@ -11,28 +11,30 @@ import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { captureContextBinding, captureCoverageRequirements } from './cap-context-gate.mjs'
 import { createManifest } from './cap-context-checkpoint.mjs'
 import { digest } from '../runtime/ontology/schema.mjs'
+import { createTestImpact, freezeTestCandidate } from '../runtime/execution/test-state.mjs'
 
 const cli=fileURLToPath(new URL('./cap-execute.mjs',import.meta.url))
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()
-async function fixture(t) {
+async function fixture(t, stage = 'implement') {
  const root=await mkdtemp(join(tmpdir(),'cap-efficiency-'));t.after(()=>rm(root,{recursive:true,force:true}))
  git(root,'init','-q');git(root,'config','user.email','fixture@example.invalid');git(root,'config','user.name','Fixture')
  await writeFile(join(root,'.gitignore'),'.cap/\n');await writeFile(join(root,'source.txt'),'base\n');git(root,'add','.');git(root,'commit','-qm','fixture')
- await mkdir(join(root,'.cap'));await writeFile(join(root,'.cap/STATE.md'),`stage: test\nstatus: in-progress\ntask-id: task-a\nsession-id: session-a\nbranch: ${git(root,'branch','--show-current')}\nworktree: ${root}\nexecution-required: true\n- [x] test: logic\n`)
+ await mkdir(join(root,'.cap'));await writeFile(join(root,'.cap/STATE.md'),`stage: ${stage}\nstatus: in-progress\ntask-id: task-a\nsession-id: session-a\nbranch: ${git(root,'branch','--show-current')}\nworktree: ${root}\nexecution-required: true\n- [x] test: logic\n`)
  return root
 }
 const opts={environment:{},command:[process.execPath,'-e','process.stdout.write("ok; still argv")']}
 
 async function prepareCliContext(root) {
  const f=await inspectContextFingerprint(root),branch=git(root,'branch','--show-current'),head=git(root,'rev-parse','HEAD')
+ const stage=(await readFile(join(root,'.cap/STATE.md'),'utf8')).match(/^stage:\s*(.+)$/m)?.[1]?.trim()||'implement'
  await mkdir(join(root,'.cap/context'),{recursive:true})
- await writeFile(join(root,'.cap/task-context.md'),`- intent: Execute local regression\n- branch: ${branch}\n- head: ${head}\n- index-fingerprint: ${f.index}\n- worktree-fingerprint: ${f.worktree}\n- untracked-fingerprint: ${f.untracked}\n- profile-used-as: index-only\n\n## Entry points\n- \`source.txt\`\n## Call chain and data flow\n- source to test\n## Similar implementations\n- existing test\n## History usage\n- candidates: none\n- outcome: not_used\n- reason: no candidate\n- plan-impact: none\n- verification-impact: none\n## Tests and environment\n- \`source.txt\`\n## Evidence sources\n- \`source.txt\`\n## External operation boundary\n- environment: local\n- authorization: local only\n- minimum-impact: source.txt\n- recovery: git\n- invalidates-on: scope change\n## Impact surface\n- modify: \`source.txt\`\n## Profile drift\n- none\n`)
- const binding=await captureContextBinding(root,{stage:'test',environment:{}}),requirements=await captureCoverageRequirements(root,{environment:{}})
+ await writeFile(join(root,'.cap/task-context.md'),`- intent: Execute local regression\n- branch: ${branch}\n- head: ${head}\n- index-fingerprint: ${f.index}\n- worktree-fingerprint: ${f.worktree}\n- untracked-fingerprint: ${f.untracked}\n- profile-used-as: index-only\n\n## Entry points\n- \`source.txt\`\n## Call chain and data flow\n- source to test\n## Similar implementations\n- existing test\n## History usage\n- candidates: none\n- outcome: not_used\n- reason: no candidate\n- plan-impact: none\n- verification-impact: none\n## Tests and environment\n- \`source.txt\`\n## Evidence sources\n- \`source.txt\`\n## Reference contract\n- status: not-applicable\n- artifact: none\n- source: none\n- adopted: none\n- conflicts: none\n- invalidates-on: not-applicable\n## External operation boundary\n- environment: local\n- authorization: local only\n- minimum-impact: source.txt\n- recovery: git\n- invalidates-on: scope change\n## Impact surface\n- modify: \`source.txt\`\n## Profile drift\n- none\n`)
+ const binding=await captureContextBinding(root,{stage,environment:{}}),requirements=await captureCoverageRequirements(root,{environment:{}})
  const scope={taskId:binding.taskId,repo:binding.repo,branch:binding.branch,commit:binding.commit}
  const atoms=requirements.map((item,index)=>({id:`atom-${index}`,type:item.types[0],assertion:`Retain ${item.label}: ${item.id}`,protection:item.minProtection,priority:index?80:100,scope,scopeBinding:'task',sourceRefs:[item.sourceRef],trust:'repository-observed',status:'active',certainty:'confirmed',recoverability:'source-backed',invalidation:[],supersedes:[]}))
  atoms.push({id:'acceptance-1',type:'acceptance_criterion',assertion:'Preserve local test outcome',protection:'P1',priority:80,scope,scopeBinding:'task',sourceRefs:['user-message:fixture'],trust:'user-stated',status:'active',certainty:'confirmed',recoverability:'source-backed',invalidation:[],supersedes:[]})
  atoms.push({id:'next-action-1',type:'next_action',assertion:'Run local tests',protection:'P1',priority:80,scope,scopeBinding:'task',sourceRefs:['user-message:fixture-next'],trust:'user-stated',status:'active',certainty:'confirmed',recoverability:'source-backed',invalidation:[],supersedes:[]})
- const checkpoint={schemaVersion:1,identity:{...scope,stage:'test'},atoms,coverage:requirements.map((item,index)=>({id:item.id,atomIds:[`atom-${index}`]}))}
+ const checkpoint={schemaVersion:1,identity:{...scope,stage},atoms,coverage:requirements.map((item,index)=>({id:item.id,atomIds:[`atom-${index}`]}))}
  const log=atoms.map(item=>JSON.stringify(item)).join('\n')+'\n'
  const sources=Object.fromEntries(await Promise.all(['.cap/STATE.md','.cap/task-context.md'].map(async path=>[path,await readFile(join(root,path),'utf8')])))
  const manifest=createManifest(checkpoint,{checkpointPath:'checkpoint.json',atomLogPath:'atoms.jsonl',atomLogContent:log,sourceContents:sources,budgetTokens:20000,trigger:'stage-entry',pressure:'unknown'})
@@ -45,9 +47,18 @@ async function prepareCliContext(root) {
  await writeFile(join(root,'.cap/STATE.md'),sources['.cap/STATE.md']+`\ncontext-manifest: .cap/context/manifest.json\ncontext-checkpoint: .cap/context/checkpoint.json\ncontext-checkpoint-digest: ${manifest.digest}\ncontext-previous-manifest: none\ncontext-previous-digest: none\n`)
 }
 
+async function completeTestSequence(root, targetedCommand, fullCommand = targetedCommand) {
+ await createTestImpact(root,{changedFiles:['source.txt'],activeChecks:['logic'],targetedCommands:[targetedCommand],fullCommand})
+ const targeted=await runLocalAction(root,{environment:{},stage:'test',testScope:'targeted',command:targetedCommand})
+ if(!targeted.gate.passed)return {targeted,full:null}
+ await freezeTestCandidate(root)
+ const full=await runLocalAction(root,{environment:{},stage:'test',testScope:'full',command:fullCommand})
+ return {targeted,full}
+}
+
 test('ordinary local run needs no key and persisted evidence can be recomputed',async t=>{
  const root=await fixture(t);const run=await runLocalAction(root,opts)
- assert.equal(run.gate.gate,'PASS');assert.equal(run.receipt.authority,'local-observed');assert.equal(run.envelope.stage,'test')
+ assert.equal(run.gate.gate,'PASS');assert.equal(run.receipt.authority,'local-observed');assert.equal(run.envelope.stage,'implement')
  assert.equal((await inspectLocalExecution(root)).passed,true)
  assert.deepEqual(await readdir(run.artifactDir),['gate.json'])
  assert.equal((await readFile(join(run.artifactDir,'gate.json'),'utf8')).includes('CAP_LOCAL_EXECUTION_SECRET'),false)
@@ -87,31 +98,31 @@ test('wrong Task/session, branch and commit never reuse old execution',async t=>
  await writeFile(p,state);git(root,'checkout','-qb','another');assert.equal((await inspectLocalExecution(root)).passed,false)
 })
 test('project package test command is discovered without manually entering argv',async t=>{
- const root=await fixture(t);await writeFile(join(root,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(0)"'}}))
+ const root=await fixture(t,'test');await writeFile(join(root,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(0)"'}}))
  const report=await doctorLocalExecution(root);assert.equal(report.command.source,'package.json');assert.ok(report.command.argv.includes('test'))
 })
 test('PROFILE test-commands are preferred for test and build discovery',async t=>{
- const root=await fixture(t)
+ const root=await fixture(t,'test')
  await writeFile(join(root,'.cap/PROFILE.md'),'test-commands: { unit: "python3 -m pytest tests/unit", build: "python3 -m compileall src" }\n')
  let report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['python3','-m','pytest','tests/unit']);assert.equal(report.command.source,'.cap/PROFILE.md#test-commands')
  await writeFile(join(root,'.cap/STATE.md'),(await readFile(join(root,'.cap/STATE.md'),'utf8')).replace('stage: test','stage: implement'))
  report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['python3','-m','compileall','src'])
 })
 test('PROFILE explicit none prevents unintended test auto-discovery',async t=>{
- const root=await fixture(t)
+ const root=await fixture(t,'test')
  await writeFile(join(root,'.cap/PROFILE.md'),'test-commands: { unit: "none — 项目无测试套件" }\n')
  await writeFile(join(root,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(0)"'}}))
  await assert.rejects(runLocalAction(root,{environment:{}}),/execution_command_disabled/)
 })
 test('release discovery prefers package, pack, then prepare over build',async t=>{
  const root=await fixture(t)
- await writeFile(join(root,'.cap/STATE.md'),(await readFile(join(root,'.cap/STATE.md'),'utf8')).replace('stage: test','stage: release'))
+ await writeFile(join(root,'.cap/STATE.md'),(await readFile(join(root,'.cap/STATE.md'),'utf8')).replace('stage: implement','stage: release'))
  await writeFile(join(root,'package.json'),JSON.stringify({scripts:{build:'echo build',prepare:'echo prepare',pack:'echo pack',package:'echo package'}}))
  let report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['npm','run','package'])
  await writeFile(join(root,'package.json'),JSON.stringify({scripts:{build:'echo build',prepare:'echo prepare',pack:'echo pack'}}));report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['npm','run','pack'])
 })
 test('lightweight project file discovery supplies non-Node test runners',async t=>{
- const root=await fixture(t);await writeFile(join(root,'pyproject.toml'),'[tool.pytest.ini_options]\n')
+ const root=await fixture(t,'test');await writeFile(join(root,'pyproject.toml'),'[tool.pytest.ini_options]\n')
  const report=await doctorLocalExecution(root);assert.deepEqual(report.command.argv,['python3','-m','pytest']);assert.equal(report.command.source,'project-files')
 })
 test('missing command gets a useful diagnostic; document/review stages never invent execution',async t=>{
@@ -158,15 +169,17 @@ test('CLI compact mode suppresses successful noise and restores failed diagnosti
 
 test('cap-status consumes real evidence and blocks stale or failed results despite declared next',async t=>{
  const {inspectCapStatus}=await import('./cap-status.mjs')
- const root=await fixture(t)
+ const root=await fixture(t,'test')
  const state=await readFile(join(root,'.cap/STATE.md'),'utf8')
  await writeFile(join(root,'.cap/STATE.md'),state.replace('- [x] test: logic','')+'\n## Next action\n-> cap-release\n')
  const status=()=>inspectCapStatus({repoRoot:root,homeDir:root,environment:{CAPITAL_AGENT_MODE:'local'},fetchImpl:()=>{throw new Error('local must not fetch')}})
- await runLocalAction(root,opts)
+ await completeTestSequence(root,opts.command)
  let report=await status();assert.equal(report.task.localExecution.executionGate,'PASS');assert.equal(report.workflow.stage,'review');assert.deepEqual(report.task.localExecution.nextActions,[])
  await writeFile(join(root,'source.txt'),'changed\n')
  report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test');assert.equal(report.nextActions[0].kind,'inspect_source_changes');assert.equal(report.nextActions[1].kind,'rerun_with_new_action_id');assert.equal(report.nextActions[0].requiresUser,false)
- await runLocalAction(root,{environment:{},command:[process.execPath,'-e','process.exit(2)']})
+ const failed=[process.execPath,'-e','process.exit(2)']
+ await createTestImpact(root,{changedFiles:['source.txt'],activeChecks:['logic'],targetedCommands:[failed],fullCommand:failed})
+ await runLocalAction(root,{environment:{},stage:'test',testScope:'targeted',command:failed})
  report=await status();assert.equal(report.task.localExecution.executionGate,'BLOCKED');assert.equal(report.workflow.stage,'test');assert.equal(report.nextActions[0].kind,'diagnose_command_failure');assert.equal(report.nextActions[1].kind,'rerun_with_new_action_id')
 })
 
@@ -213,7 +226,7 @@ test('invalid identifiers, empty explicit argv and unknown pointer version fail 
  await assert.rejects(runLocalAction(root,{...opts,id:'../outside'}),/execution_id_invalid/)
  await assert.rejects(runLocalAction(root,{environment:{},command:[]}),/execution_command_invalid/)
  await runLocalAction(root,opts)
- const p=join(root,'.cap/execution/latest-test.json');const pointer=JSON.parse(await readFile(p,'utf8'));pointer.schemaVersion=99;await writeFile(p,JSON.stringify(pointer))
+ const p=join(root,'.cap/execution/latest-implement.json');const pointer=JSON.parse(await readFile(p,'utf8'));pointer.schemaVersion=99;await writeFile(p,JSON.stringify(pointer))
  assert.equal((await inspectLocalExecution(root)).reason,'execution_index_invalid')
 })
 test('deferred marker cannot skip an unsatisfied independent review',async()=>{
@@ -224,7 +237,7 @@ test('deferred marker cannot skip an unsatisfied independent review',async()=>{
 
 test('CLI dogfood runs discovered project tests and detects changed source on status',async t=>{
  const root=await fixture(t)
- await writeFile(join(root,'package.json'),JSON.stringify({scripts:{test:'node check.cjs'}}))
+ await writeFile(join(root,'package.json'),JSON.stringify({scripts:{build:'node check.cjs'}}))
  await writeFile(join(root,'check.cjs'),'if (require("fs").readFileSync("source.txt","utf8") !== "base\\n") process.exit(7)\n')
  const env={...process.env,CAPITAL_AGENT_MODE:'local',CAPITAL_AGENT_SESSION_LOCK_DIR:join(root,'.cap/session-locks')}
  await inspectSessionRoot({repoRoot:root,environment:env})

@@ -15,12 +15,13 @@ export function parseArguments(argv) {
   if(key==='--json'){out.json=true;continue}
   if(key==='--compact'){out.compact=true;continue}
   if(key==='--'){if(out.command)throw new Error('execution_cli_duplicate_command');out.command=argv.slice(i+1);break}
-  if(!['--repo','--stage','--action','--id','--timeout-ms','--command','--constraints'].includes(key))throw new Error('execution_cli_unknown_option')
+  if(!['--repo','--stage','--action','--id','--timeout-ms','--command','--constraints','--test-scope'].includes(key))throw new Error('execution_cli_unknown_option')
   const value=argv[++i];if(value===undefined)throw new Error('execution_cli_missing_value')
-  const name=key==='--timeout-ms'?'timeoutMs':key.slice(2)
+  const name=key==='--timeout-ms'?'timeoutMs':key==='--test-scope'?'testScope':key.slice(2)
   if(Object.hasOwn(out,name)&&name!=='repo')throw new Error('execution_cli_duplicate_option')
   out[name]=['--command','--constraints'].includes(key)?parseJson(value):key==='--timeout-ms'?Number(value):value
  }
+ if(out.testScope&&!['targeted','full'].includes(out.testScope))throw new Error('execution_cli_test_scope')
  if(out.compact&&out.json)throw new Error('execution_output_mode_conflict')
  if(out.compact&&out.operation!=='run')throw new Error('execution_compact_run_only')
  return out
@@ -28,7 +29,7 @@ export function parseArguments(argv) {
 export async function main(argv=process.argv.slice(2)) {
  try {
   const options=parseArguments(argv)
-  if(options.help){process.stdout.write('Local execution recorder — no account or secret required.\nUsage: node scripts/cap-execute.mjs [run|doctor|status|recover] --repo <repository> [--stage test] [--json|--compact] [--timeout-ms 120000] [-- <executable> <arguments...>]\n--compact returns a small PASS projection and automatically includes bounded redacted diagnostics for non-PASS results.\nWithout argv, use .cap/execution-config.json or a declared package.json script. No implicit shell or wildcard expansion.\n');return 0}
+  if(options.help){process.stdout.write('Local execution recorder — no account or secret required.\nUsage: node scripts/cap-execute.mjs [run|doctor|status|recover] --repo <repository> [--stage test --test-scope targeted|full] [--json|--compact] [--timeout-ms 120000] [-- <executable> <arguments...>]\n--compact returns a small PASS projection and automatically includes bounded redacted diagnostics for non-PASS results. Test-stage runs require an impact plan and explicit scope; other stages are unchanged.\nWithout argv, use .cap/execution-config.json or a declared package.json script. No implicit shell or wildcard expansion.\n');return 0}
   let result
   if(options.operation==='doctor')result=await doctorLocalExecution(options.repo)
   else if(options.operation==='status')result=await inspectLocalExecution(options.repo,options)
@@ -56,7 +57,7 @@ export async function main(argv=process.argv.slice(2)) {
   return options.operation==='run'&&!result.gate.passed?1:0
  }catch(error){
   const message=String(error.message)
-  const code=/^(execution_|json_|session_root_)[A-Za-z0-9_]+/.exec(message)?.[0]||'execution_failed'
+  const code=/^(execution_|test_|json_|session_root_)[A-Za-z0-9_]+/.exec(message)?.[0]||'execution_failed'
   const payload={code,nextActions:executionNextActions(code),remediation:code==='execution_command_missing'?'补充 .cap/execution-config.json、PROFILE.test-commands 或项目测试脚本后重试':'按 nextActions 处理后使用新的 action ID 重试'}
   process.stderr.write(`cap-execute: ${JSON.stringify(payload)}\n`);return 1
  }

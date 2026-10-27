@@ -16,10 +16,10 @@ async function fixture() {
 
 test('local flow creates bound artifacts and PASS gate', async () => {
   const root = await fixture()
-  try { const result = await runLocalAction(root, { environment:{}, action:'test', command:['node','-e','process.stdout.write("local-pass")'] }); assert.equal(result.gate.gate, 'PASS'); assert.match(await readFile(join(result.artifactDir,'gate.json'),'utf8'), /PASS/) } finally { await rm(root, { recursive:true, force:true }) }
+  try { const result = await runLocalAction(root, { environment:{}, action:'build', command:['node','-e','process.stdout.write("local-pass")'] }); assert.equal(result.gate.gate, 'PASS'); assert.match(await readFile(join(result.artifactDir,'gate.json'),'utf8'), /PASS/) } finally { await rm(root, { recursive:true, force:true }) }
 })
 
 test('local flow fails closed for command failure', async () => {
   const root = await fixture()
-  try { const result = await runLocalAction(root, { environment:{}, action:'test', command:['node','-e','process.exit(3)'] }); assert.equal(result.gate.gate, 'BLOCKED'); assert.ok(result.gate.blockers.includes('command_failed')) } finally { await rm(root, { recursive:true, force:true }) }
+  try { const result = await runLocalAction(root, { environment:{}, action:'build', command:['node','-e','process.exit(3)'] }); assert.equal(result.gate.gate, 'BLOCKED'); assert.ok(result.gate.blockers.includes('command_failed')) } finally { await rm(root, { recursive:true, force:true }) }
 })

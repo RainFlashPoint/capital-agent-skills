@@ -127,6 +127,28 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 
 把解析出的 `active checks` 与 `changed-files` 暂存,Step 4 写进 STATE 快照。
 
+### Step 1.5 — 登记本轮测试状态（硬门禁）
+
+本轮若使用本地记录器执行测试命令，先通过 `scripts/cap-test-state.mjs` 把当前 Task / Session / 分支 /
+Commit / 源码指纹、`changed-files`、`active checks`、全部定向命令和最终全量命令写入
+`.cap/execution/test-state.json`。状态机固定为：
+
+```text
+impact_ready → targeted_passed → candidate_frozen → full_passed | full_failed
+```
+
+- 没有 `impact_ready` 时，任何 test 命令都不得启动；未登记的命令不能临时冒充定向测试。
+- 每条定向命令都必须通过 `scripts/cap-execute.mjs` 以 `--test-scope targeted` 在同一源码快照上真实执行；全部
+  PASS 后才能冻结候选。冻结与最终 Gate 会回验对应 request / bundle / receipt，不能只改状态 JSON 自报 PASS。
+- 冻结通过 `scripts/cap-test-state.mjs` 完成。冻结前不得执行最终全量；冻结后不得继续追加定向命令。
+- 最终全量命令只能以 `--test-scope full` 执行一次。无论 PASS、失败或中断，这次尝试都已消耗；同一源码
+  快照的独占消费记录保存在 `.cap/execution/test-full-attempts/`，删除或重建活动状态、A→B→A 往返以及重新登记
+  影响分析都不能绕过。需要再跑时，先形成新的源码快照并重新做影响分析与定向回归。
+- Task、Session、仓库、分支、Commit、源码指纹或记录器版本变化都会使旧状态和旧证据失效。
+
+这条状态机**只约束 `stage=test` 的本地命令执行**。implement、release、CI、Server Harness 和平台 Test
+Action 保持原契约；远端 Runner 不读取或回写本地 `test-state.json`。
+
 ### Step 2 — 架构漂移自检（轻量）
 
 把 changed paths 与 `PROFILE.surface-map` 的 globs 比对:**有 path 落在所有 surface 之外**(新建服务、首个
@@ -156,9 +178,11 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 
 1. **logic 先跑**(它是底座;它绿了再谈旅程 / 质量更有意义)。
 2. **journey / model** 在 logic 之后,二者之间无强依赖——可并行(§0.2)或串行。
-3. **失败回流不在本层修**:任何验证项暴露**实现 bug**,按该 playbook 的指引 **escalate 回 `cap-implement`**
+3. 本地测试命令的实际启动顺序统一受 Step 1.5 状态机约束；playbook 决定“测什么”，不能绕开 impact / targeted /
+   freeze / full 的硬门禁。
+4. **失败回流不在本层修**:任何验证项暴露**实现 bug**,按该 playbook 的指引 **escalate 回 `cap-implement`**
    (build 的 TDD↔调试子循环修),verify 这一轮对应需求标 PARTIAL。本调度层**不在 verify 偷改实现**。
-4. **单条问题 ≤ 3 次迭代仍无解 → escalate,不死磕**(沿用各 playbook 的反死磕约定)。
+5. **单条问题 ≤ 3 次迭代仍无解 → escalate,不死磕**(沿用各 playbook 的反死磕约定)。
 
 > 调度层的纪律(贯穿所有验证项):**没有本轮新鲜验证证据,不得做任何"通过 / 完成"声明。** 每个报告里的
 > 每条 COVERED / PASS 都必须挂本轮真跑的命令 + 输出 + exit code。看到 should / probably / seems / "Great!" /
@@ -220,6 +244,8 @@ checks := resolve( changed-files × PROFILE.surface-map × role-routing 规则 )
 进入 `cap-review` 之前,以下必须全部成立:
 
 - [ ] **验证项选齐**:Step 1 解析出的 active checks 已全部执行(logic 必在内),无漏跑。
+- [ ] **本地测试顺序完整**:若使用本地记录器，`.cap/execution/test-state.json` 与当前源码快照一致且状态为
+      `full_passed`；`full_failed`、中断或旧快照均不得回退复用历史 PASS。远端 Runner 模式不适用此本地状态文件。
 - [ ] **logic PASS**:全量 / 相关测试本轮真跑 0 failures(贴命令 + exit 0);typecheck / build exit 0;覆盖率
       门控由工具以非零 exit 把关达标(不靠肉眼)。
 - [ ] **journey PASS**(若 active):本轮要验的用户旅程都跑到终态;失败用例已回 build 修复并三联截图取证;

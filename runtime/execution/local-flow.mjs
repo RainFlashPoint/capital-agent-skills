@@ -5,6 +5,7 @@ import { digest, canonical } from '../ontology/schema.mjs'
 import { inspectContextFingerprint } from '../../scripts/cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from '../../scripts/cap-session-root.mjs'
 import { fail, field, stageName, resolveExecutionStage, git, repoRoot, safePath, jsonFile, textFile, atomicJson, executionContract, versions, commandFor, argvCheck, timeoutCheck, observeCommand } from './local-support.mjs'
+import { completeTestRun, reserveTestRun, testExecutionGate } from './test-state.mjs'
 export { executionContract } from './local-support.mjs'
 
 const hashPattern=/^[a-f0-9]{64}$/
@@ -55,6 +56,13 @@ export function executionNextActions(reason='', { stage='', action='' } = {}) {
  if(code==='execution_version_changed') return [make('upgrade_local_skills','升级本地 Skills 后重新检查'),make('rerun_with_new_action_id','使用新版本重新执行')]
  if(code==='execution_identity_changed'||code==='execution_contract_mismatch') return [make('rebind_current_task','按当前 Task、分支和阶段重新生成执行证据'),make('rerun_with_new_action_id','绑定完成后重新执行')]
  if(code==='execution_index_invalid'||code==='execution_request_invalid'||code==='execution_bundle_invalid'||code==='execution_artifact_invalid') return [make('repair_execution_evidence','修复损坏或不完整的本地执行证据'),make('rerun_with_new_action_id','修复后重新执行')]
+ if(code==='test_impact_missing'||code==='test_source_changed'||code==='test_identity_changed') return [make('refresh_test_impact','重新登记当前源码快照的影响分析')]
+ if(code==='test_impact_ready') return [make('run_targeted_tests','执行影响分析中登记的定向测试')]
+ if(code==='test_targeted_passed') return [make('freeze_test_candidate','冻结已通过定向测试的候选快照')]
+ if(code==='test_candidate_frozen') return [make('run_full_test_once','对冻结候选执行唯一一次最终全量测试')]
+ if(code==='test_full_failed'||code==='test_full_already_attempted') return [make('change_source_then_refresh_test_impact','修复源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
+ if(code==='test_targeted_evidence_invalid') return [make('refresh_test_impact','重新登记影响分析并重跑定向测试')]
+ if(code==='test_full_attempt_incomplete') return [make('recover_interrupted_execution','检查并清理中断的全量执行'),make('refresh_test_impact','确认命令未在运行后，修改源码或重新分析新的源码快照')]
  return reason? [make('inspect_local_execution','检查本地执行状态')]:[]
 }
 async function facts(path,options={}) {
@@ -70,7 +78,8 @@ async function facts(path,options={}) {
 }
 function makeEnvelope(f,options,stage,contract,command) {
  const id=options.id||`action-${randomUUID()}`;if(!idPattern.test(id))fail('execution_id_invalid')
- return {schemaVersion:2,trust:'local-observed',id,...f.identity,stage,action:contract.action,constraints:contract.constraints,commandHash:digest(command),versions,snapshot:f.snapshot,startedAt:new Date().toISOString()}
+ const testScope=stage==='test'?options.testScope:undefined
+ return {schemaVersion:2,trust:'local-observed',id,...f.identity,stage,action:contract.action,constraints:contract.constraints,commandHash:digest(command),...(testScope?{testScope}:{}),versions,snapshot:f.snapshot,startedAt:new Date().toISOString()}
 }
 export async function buildLocalEnvelope(repoPath='.',options={}) {
  const f=await facts(repoPath,{...options,checkSession:true})
@@ -128,6 +137,10 @@ export async function runLocalAction(repoPath='.',options={}) {
  try {
   await atomicJson(join(lock,'owner.json'),{schemaVersion:2,pid:process.pid,id:envelope.id,startedAt:envelope.startedAt},{exclusive:true})
   artifactDir=join(repo,'.cap/execution',envelope.id)
+  if(await lstat(artifactDir).catch(error=>{if(error.code==='ENOENT')return null;throw error}))fail('execution_id_used')
+  const testReservation=stage==='test'
+   ? await reserveTestRun(repo,{scope:options.testScope,command:selected.argv,actionId:envelope.id})
+   : null
   try{await mkdir(artifactDir)}catch(e){if(e.code==='EEXIST')fail('execution_id_used');throw e}
   await atomicJson(join(artifactDir,'gate.json'),{schemaVersion:3,status:'pending',envelope,envelopeHash:digest(envelope)},{exclusive:true})
   await atomicJson(join(repo,`.cap/execution/latest-${stage}.json`),{schemaVersion:2,id:envelope.id,requestHash:digest(envelope)})
@@ -142,6 +155,7 @@ export async function runLocalAction(repoPath='.',options={}) {
   const evidence={schemaVersion:3,status:'terminal',envelope,receipt,diagnostic,envelopeHash:digest(envelope),receiptHash:digest(receipt),diagnosticHash:digest(diagnostic),gate}
   // The embedded gate is only a human-facing derivative; readers recompute it from the hashed evidence.
   await atomicJson(join(artifactDir,'gate.json'),evidence)
+  if(testReservation)await completeTestRun(repo,{scope:options.testScope,commandHash:testReservation.commandHash,actionId:envelope.id,passed:gate.passed,resultStatus:receipt.status,requestHash:digest(envelope),receiptHash:digest(receipt)})
   return {envelope,receipt,gate,artifactDir,stdout:result.stdout,stderr:result.stderr,diagnostic}
  }finally {await rm(lock,{recursive:true,force:true})}
 }
@@ -164,6 +178,11 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
    if(request?.task!==f.identity.task||request?.session!==f.identity.session)return {required,stage,action,passed:false,reason:'execution_identity_changed',artifactDir:dir}
    required=true
    const gate=verifyCanonicalEvidence(evidence,pointer,{...f,stage})
+   if(stage==='test') {
+    const sequence=await testExecutionGate(repo,request)
+    const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid'].includes(sequence.reason)
+    if(!sequence.passed&&sequenceOwnsRecovery){const reason=sequence.reason;return {required:true,stage,action,passed:false,reason,artifactDir:dir,gate:{...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,{stage,action}),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'},nextActions:executionNextActions(reason,{stage,action}),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'} }
+   }
    const reason=gate.blockers[0]||'verified_local_evidence'
    return {required,stage,action,passed:gate.passed,reason,artifactDir:dir,gate,nextActions:gate.nextActions,remediation:gate.remediation}
   }
@@ -177,9 +196,14 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
   const diagnostic=await jsonFile(repo,`${dir}/diagnostic.json`).catch(()=>null)
   if(!diagnostic || digest(diagnostic)!==bundle.receipt.diagnosticHash) fail('execution_diagnostic_invalid')
   const gate=verifyBundle(bundle,request,{...f,stage})
+  if(stage==='test') {
+   const sequence=await testExecutionGate(repo,request)
+   const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid'].includes(sequence.reason)
+   if(!sequence.passed&&sequenceOwnsRecovery){const reason=sequence.reason;return {required:true,stage,action,passed:false,reason,artifactDir:dir,gate:{...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,{stage,action}),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'},nextActions:executionNextActions(reason,{stage,action}),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'} }
+  }
   const reason=gate.blockers[0]||'verified_local_evidence'
   return {required,stage,action,passed:gate.passed,reason,artifactDir:dir,gate,nextActions:gate.nextActions,remediation:gate.remediation}
- }catch(error){const reason=error.code==='ENOENT'?'execution_missing':String(error.message).startsWith('execution_')?error.message:'execution_artifact_invalid';return {required:true,stage,action,passed:false,reason,artifactDir:'',nextActions:executionNextActions(reason,{stage,action}),remediation:'检查本地执行证据并按 nextActions 修复'}}
+ }catch(error){const message=String(error.message),reason=error.code==='ENOENT'?'execution_missing':message.startsWith('execution_')||message.startsWith('test_')?message:'execution_artifact_invalid';return {required:true,stage,action,passed:false,reason,artifactDir:'',nextActions:executionNextActions(reason,{stage,action}),remediation:'检查本地执行证据并按 nextActions 修复'}}
 }
 export async function doctorLocalExecution(repoPath='.') {
  const f=await facts(repoPath),stage=f.stage,contract=stage==='done'?null:executionContract(stage)

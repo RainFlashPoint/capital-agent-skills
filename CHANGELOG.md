@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `cap-test` 新增仅作用于本地 `stage=test` 的硬状态机：先登记影响分析和命令计划，定向回归全部通过且 canonical gate evidence 回验有效后冻结候选，再以独占消费账本约束同一源码快照唯一一次最终全量；删除活动状态或源码 A→B→A 往返不能重置次数，Task/Session/分支/Commit/源码变化会使旧活动状态失效，implement、release、CI、Server Harness 与平台 Test Action 保持原行为。
+
 ## 0.13.5
 
 - 移除 Capital Agent 全局压缩与工具 Hook，取消旧 native marker 对 cap 阶段的阻断，避免普通会话因共享检查点或未初始化的 session root 无法使用工具。旧脚本保留为无条件继续的空操作兼容入口，不再生成注册配置或读写仓库；文档删除注册指引。压缩由宿主处理，显式 cap 流程保留可见事件后的检查点准备与 Task 隔离。
@@ -45,7 +47,6 @@
 - handoff 目标文件使用原子 no-clobber 发布；并发同名写入明确冲突，失败回滚核对原始 inode、设备和内容 hash，保留其他会话替换的文件。
 - 失租或超时终止时，即使命令主进程先退出，也立即清理同进程组中重定向输出且忽略 TERM 的后代，再取消延迟信号，避免孤儿继续执行及 PID 复用误杀。
 - 切仓时重新计算两端仓库身份，不再混用旧版持久锁中的身份格式，防止无 origin 的同仓 worktree 被误识别为独立项目。
-
 ## 0.13.0
 
 - 建立公开版本发布契约：以 `plugin.json` 为单一事实源，确定性校验 marketplace、README、CHANGELOG、Tag、Commit 与 GitHub Release；新增 Tag workflow，在完整门禁通过后才创建 Release。

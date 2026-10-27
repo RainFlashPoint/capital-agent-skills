@@ -116,7 +116,7 @@ export function validateExecutionModel(model=contractModel) {
 }
 validateExecutionModel()
 export function executionContract(stage) { const c=contractModel.stages[stageName(stage)];if(!c)fail('execution_stage_contract_missing');return structuredClone(c) }
-export const versions={ protocol:2, ontology:digest(contractModel), recorder:digest(['local-flow.mjs','local-support.mjs'].map(name=>readFileSync(new URL(name,import.meta.url),'utf8'))) }
+export const versions={ protocol:2, ontology:digest(contractModel), recorder:digest(['local-flow.mjs','local-support.mjs','test-state.mjs'].map(name=>readFileSync(new URL(name,import.meta.url),'utf8'))) }
 export function argvCheck(argv) { if(!Array.isArray(argv)||!argv.length||argv.length>256||argv.some(s=>typeof s!=='string'||s.includes('\0')||s.length>16384)||!argv[0])fail('execution_command_invalid');return argv }
 export function timeoutCheck(ms) { if(!Number.isSafeInteger(ms)||ms<1||ms>3600000)fail('execution_timeout_invalid');return ms }
 export async function commandFor(repo,stage,explicit,action) {
