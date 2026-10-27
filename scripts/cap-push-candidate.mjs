@@ -5,7 +5,7 @@ import { readFile, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, readClientConfig, readHarnessMode, repositoryUrlHasEmbeddedCredentials, sanitizeRepositoryUrl, sendCandidateDelivery } from './client-delivery.mjs'
+import { buildCandidateDelivery, buildPushAuthorizationFingerprint, inspectCandidateSourceEvidence, normalizeCandidateVerification, readClientConfig, readHarnessMode, repositoryUrlHasEmbeddedCredentials, sanitizeRepositoryUrl, sendCandidateDelivery } from './client-delivery.mjs'
 
 const text = value => String(value || '').trim()
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -97,6 +97,8 @@ export async function runPushCandidateDelivery(repoRoot, options = {}) {
   }
   const normalizedVerification = normalizeCandidateVerification(options.verification, commitSha)
   if (!normalizedVerification.ok) return { ok: false, stage: 'preflight', reason: normalizedVerification.reason, expectedFingerprint }
+  const sourceEvidence = await inspectCandidateSourceEvidence(repo, commitSha)
+  if (!sourceEvidence.ok) return { ok: false, stage: 'preflight', reason: sourceEvidence.reason, expectedFingerprint }
   try {
     git(repo, ['push', '--porcelain', '--', pushUrl, `${commitSha}:refs/heads/${branch}`])
   } catch (error) {

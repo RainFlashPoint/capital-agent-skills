@@ -4,13 +4,31 @@ import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createTestImpact, freezeTestCandidate } from '../runtime/execution/test-state.mjs'
+import { runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { buildCandidateDelivery, buildPushAuthorizationFingerprint, normalizeCandidateVerification, repositoryUrlHasEmbeddedCredentials } from './client-delivery.mjs'
 import { parseArguments, runPushCandidateDelivery } from './cap-push-candidate.mjs'
+import { captureTaskBaseline } from './cap-worktree-baseline.mjs'
 
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const response = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
 
-async function fixture({ objectFormat = '' } = {}) {
+const targetedCommand = [process.execPath, '-e', 'process.exit(0)']
+const fullCommand = [process.execPath, '-e', 'process.stdout.write("full-pass")']
+
+async function establishCanonicalTestEvidence(repo) {
+  await createTestImpact(repo, {
+    changedFiles: ['source.txt'],
+    activeChecks: ['logic'],
+    targetedCommands: [targetedCommand],
+    fullCommand,
+  })
+  await runLocalAction(repo, { environment: {}, stage: 'test', testScope: 'targeted', command: targetedCommand })
+  await freezeTestCandidate(repo)
+  await runLocalAction(repo, { environment: {}, stage: 'test', testScope: 'full', command: fullCommand })
+}
+
+async function fixture({ objectFormat = '', withCanonicalEvidence = true } = {}) {
   const repo = await mkdtemp(join(tmpdir(), 'cap-push-candidate-'))
   const remote = await mkdtemp(join(tmpdir(), 'cap-push-candidate-remote-'))
   git(remote, ['init', '--bare', ...(objectFormat ? [`--object-format=${objectFormat}`] : [])])
@@ -19,12 +37,30 @@ async function fixture({ objectFormat = '' } = {}) {
   git(repo, ['config', 'user.email', 'test@example.com'])
   await mkdir(join(repo, '.cap'))
   await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: server\n')
-  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_candidate\nsession-id: session_candidate\n')
+  await writeFile(join(repo, '.gitignore'), '.cap/\n')
+  await writeFile(join(repo, 'source.txt'), 'base\n')
+  git(repo, ['add', '.gitignore', 'source.txt'])
+  git(repo, ['commit', '-m', 'base'])
+  const baseCommit = git(repo, ['rev-parse', 'HEAD'])
+  await captureTaskBaseline(repo, 'task_candidate')
   await writeFile(join(repo, 'source.txt'), 'candidate\n')
   git(repo, ['add', 'source.txt'])
   git(repo, ['commit', '-m', 'candidate'])
+  await writeFile(join(repo, '.cap/STATE.md'), [
+    'stage: test',
+    'status: in-progress',
+    'execution-required: true',
+    'task-id: task_candidate',
+    'session-id: session_candidate',
+    'branch: feature/test',
+    `base-commit: ${baseCommit}`,
+    `worktree: ${repo}`,
+    '',
+  ].join('\n'))
   git(repo, ['remote', 'add', 'origin', remote])
-  return { repo, remote, head: git(repo, ['rev-parse', 'HEAD']), branch: 'feature/test', taskId: 'task_candidate' }
+  const source = { repo, remote, head: git(repo, ['rev-parse', 'HEAD']), branch: 'feature/test', taskId: 'task_candidate' }
+  if (withCanonicalEvidence) await establishCanonicalTestEvidence(repo)
+  return source
 }
 
 function authorizationFor({ remote, taskId, branch, head }) {
@@ -98,6 +134,97 @@ test('candidate remote proof reads the live ref instead of trusting a forged loc
   assert.equal(candidate.ok, false)
   assert.equal(candidate.reason, 'source_commit_not_remote')
   assert.equal(candidate.remoteCommitSha, remoteHead)
+})
+
+test('candidate Push rejects staged, unstaged, untracked and executable-mode source drift before remote writes', async t => {
+  const cases = [
+    ['staged', async source => {
+      await writeFile(join(source.repo, 'staged.txt'), 'staged\n')
+      git(source.repo, ['add', 'staged.txt'])
+    }],
+    ['unstaged', async source => {
+      await writeFile(join(source.repo, 'source.txt'), 'unstaged\n')
+    }],
+    ['untracked', async source => {
+      await writeFile(join(source.repo, 'untracked.txt'), 'untracked\n')
+    }],
+    ['executable-mode', async source => {
+      await chmod(join(source.repo, 'source.txt'), 0o755)
+    }],
+  ]
+
+  for (const [name, mutate] of cases) await t.test(name, async () => {
+    const source = await fixture()
+    await mutate(source)
+    const requests = []
+    const result = await runPushCandidateDelivery(source.repo, {
+      taskId: source.taskId,
+      branch: source.branch,
+      commitSha: source.head,
+      authorizedFingerprint: authorizationFor(source),
+      verification: verificationFor(source),
+      serverUrl: 'https://capital.example.test',
+      userKey: 'user-key',
+      fetchImpl: async url => {
+        requests.push(String(url))
+        if (String(url).endsWith('/commit-reconcile')) return response(200, { code: 0, data: {} })
+        if (String(url).endsWith('/ci/refresh')) return response(202, { code: 0, data: {} })
+        return response(200, { code: 0, data: { id: source.taskId, currentCommit: source.head, candidateExplicit: true } })
+      },
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.stage, 'preflight')
+    assert.equal(result.reason, 'candidate_source_dirty')
+    assert.deepEqual(requests, [])
+    assert.throws(() => git(source.remote, ['rev-parse', `refs/heads/${source.branch}`]))
+  })
+})
+
+test('candidate Delivery rejects a clean Commit without canonical full-pass execution evidence', async () => {
+  const source = await fixture({ withCanonicalEvidence: false })
+  git(source.repo, ['push', '-u', 'origin', source.branch])
+
+  const candidate = await buildCandidateDelivery(source.repo, {
+    authorizedFingerprint: authorizationFor(source),
+    verification: verificationFor(source),
+  })
+
+  assert.equal(candidate.ok, false)
+  assert.equal(candidate.reason, 'candidate_execution_evidence_missing')
+})
+
+test('candidate Delivery rejects damaged or stale canonical full-pass execution evidence', async t => {
+  await t.test('damaged', async () => {
+    const source = await fixture()
+    git(source.repo, ['push', '-u', 'origin', source.branch])
+    await writeFile(join(source.repo, '.cap/execution/test-state.json'), '{broken')
+
+    const candidate = await buildCandidateDelivery(source.repo, {
+      authorizedFingerprint: authorizationFor(source),
+      verification: verificationFor(source),
+    })
+
+    assert.equal(candidate.ok, false)
+    assert.equal(candidate.reason, 'candidate_execution_evidence_invalid')
+  })
+
+  await t.test('stale after clean Commit change', async () => {
+    const source = await fixture()
+    await writeFile(join(source.repo, 'source.txt'), 'next clean candidate\n')
+    git(source.repo, ['add', 'source.txt'])
+    git(source.repo, ['commit', '-m', 'next candidate'])
+    source.head = git(source.repo, ['rev-parse', 'HEAD'])
+    git(source.repo, ['push', '-u', 'origin', source.branch])
+
+    const candidate = await buildCandidateDelivery(source.repo, {
+      authorizedFingerprint: authorizationFor(source),
+      verification: verificationFor(source),
+    })
+
+    assert.equal(candidate.ok, false)
+    assert.equal(candidate.reason, 'candidate_execution_evidence_mismatch')
+  })
 })
 
 test('candidate HTTP rejection is fail-closed and never enters Outbox', async () => {

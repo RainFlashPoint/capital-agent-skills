@@ -4,6 +4,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { acknowledgeOutboxEvent, enqueueOutboxEvent, inspectOutbox, markOutboxAttempt, outboxEventTaskRef } from './cap-outbox.mjs'
+import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
+import { inspectLocalExecution } from '../runtime/execution/local-flow.mjs'
+import { inspectTestState } from '../runtime/execution/test-state.mjs'
 
 const text = value => String(value || '').trim()
 const git = (repo, args) => { try { return text(execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] })) } catch { return '' } }
@@ -86,6 +89,8 @@ const VERIFICATION_FIELDS = new Set(['passed', 'status', 'outcome', 'sourceCommi
 const PASS_OUTCOMES = new Set(['PASS', 'PASSED', 'SUCCESS'])
 const ENVIRONMENT_KEYS = new Set(['os', 'node', 'python', 'jdk', 'runtime', 'lock'])
 const QUALITY_ASSET_ID = /^(?:qa|quality_asset)_[A-Za-z0-9][A-Za-z0-9._:-]{0,196}$/
+const HASH = /^[a-f0-9]{64}$/
+const EMPTY_FINGERPRINT = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
 
 function singleAlias(object, keys) {
   const present = keys.filter(key => Object.hasOwn(object, key))
@@ -143,6 +148,28 @@ export function normalizeCandidateVerification(verification = {}, commitSha = ''
   return { ok: true, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit, ...(executedAt ? { executedAt } : {}), ...(environment.value ? { environmentFingerprint: environment.value } : {}), ...(commands?.length ? { commands } : {}), ...(qualityAssetIds?.length ? { qualityAssetIds } : {}) } }
 }
 
+export async function inspectCandidateSourceEvidence(repoRoot, commitSha = '') {
+  let snapshot
+  try { snapshot = await inspectContextFingerprint(repoRoot) } catch { return { ok: false, reason: 'candidate_source_fingerprint_failed' } }
+  if (['index', 'worktree', 'untracked'].some(key => snapshot[key] !== EMPTY_FINGERPRINT)) {
+    return { ok: false, reason: 'candidate_source_dirty' }
+  }
+  const rawState = await readFile(join(repoRoot, '.cap/execution/test-state.json'), 'utf8').catch(() => '')
+  if (!rawState) return { ok: false, reason: 'candidate_execution_evidence_missing' }
+  let state
+  try { state = await inspectTestState(repoRoot) } catch { return { ok: false, reason: 'candidate_execution_evidence_invalid' } }
+  if (!state.valid || state.phase !== 'full_passed' || state.identity?.commit !== text(commitSha).toLowerCase()
+    || !HASH.test(state.sourceFingerprint || '') || state.fullAttempt?.status !== 'passed'
+    || ['index', 'worktree', 'untracked'].some(key => state.snapshot?.[key] !== EMPTY_FINGERPRINT)) {
+    return { ok: false, reason: 'candidate_execution_evidence_mismatch' }
+  }
+  const execution = await inspectLocalExecution(repoRoot, { stage: 'test' })
+  if (!execution.passed || execution.gate?.envelopeId !== state.fullAttempt.actionId) {
+    return { ok: false, reason: 'candidate_execution_evidence_invalid' }
+  }
+  return { ok: true, sourceFingerprint: state.sourceFingerprint, snapshot }
+}
+
 export async function buildCandidateDelivery(repoRoot, { verification = {}, authorizedFingerprint = '', remoteName = 'origin', pushUrl = '' } = {}) {
   const harnessMode = await readHarnessMode(repoRoot)
   if (harnessMode === 'local-only') return { ok: false, reason: 'repository_harness_local_only', harnessMode }
@@ -157,11 +184,13 @@ export async function buildCandidateDelivery(repoRoot, { verification = {}, auth
   if (!authorizedFingerprint || authorizedFingerprint !== expectedFingerprint) return { ok: false, reason: 'push_authorization_required', expectedFingerprint, item }
   const normalized = normalizeCandidateVerification(verification, item.payload.commit_sha)
   if (!normalized.ok) return { ...normalized, expectedFingerprint, item }
+  const sourceEvidence = await inspectCandidateSourceEvidence(repoRoot, item.payload.commit_sha)
+  if (!sourceEvidence.ok) return { ...sourceEvidence, expectedFingerprint, item }
   return {
     ok: true,
     expectedFingerprint,
     remoteCommitSha,
-    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}:${expectedFingerprint}`, delivery_candidate: true, verification: { ...normalized.verification, authorizationFingerprint: expectedFingerprint, remoteReadbackSha: remoteCommitSha } } },
+    item: { ...item, payload: { ...item.payload, idempotency_key: `delivery-candidate:${item.taskId}:${item.payload.commit_sha}:${expectedFingerprint}`, delivery_candidate: true, verification: { ...normalized.verification, sourceFingerprint: sourceEvidence.sourceFingerprint, authorizationFingerprint: expectedFingerprint, remoteReadbackSha: remoteCommitSha } } },
   }
 }
 

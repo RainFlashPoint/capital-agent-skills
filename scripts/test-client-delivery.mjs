@@ -4,9 +4,12 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createTestImpact, freezeTestCandidate, inspectTestState } from '../runtime/execution/test-state.mjs'
+import { runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { buildCandidateDelivery, buildCommitDelivery, buildPushAuthorizationFingerprint, flushPendingDeliveries, queueCommitDelivery, readHarnessMode } from './client-delivery.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
 import { enqueueOutboxEvent } from './cap-outbox.mjs'
+import { captureTaskBaseline } from './cap-worktree-baseline.mjs'
 
 const git = (repo, args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
 
@@ -51,15 +54,38 @@ test('candidate delivery is bound to exact task repo branch HEAD and passed loca
   const remote = await mkdtemp(join(tmpdir(), 'cap-candidate-remote-'))
   git(remote, ['init', '--bare'])
   git(repo, ['init', '-b', 'feature/test']); git(repo, ['config', 'user.name', 'test']); git(repo, ['config', 'user.email', 'test@example.com'])
-  await mkdir(join(repo, '.cap')); await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_candidate\nsession-id: skill_candidate\n')
+  await mkdir(join(repo, '.cap')); await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: server\n')
+  await writeFile(join(repo, '.gitignore'), '.cap/\n'); await writeFile(join(repo, 'a.txt'), 'base\n')
+  git(repo, ['add', '.gitignore', 'a.txt']); git(repo, ['commit', '-m', 'base'])
+  const baseCommit = git(repo, ['rev-parse', 'HEAD'])
+  await captureTaskBaseline(repo, 'task_candidate')
   await writeFile(join(repo, 'a.txt'), 'body\n'); git(repo, ['add', 'a.txt']); git(repo, ['commit', '-m', 'candidate'])
+  await writeFile(join(repo, '.cap/STATE.md'), [
+    'stage: test',
+    'status: in-progress',
+    'execution-required: true',
+    'task-id: task_candidate',
+    'session-id: skill_candidate',
+    'branch: feature/test',
+    `base-commit: ${baseCommit}`,
+    `worktree: ${repo}`,
+    '',
+  ].join('\n'))
+  const targetedCommand = [process.execPath, '-e', 'process.exit(0)']
+  const fullCommand = [process.execPath, '-e', 'process.stdout.write("full-pass")']
+  await createTestImpact(repo, { changedFiles: ['a.txt'], activeChecks: ['logic'], targetedCommands: [targetedCommand], fullCommand })
+  await runLocalAction(repo, { environment: {}, stage: 'test', testScope: 'targeted', command: targetedCommand })
+  await freezeTestCandidate(repo)
+  await runLocalAction(repo, { environment: {}, stage: 'test', testScope: 'full', command: fullCommand })
   git(repo, ['remote', 'add', 'origin', remote]); git(repo, ['push', '-u', 'origin', 'feature/test'])
   const head = git(repo, ['rev-parse', 'HEAD'])
+  const testState = await inspectTestState(repo)
   const fingerprint = buildPushAuthorizationFingerprint({ repoUrl: remote, taskId: 'task_candidate', branch: 'feature/test', commitSha: head })
   const candidate = await buildCandidateDelivery(repo, { authorizedFingerprint: fingerprint, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit: head, commands: [{ command: 'node --test', exitCode: 0 }] } })
   assert.equal(candidate.ok, true)
   assert.equal(candidate.item.payload.delivery_candidate, true)
   assert.equal(candidate.item.payload.commit_sha, head)
+  assert.equal(candidate.item.payload.verification.sourceFingerprint, testState.sourceFingerprint)
   const stale = await buildCandidateDelivery(repo, { authorizedFingerprint: 'stale', verification: { passed: true, status: 'PASS' } })
   assert.equal(stale.reason, 'push_authorization_required')
   await assert.rejects(queueCommitDelivery(repo, candidate.item), /candidate_delivery_requires_live_authorization/)
