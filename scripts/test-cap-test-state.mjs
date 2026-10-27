@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { lstat, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,7 @@ import {
 } from '../runtime/execution/test-state.mjs'
 import { inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { switchTaskState } from './cap-task-state-switch.mjs'
+import { parseArguments as parseTestStateArguments } from './cap-test-state.mjs'
 
 const git = (root, ...args) => execFileSync('git', args, {
   cwd: root,
@@ -49,6 +50,22 @@ const impact = root => createTestImpact(root, {
   activeChecks: ['logic'],
   targetedCommands: [passing],
   fullCommand: fullPassing,
+})
+
+test('impact CLI preserves explicit baseline-audit scope', () => {
+  const options = parseTestStateArguments([
+    'impact',
+    '--repo', '/tmp/example',
+    '--plan-mode', 'baseline-audit',
+    '--audit-scope', 'full-chain',
+    '--changed-files', '[]',
+    '--active-checks', '["journey"]',
+    '--targeted-command', '["node","focused.mjs"]',
+    '--full-command', '["node","full.mjs"]',
+  ])
+  assert.equal(options.planMode, 'baseline-audit')
+  assert.equal(options.auditScope, 'full-chain')
+  assert.deepEqual(options.changedFiles, [])
 })
 
 test('targeted test is blocked before impact analysis and command is not executed', async t => {
@@ -292,6 +309,35 @@ test('moving the same worktree cannot reset a consumed source snapshot', async t
   await assert.rejects(impact(moved), /test_full_already_attempted/)
 })
 
+test('a sibling worktree cannot reset a consumed source snapshot', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+
+  const sibling = `${root}-sibling`
+  t.after(() => rm(sibling, { recursive: true, force: true }))
+  const siblingBranch = `sibling-${Date.now()}-${process.pid}`
+  git(root, 'worktree', 'add', '-qb', siblingBranch, sibling, 'HEAD')
+  await mkdir(join(sibling, '.cap'))
+  await writeFile(join(sibling, '.cap/STATE.md'), [
+    'stage: test',
+    'status: in-progress',
+    'task-id: task-sibling',
+    'session-id: session-sibling',
+    `branch: ${siblingBranch}`,
+    `worktree: ${sibling}`,
+    '',
+  ].join('\n'))
+
+  await assert.rejects(impact(sibling), /test_full_already_attempted/)
+})
+
 test('source changes invalidate impact analysis before another command runs', async t => {
   const root = await fixture(t)
   await impact(root)
@@ -401,11 +447,132 @@ test('deleting only the full-attempt ledger cannot reset a terminal source snaps
     environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
   })
   const terminal = await inspectTestState(root)
-  await rm(join(root, '.cap/local-state/test-full-attempts', `${terminal.consumptionFingerprint}.json`))
+  const commonRoot = git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir')
+  await rm(join(commonRoot, 'capital-agent/test-full-attempts', `${terminal.consumptionFingerprint}.json`))
   const inspected = await inspectTestState(root)
   assert.equal(inspected.valid, false)
   assert.equal(inspected.reason, 'test_full_attempt_incomplete')
   await assert.rejects(impact(root), /test_full_already_attempted/)
+})
+
+test('terminal full evidence reconciles a crash before state completion', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+
+  const statePath = join(root, '.cap/execution/test-state.json')
+  const completed = JSON.parse(await readFile(statePath, 'utf8'))
+  const crashed = {
+    ...completed,
+    phase: 'candidate_frozen',
+    fullAttempt: {
+      actionId: completed.fullAttempt.actionId,
+      commandHash: completed.fullAttempt.commandHash,
+      status: 'running',
+      startedAt: completed.fullAttempt.startedAt,
+      finishedAt: null,
+    },
+  }
+  await writeFile(statePath, `${JSON.stringify(crashed, null, 2)}\n`)
+
+  const stopped = spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8' })
+  const lock = join(root, '.cap/execution/.lock')
+  await mkdir(lock)
+  await writeFile(join(lock, 'owner.json'), `${JSON.stringify({
+    schemaVersion: 2,
+    pid: stopped.pid,
+    id: completed.fullAttempt.actionId,
+    startedAt: completed.fullAttempt.startedAt,
+  })}\n`)
+  assert.equal((await inspectLocalExecution(root)).reason, 'execution_in_progress_or_interrupted')
+  await recoverLocalExecution(root)
+
+  const status = await inspectLocalExecution(root)
+  assert.equal(status.passed, true)
+  assert.equal(status.reason, 'verified_local_evidence')
+  const reconciled = await inspectTestState(root)
+  assert.equal(reconciled.phase, 'full_passed')
+  assert.equal(reconciled.fullAttempt.status, 'passed')
+})
+
+test('tampered terminal full evidence cannot reconcile a crash window', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+
+  const statePath = join(root, '.cap/execution/test-state.json')
+  const completed = JSON.parse(await readFile(statePath, 'utf8'))
+  const crashed = {
+    ...completed,
+    phase: 'candidate_frozen',
+    fullAttempt: {
+      actionId: completed.fullAttempt.actionId,
+      commandHash: completed.fullAttempt.commandHash,
+      status: 'running',
+      startedAt: completed.fullAttempt.startedAt,
+      finishedAt: null,
+    },
+  }
+  await writeFile(statePath, `${JSON.stringify(crashed, null, 2)}\n`)
+  const evidencePath = join(root, '.cap/execution', completed.fullAttempt.actionId, 'gate.json')
+  const evidence = JSON.parse(await readFile(evidencePath, 'utf8'))
+  evidence.receipt.exitCode = 9
+  await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`)
+
+  const status = await inspectLocalExecution(root)
+  assert.equal(status.passed, false)
+  assert.match(status.reason, /test_full_evidence_invalid|execution_artifact_invalid/)
+  const unreconciled = await inspectTestState(root)
+  assert.equal(unreconciled.phase, 'candidate_frozen')
+  assert.equal(unreconciled.fullAttempt.status, 'running')
+})
+
+test('clean-tree baseline audit requires an explicit full-chain journey plan', async t => {
+  const root = await fixture(t)
+  await assert.rejects(
+    createTestImpact(root, {
+      changedFiles: [],
+      activeChecks: ['journey'],
+      targetedCommands: [passing],
+      fullCommand: fullPassing,
+    }),
+    /test_impact_changed_files_invalid/,
+  )
+  await assert.rejects(
+    createTestImpact(root, {
+      planMode: 'baseline-audit',
+      auditScope: 'full-chain',
+      changedFiles: [],
+      activeChecks: ['logic'],
+      targetedCommands: [passing],
+      fullCommand: fullPassing,
+    }),
+    /test_baseline_audit_checks_invalid/,
+  )
+
+  const state = await createTestImpact(root, {
+    planMode: 'baseline-audit',
+    auditScope: 'full-chain',
+    changedFiles: [],
+    activeChecks: ['journey'],
+    targetedCommands: [passing],
+    fullCommand: fullPassing,
+  })
+  assert.equal(state.plan.mode, 'baseline-audit')
+  assert.equal(state.plan.auditScope, 'full-chain')
+  assert.deepEqual(state.plan.changedFiles, [])
 })
 
 test('an interrupted full attempt reports source change instead of an impossible retry', async t => {

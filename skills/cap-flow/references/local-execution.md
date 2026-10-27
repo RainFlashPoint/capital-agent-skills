@@ -15,9 +15,12 @@
 `stage=test` 的本地命令额外使用 `.cap/execution/test-state.json` 强制确定性顺序：先登记影响/测试计划、全部定向
 命令和唯一的最终全量命令，再逐条执行定向测试；定向全部 PASS 后冻结候选，最后对未变化的候选执行一次全量。
 冻结与最终 Gate 会重验定向命令的 request / bundle / receipt，而不是信任可编辑状态里的 PASS。最终全量无论
-PASS、失败或中断都通过任务生命周期之外的 `.cap/local-state/test-full-attempts/` 消耗该源码快照的唯一尝试，删除活动状态、源码
-A→B→A 往返、重新登记计划或轮换 Task/Session 不能清零；Task、Session、分支、Commit 或源码指纹变化仍会让旧
-活动状态失效，但 Task 切换、Retire、分支改名或工作树路径变化不能重置同一 Commit + 内容指纹的消费记录。状态机机械证明的是已登记计划的顺序与证据，不重新实现 role-routing，也不自动证明登记内容完整。
+PASS、失败或中断都通过仓库共享 `git-common-dir` 的 `capital-agent/test-full-attempts/` 消耗该源码快照的唯一尝试；
+删除活动状态、源码 A→B→A 往返、重新登记计划或轮换 Task/Session 不能清零，sibling worktree 也不能重置
+同一 Commit + 内容指纹的消费记录；Task、Session、
+分支、Commit 或源码指纹变化仍会让旧活动状态失效。terminal execution evidence 已写出而 test-state 尚未完成时，
+读取端只在锁内严格重验 pointer/envelope/receipt/reservation/identity/snapshot/hash 后幂等补写终态。常规变更计划要求
+非空 changed-files；只有显式 `baseline-audit + full-chain journey` 允许 clean-tree 空改动集。状态机机械证明的是已登记计划的顺序与证据，不重新实现 role-routing，也不自动证明登记内容完整。
 该状态机**只约束 `stage=test` 的本地命令执行**，不改变 implement、release、CI、Server Harness 或平台 Test Action。
 
 ## 什么使证据失效

@@ -5,7 +5,7 @@ import { digest, canonical } from '../ontology/schema.mjs'
 import { inspectContextFingerprint } from '../../scripts/cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from '../../scripts/cap-session-root.mjs'
 import { fail, field, stageName, resolveExecutionStage, git, repoRoot, safePath, jsonFile, textFile, atomicJson, executionContract, versions, commandFor, argvCheck, timeoutCheck, observeCommand } from './local-support.mjs'
-import { completeTestRun, reserveTestRun, testExecutionGate } from './test-state.mjs'
+import { completeTestRun, reconcileTerminalTestRun, reserveTestRun, testExecutionGate } from './test-state.mjs'
 export { executionContract } from './local-support.mjs'
 
 const hashPattern=/^[a-f0-9]{64}$/
@@ -185,6 +185,7 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
      return {required:true,stage,action,passed:false,reason,artifactDir:dir,nextActions,remediation:'中断的全量尝试已消耗；修改源码形成新快照后重新登记影响分析'}
     }
    }
+   if(stage==='test'&&evidence.status==='terminal'&&request?.testScope==='full') await reconcileTerminalTestRun(repo,request.id)
    const gate=verifyCanonicalEvidence(evidence,pointer,{...f,stage})
    if(stage==='test') {
     const sequence=await testExecutionGate(repo,request)

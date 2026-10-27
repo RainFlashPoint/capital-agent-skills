@@ -141,15 +141,23 @@ impact_ready → targeted_passed → candidate_frozen → full_passed | full_fai
 `active checks` 是否完整，仍由本阶段的 role-routing + PROFILE 解析和评审负责。运行时不复制第二套语义路由器，
 也不能把“登记成功”冒充为“影响分析内容已自动证明完整”。
 
+常规变更使用 `plan-mode=change`，必须登记非空 `changed-files`。只有不经 build 的 clean-tree 现状审计可显式使用
+`plan-mode=baseline-audit`；此时 `changed-files` 必须为空，同时 `audit-scope=full-chain` 且 active checks 必须包含
+`journey`（可同时包含 logic/model）。不能用空改动集绕过普通变更的影响分析。
+
 - 没有 `impact_ready` 时，任何 test 命令都不得启动；未登记的命令不能临时冒充定向测试。
 - 每条定向命令都必须通过 `scripts/cap-execute.mjs` 以 `--test-scope targeted` 在同一源码快照上真实执行；全部
   PASS 后才能冻结候选。冻结与最终 Gate 会回验对应 request / bundle / receipt，不能只改状态 JSON 自报 PASS。
 - 冻结通过 `scripts/cap-test-state.mjs` 完成。冻结前不得执行最终全量；冻结后不得继续追加定向命令。
 - 最终全量命令只能以 `--test-scope full` 执行一次。无论 PASS、失败或中断，这次尝试都已消耗；同一源码
-  快照的独占消费记录保存在任务生命周期之外的 `.cap/local-state/test-full-attempts/`，删除或重建活动状态、
-  A→B→A 往返、重新登记影响分析、Task 切换、Retire、轮换 Task/Session、分支改名或工作树路径变化都不能绕过。
+  快照的独占消费记录保存在当前仓库 `git-common-dir` 下的 `capital-agent/test-full-attempts/`，由同仓全部
+  worktree 共享。删除或重建活动状态、A→B→A 往返、重新登记影响分析、Task 切换、Retire、轮换
+  Task/Session、分支改名、工作树路径变化或切到 sibling worktree 都不能绕过。
   消费键只绑定 Commit 与 index/worktree/untracked 内容指纹；Task/Session/branch/root 仍保留在执行证据和新鲜度检查中。
   需要再跑时，先形成新的源码快照并重新做影响分析与定向回归。
+- 若命令已原子写出 terminal `gate.json`，但进程在更新 test-state 前崩溃，状态读取会在 execution lock 下重新
+  校验 pointer、envelope、receipt、reservation、命令、身份、源码快照与 hashes；全部一致时幂等补写终态，
+  损坏或错绑证据失败关闭，不能把可编辑摘要当成恢复依据。
 - 冻结前必须按该项目正式门禁的已知耗时为最终全量配置足够的显式执行超时；不能让已知长时套件依赖本地记录器
   的通用默认值。超时同样会消费唯一 full 尝试，不能用“只是超时”作为同快照重跑理由。
 - Task、Session、仓库、分支、Commit、源码指纹或记录器版本变化都会使旧状态和旧证据失效。

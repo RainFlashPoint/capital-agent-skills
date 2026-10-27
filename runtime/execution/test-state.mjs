@@ -18,12 +18,13 @@ import {
 } from './local-support.mjs'
 
 const statePath = '.cap/execution/test-state.json'
-const fullAttemptsPath = '.cap/local-state/test-full-attempts'
+const fullAttemptsPath = 'capital-agent/test-full-attempts'
 const phases = new Set(['impact_ready', 'targeted_passed', 'candidate_frozen', 'full_passed', 'full_failed'])
 const checks = /^(?:logic|model|journey(?::(?:Web|OpenAPI|App))?)$/
 const hashPattern = /^[a-f0-9]{64}$/
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/
 const same = (left, right) => canonical(left) === canonical(right)
+const validDate = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
 
 function isoNow() {
   return new Date().toISOString()
@@ -36,7 +37,8 @@ function uniqueStrings(values, code, pattern = null) {
   return normalized
 }
 
-function changedFiles(values) {
+function changedFiles(values, { allowEmpty = false } = {}) {
+  if (allowEmpty && Array.isArray(values) && values.length === 0) return []
   const files = uniqueStrings(values, 'test_impact_changed_files_invalid')
   if (files.some(path => isAbsolute(path) || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..'))) {
     fail('test_impact_changed_files_invalid')
@@ -77,13 +79,17 @@ function validateState(state) {
   if (!state || state.schemaVersion !== 1 || !phases.has(state.phase)) fail('test_state_invalid')
   if (!state.identity || !state.snapshot || !hashPattern.test(state.sourceFingerprint || '') || !hashPattern.test(state.consumptionFingerprint || '') || !hashPattern.test(state.recorderVersion || '')) fail('test_state_invalid')
   const plan = state.plan
-  if (!plan || !Array.isArray(plan.changedFiles) || !plan.changedFiles.length || !Array.isArray(plan.activeChecks) || !plan.activeChecks.length) fail('test_state_invalid')
+  if (!plan || !Array.isArray(plan.changedFiles) || !Array.isArray(plan.activeChecks) || !plan.activeChecks.length) fail('test_state_invalid')
+  const planMode = plan.mode || 'change'
+  if (!['change', 'baseline-audit'].includes(planMode)) fail('test_state_invalid')
   try {
-    changedFiles(plan.changedFiles)
+    changedFiles(plan.changedFiles, { allowEmpty: planMode === 'baseline-audit' })
     uniqueStrings(plan.activeChecks, 'test_state_invalid', checks)
   } catch {
     fail('test_state_invalid')
   }
+  if (planMode === 'change' && (plan.changedFiles.length === 0 || (plan.auditScope !== undefined && plan.auditScope !== null))) fail('test_state_invalid')
+  if (planMode === 'baseline-audit' && (plan.changedFiles.length !== 0 || plan.auditScope !== 'full-chain' || !plan.activeChecks.some(check => check === 'journey' || check.startsWith('journey:')))) fail('test_state_invalid')
   if (!Array.isArray(plan.targetedCommandHashes) || !plan.targetedCommandHashes.length || typeof plan.fullCommandHash !== 'string') fail('test_state_invalid')
   if (!plan.targetedCommandHashes.every(hash => hashPattern.test(hash)) || new Set(plan.targetedCommandHashes).size !== plan.targetedCommandHashes.length || !hashPattern.test(plan.fullCommandHash)) fail('test_state_invalid')
   if (plan.targetedCommandHashes.includes(plan.fullCommandHash)) fail('test_state_invalid')
@@ -128,9 +134,16 @@ async function readState(repo) {
   return state ? validateState(state) : null
 }
 
-function fullAttemptPath(consumptionFingerprint) {
+async function fullAttemptLocation(repo, consumptionFingerprint, { create = false } = {}) {
   if (!hashPattern.test(consumptionFingerprint)) fail('test_state_invalid')
-  return `${fullAttemptsPath}/${consumptionFingerprint}.json`
+  const commonPath = git(repo, ['rev-parse', '--git-common-dir'])
+  const commonRoot = await realpath(isAbsolute(commonPath) ? commonPath : resolve(repo, commonPath)).catch(() => fail('execution_git_failed'))
+  if (create) await safePath(commonRoot, fullAttemptsPath, { create: true })
+  return {
+    root: commonRoot,
+    path: `${fullAttemptsPath}/${consumptionFingerprint}.json`,
+    fullPath: join(commonRoot, fullAttemptsPath, `${consumptionFingerprint}.json`),
+  }
 }
 
 function validateFullReservation(value, consumptionFingerprint) {
@@ -141,7 +154,8 @@ function validateFullReservation(value, consumptionFingerprint) {
 }
 
 async function readFullReservation(repo, consumptionFingerprint) {
-  return jsonFile(repo, fullAttemptPath(consumptionFingerprint)).then(value => validateFullReservation(value, consumptionFingerprint)).catch(error => {
+  const location = await fullAttemptLocation(repo, consumptionFingerprint)
+  return jsonFile(location.root, location.path).then(value => validateFullReservation(value, consumptionFingerprint)).catch(error => {
     if (error.code === 'ENOENT') return null
     throw error
   })
@@ -153,7 +167,7 @@ async function assertExecutionOwner(repo, actionId) {
 }
 
 async function reserveFullAttempt(repo, state, actionId, commandHash) {
-  await safePath(repo, fullAttemptsPath, { create: true })
+  const location = await fullAttemptLocation(repo, state.consumptionFingerprint, { create: true })
   const reservation = {
     schemaVersion: 1,
     sourceFingerprint: state.sourceFingerprint,
@@ -165,7 +179,7 @@ async function reserveFullAttempt(repo, state, actionId, commandHash) {
     startedAt: isoNow(),
   }
   try {
-    await atomicJson(join(repo, fullAttemptPath(state.consumptionFingerprint)), reservation, { exclusive: true })
+    await atomicJson(location.fullPath, reservation, { exclusive: true })
   } catch (error) {
     if (error.code === 'EEXIST') fail('test_full_already_attempted')
     throw error
@@ -193,6 +207,34 @@ async function verifyTargetedEvidence(repo, state, commandHash) {
 
 async function verifyAllTargetedEvidence(repo, state) {
   for (const commandHash of state.plan.targetedCommandHashes) await verifyTargetedEvidence(repo, state, commandHash)
+}
+
+async function terminalFullResult(repo, state, actionId) {
+  const pointer = await jsonFile(repo, '.cap/execution/latest-test.json').catch(() => fail('test_full_evidence_invalid'))
+  const evidence = await jsonFile(repo, `.cap/execution/${actionId}/gate.json`).catch(() => fail('test_full_evidence_invalid'))
+  const request = evidence.envelope
+  const receipt = evidence.receipt
+  if (pointer?.schemaVersion !== 2 || pointer.id !== actionId || pointer.requestHash !== evidence.envelopeHash) fail('test_full_evidence_invalid')
+  if (evidence.schemaVersion !== 3 || evidence.status !== 'terminal' || request?.id !== actionId || request.stage !== 'test' || request.testScope !== 'full') fail('test_full_evidence_invalid')
+  if (request.schemaVersion !== 2 || request.trust !== 'local-observed' || receipt?.schemaVersion !== 2 || receipt.authority !== 'local-observed') fail('test_full_evidence_invalid')
+  if (request.commandHash !== state.plan.fullCommandHash || request.commandHash !== state.fullAttempt?.commandHash) fail('test_full_evidence_invalid')
+  for (const key of ['repo', 'task', 'session', 'branch', 'commit']) if (request[key] !== state.identity[key]) fail('test_full_evidence_invalid')
+  for (const key of ['root', 'index', 'worktree', 'untracked']) if (request.snapshot?.[key] !== state.snapshot[key]) fail('test_full_evidence_invalid')
+  if (!same(request.versions, versions) || evidence.envelopeHash !== digest(request)) fail('test_full_evidence_invalid')
+  if (evidence.receiptHash !== digest(receipt) || evidence.diagnosticHash !== digest(evidence.diagnostic)) fail('test_full_evidence_invalid')
+  if (receipt.envelopeId !== actionId || receipt.envelopeHash !== evidence.envelopeHash) fail('test_full_evidence_invalid')
+  for (const key of ['repo', 'task', 'session', 'branch', 'commit']) if (receipt[key] !== state.identity[key]) fail('test_full_evidence_invalid')
+  if (!same(receipt.afterSnapshot, request.snapshot)) fail('test_full_evidence_invalid')
+  if (!validDate(request.startedAt) || !validDate(receipt.finishedAt) || receipt.finishedAt < request.startedAt || receipt.finishedAt > isoNow()) fail('test_full_evidence_invalid')
+  if (!['passed', 'failed', 'timed_out', 'output_limit', 'spawn_failed'].includes(receipt.status)) fail('test_full_evidence_invalid')
+  if (!(receipt.exitCode === null || Number.isSafeInteger(receipt.exitCode)) || !(receipt.signal === null || typeof receipt.signal === 'string' && receipt.signal.length > 0)) fail('test_full_evidence_invalid')
+  if (!hashPattern.test(receipt.stdoutHash || '') || !hashPattern.test(receipt.stderrHash || '')) fail('test_full_evidence_invalid')
+  return {
+    passed: receipt.status === 'passed' && receipt.exitCode === 0 && !receipt.signal,
+    resultStatus: receipt.status,
+    requestHash: evidence.envelopeHash,
+    receiptHash: evidence.receiptHash,
+  }
 }
 
 async function withExecutionLock(repo, operation, action) {
@@ -227,9 +269,16 @@ export async function createTestImpact(repoCandidate = '.', options = {}) {
   return withExecutionLock(repo, 'impact', async () => {
     const current = await facts(repo)
     if (current.stage !== 'test') fail('test_stage_required')
+    const planMode = options.planMode || 'change'
+    if (!['change', 'baseline-audit'].includes(planMode)) fail('test_impact_mode_invalid')
+    const activeChecks = uniqueStrings(options.activeChecks, 'test_active_checks_invalid', checks).sort()
+    if (planMode === 'baseline-audit' && (options.auditScope !== 'full-chain' || !activeChecks.some(check => check === 'journey' || check.startsWith('journey:')))) fail('test_baseline_audit_checks_invalid')
+    if (planMode === 'change' && options.auditScope !== undefined && options.auditScope !== null) fail('test_impact_mode_invalid')
     const plan = {
-      changedFiles: changedFiles(options.changedFiles),
-      activeChecks: uniqueStrings(options.activeChecks, 'test_active_checks_invalid', checks).sort(),
+      mode: planMode,
+      auditScope: planMode === 'baseline-audit' ? options.auditScope : null,
+      changedFiles: changedFiles(options.changedFiles, { allowEmpty: planMode === 'baseline-audit' }),
+      activeChecks,
       targetedCommandHashes: commandHashes(options.targetedCommands).sort(),
       fullCommandHash: digest(argvCheck(options.fullCommand)),
     }
@@ -346,6 +395,32 @@ export async function completeTestRun(repoCandidate = '.', { scope, commandHash,
     phase: passed ? 'full_passed' : 'full_failed',
     fullAttempt: { ...state.fullAttempt, status: passed ? 'passed' : 'failed', requestHash, receiptHash, resultStatus, finishedAt },
     updatedAt: finishedAt,
+  })
+}
+
+export async function reconcileTerminalTestRun(repoCandidate = '.', actionId = '') {
+  if (!idPattern.test(actionId)) fail('test_action_id_invalid')
+  const repo = await repoRoot(repoCandidate)
+  return withExecutionLock(repo, 'reconcile', async () => {
+    const state = await readState(repo)
+    if (!state) fail('test_impact_missing')
+    if (state.fullAttempt?.actionId !== actionId) return state
+    if (state.fullAttempt.status !== 'running') return state
+    const current = await facts(repo)
+    if (current.stage !== 'test') fail('test_stage_required')
+    const reason = freshness(state, current)
+    if (reason) fail(reason)
+    const reservation = await readFullReservation(repo, state.consumptionFingerprint)
+    if (!reservation || reservation.actionId !== actionId || reservation.commandHash !== state.fullAttempt.commandHash) fail('test_full_reservation_mismatch')
+    const result = await terminalFullResult(repo, state, actionId)
+    const finishedAt = isoNow()
+    const { passed, ...evidenceResult } = result
+    return writeState(repo, {
+      ...state,
+      phase: passed ? 'full_passed' : 'full_failed',
+      fullAttempt: { ...state.fullAttempt, status: passed ? 'passed' : 'failed', ...evidenceResult, finishedAt },
+      updatedAt: finishedAt,
+    })
   })
 }
 

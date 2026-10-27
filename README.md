@@ -200,7 +200,7 @@ cap（唯一公开入口）
 
 ## 当前版本摘要
 
-`v0.14.0` 为本地 `cap-test` 增加确定性硬状态机：已登记的影响/测试计划、定向验证、候选冻结和最终全量按脚本状态顺序推进，并以只绑定 Commit 与源码内容、独立于 Task/Session/branch/root 和任务退场的消费账本限制同一快照只执行一次最终全量。实现继续复用 canonical execution evidence；计划内容的语义完整性仍由 cap-test 路由与评审负责，且不改变 implement、release、CI、Server Harness 或平台 Test Action。
+`v0.14.0` 为本地 `cap-test` 增加确定性硬状态机：已登记的影响/测试计划、定向验证、候选冻结和最终全量按脚本状态顺序推进，并以同仓 worktree 共享、只绑定 Commit 与源码内容的消费账本限制同一快照只执行一次最终全量。terminal evidence 与状态更新之间的崩溃窗口可经严格重验后幂等恢复；clean-tree 现状审计必须显式声明 `baseline-audit + full-chain journey`，普通变更仍要求非空改动集。实现继续复用 canonical execution evidence；计划内容的语义完整性仍由 cap-test 路由与评审负责，且不改变 implement、release、CI、Server Harness 或平台 Test Action。
 
 历史版本与完整变更只维护在 [CHANGELOG.md](CHANGELOG.md)。发布步骤见 [docs/releasing.md](docs/releasing.md)。
 
