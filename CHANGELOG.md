@@ -9,6 +9,7 @@
 - full-attempt 账本移入同仓 worktree 共享的 `git-common-dir`，关闭 sibling worktree 重置唯一 full 配额的绕过；terminal evidence 已落盘而 test-state 未完成时，经锁内完整证据重验后幂等补写终态，损坏证据失败关闭。
 - impact 计划新增显式 `change` / `baseline-audit` 模式：普通变更继续强制非空改动集，只有真实 index/worktree/untracked 指纹均为空、绑定 `full-chain` 且包含 journey check 的 clean-tree baseline audit 允许空改动集；调用方不能用空 `changedFiles` 隐藏脏快照。
 - test 阶段现在以 STATE 为权威拒绝 `--stage implement` / `--action build` 等执行覆盖，避免绕开 impact/freeze/full 账本；普通变更的 `changed-files` 必须精确覆盖 `base-commit...HEAD` 与当前 staged/unstaged/untracked 的并集，登记后漂移也会在冻结前失败关闭。test 命令导致源码变化时，恢复动作直接回到 `refresh_test_impact`，不再建议必然失败的换 Action ID 重跑。
+- impact 与源码指纹在建档及后续 freshness 检查时拒绝 `assume-unchanged` 和 `skip-worktree` 隐藏条目，防止真实修改逃过影响集、漂移检测和 full-attempt 消费键；所有 Git diff 显式关闭 rename detection，把重命名稳定视为旧路径删除 + 新路径新增，不再受本机 `diff.renames` 配置影响。
 
 ## 0.13.5
 

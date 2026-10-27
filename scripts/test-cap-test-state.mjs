@@ -12,6 +12,7 @@ import {
 import { inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { switchTaskState } from './cap-task-state-switch.mjs'
 import { parseArguments as parseTestStateArguments } from './cap-test-state.mjs'
+import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 
 const git = (root, ...args) => execFileSync('git', args, {
   cwd: root,
@@ -27,6 +28,8 @@ async function fixture(t, stage = 'test', changed = true) {
   git(root, 'config', 'user.name', 'Fixture')
   await writeFile(join(root, '.gitignore'), '.cap/\n')
   await writeFile(join(root, 'source.txt'), 'base\n')
+  await writeFile(join(root, 'hidden.txt'), 'base hidden\n')
+  await writeFile(join(root, 'rename-source.txt'), 'rename me\n')
   git(root, 'add', '.')
   git(root, 'commit', '-qm', 'fixture')
   const baseCommit = git(root, 'rev-parse', 'HEAD')
@@ -113,6 +116,55 @@ test('impact analysis must cover the complete base-to-source change set', async 
   })
   assert.deepEqual(state.plan.changedFiles, ['second.txt', 'source.txt'])
 })
+
+test('hidden tracked changes fail closed before impact analysis', async t => {
+  for (const flag of ['--assume-unchanged', '--skip-worktree']) {
+    const root = await fixture(t)
+    git(root, 'update-index', flag, 'hidden.txt')
+    if (flag === '--assume-unchanged') await writeFile(join(root, 'hidden.txt'), 'hidden mutation\n')
+    await assert.rejects(impact(root), /context_fingerprint_hidden_index_flags/)
+  }
+})
+
+test('hidden index flags also fail closed during freshness checks', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  git(root, 'update-index', '--assume-unchanged', 'hidden.txt')
+  await writeFile(join(root, 'hidden.txt'), 'hidden after impact\n')
+  await assert.rejects(inspectTestState(root), /context_fingerprint_hidden_index_flags/)
+})
+
+test('rename fingerprints are independent of ambient Git rename configuration', async t => {
+  const root = await fixture(t)
+  git(root, 'mv', 'rename-source.txt', 'rename-destination.txt')
+  git(root, 'config', 'diff.renames', 'true')
+  const enabled = await inspectContextFingerprint(root)
+  git(root, 'config', 'diff.renames', 'false')
+  const disabled = await inspectContextFingerprint(root)
+  assert.deepEqual(enabled, disabled)
+})
+
+for (const mode of ['committed', 'staged', 'unstaged']) {
+  for (const renameSetting of ['true', 'false']) {
+    test(`${mode} rename records both paths when diff.renames=${renameSetting}`, async t => {
+      const root = await fixture(t)
+      git(root, 'config', 'diff.renames', renameSetting)
+      if (mode === 'unstaged') {
+        await rename(join(root, 'rename-source.txt'), join(root, 'rename-destination.txt'))
+      } else {
+        git(root, 'mv', 'rename-source.txt', 'rename-destination.txt')
+        if (mode === 'committed') git(root, 'commit', '-qm', 'rename fixture')
+      }
+      const state = await createTestImpact(root, {
+        changedFiles: ['rename-destination.txt', 'rename-source.txt', 'source.txt'],
+        activeChecks: ['logic'],
+        targetedCommands: [passing],
+        fullCommand: fullPassing,
+      })
+      assert.deepEqual(state.plan.changedFiles, ['rename-destination.txt', 'rename-source.txt', 'source.txt'])
+    })
+  }
+}
 
 test('changing the declared base cannot shrink an already registered impact plan', async t => {
   const root = await fixture(t)

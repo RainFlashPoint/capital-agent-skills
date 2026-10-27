@@ -12,6 +12,20 @@ function git(repo, args, encoding = 'utf8') {
   return execFileSync('git', ['-C', repo, ...args], { encoding, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 })
 }
 
+function assertVisibleTrackedFiles(repo) {
+  const raw = git(repo, ['ls-files', '-v', '-z', '--', '.', ':(exclude).cap/**'], 'buffer')
+  const hidden = raw.toString('utf8').split('\0').filter(Boolean).filter(entry => {
+    const flag = entry[0]
+    return flag === 'S' || /^[a-z]$/.test(flag)
+  })
+  if (hidden.length) {
+    const error = new Error('context_fingerprint_hidden_index_flags')
+    error.code = 'context_fingerprint_hidden_index_flags'
+    error.paths = hidden.map(entry => entry.slice(2))
+    throw error
+  }
+}
+
 async function untrackedFingerprint(repo) {
   const raw = git(repo, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.', ':(exclude).cap/**'], 'buffer')
   const paths = raw.toString('utf8').split('\0').filter(Boolean).sort()
@@ -30,8 +44,9 @@ async function untrackedFingerprint(repo) {
 export async function inspectContextFingerprint(repoPath = '.') {
   const requested = resolve(repoPath)
   const root = await realpath(String(git(requested, ['rev-parse', '--show-toplevel'])).trim())
-  const indexPatch = git(root, ['diff', '--cached', '--binary', '--no-ext-diff', '--', '.', ':(exclude).cap/**'], 'buffer')
-  const worktreePatch = git(root, ['diff', '--binary', '--no-ext-diff', '--', '.', ':(exclude).cap/**'], 'buffer')
+  assertVisibleTrackedFiles(root)
+  const indexPatch = git(root, ['diff', '--cached', '--binary', '--no-ext-diff', '--no-renames', '--', '.', ':(exclude).cap/**'], 'buffer')
+  const worktreePatch = git(root, ['diff', '--binary', '--no-ext-diff', '--no-renames', '--', '.', ':(exclude).cap/**'], 'buffer')
   return {
     root,
     index: digest(indexPatch),

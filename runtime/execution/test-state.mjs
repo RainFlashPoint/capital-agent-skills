@@ -67,9 +67,9 @@ function actualChangedFiles(repo, state) {
   const base = field(state, 'base-commit')
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(base)) fail('test_base_commit_missing')
   const files = new Set([
-    ...gitPaths(repo, ['diff', '--name-only', `${base}...HEAD`]),
-    ...gitPaths(repo, ['diff', '--name-only']),
-    ...gitPaths(repo, ['diff', '--cached', '--name-only']),
+    ...gitPaths(repo, ['diff', '--no-renames', '--name-only', `${base}...HEAD`]),
+    ...gitPaths(repo, ['diff', '--no-renames', '--name-only']),
+    ...gitPaths(repo, ['diff', '--cached', '--no-renames', '--name-only']),
     ...gitPaths(repo, ['ls-files', '--others', '--exclude-standard']),
   ])
   return changedFiles([...files], { allowEmpty: true })
