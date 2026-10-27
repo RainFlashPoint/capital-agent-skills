@@ -63,12 +63,14 @@ async function facts(repoCandidate) {
   if (field(state, 'worktree') && await realpath(resolve(field(state, 'worktree'))).catch(() => null) !== repo) fail('test_identity_changed')
   const snapshot = await inspectContextFingerprint(repo)
   const identity = { repo, task, session, branch, commit }
-  return { repo, stage: stageName(field(state, 'stage')), identity, snapshot, sourceFingerprint: digest({ identity, snapshot }), recorderVersion: versions.recorder }
+  const sourceFingerprint = digest({ identity, snapshot })
+  const consumptionFingerprint = digest({ source: { repo, branch, commit }, snapshot })
+  return { repo, stage: stageName(field(state, 'stage')), identity, snapshot, sourceFingerprint, consumptionFingerprint, recorderVersion: versions.recorder }
 }
 
 function validateState(state) {
   if (!state || state.schemaVersion !== 1 || !phases.has(state.phase)) fail('test_state_invalid')
-  if (!state.identity || !state.snapshot || typeof state.sourceFingerprint !== 'string' || !hashPattern.test(state.recorderVersion || '')) fail('test_state_invalid')
+  if (!state.identity || !state.snapshot || !hashPattern.test(state.sourceFingerprint || '') || !hashPattern.test(state.consumptionFingerprint || '') || !hashPattern.test(state.recorderVersion || '')) fail('test_state_invalid')
   const plan = state.plan
   if (!plan || !Array.isArray(plan.changedFiles) || !plan.changedFiles.length || !Array.isArray(plan.activeChecks) || !plan.activeChecks.length) fail('test_state_invalid')
   try {
@@ -83,6 +85,7 @@ function validateState(state) {
   if (!state.targetedResults || typeof state.targetedResults !== 'object' || Array.isArray(state.targetedResults)) fail('test_state_invalid')
   if (state.fullAttempt !== null && (typeof state.fullAttempt !== 'object' || !idPattern.test(state.fullAttempt.actionId || ''))) fail('test_state_invalid')
   if (digest({ identity: state.identity, snapshot: state.snapshot }) !== state.sourceFingerprint) fail('test_state_invalid')
+  if (digest({ source: { repo: state.identity.repo, branch: state.identity.branch, commit: state.identity.commit }, snapshot: state.snapshot }) !== state.consumptionFingerprint) fail('test_state_invalid')
   const resultKeys = Object.keys(state.targetedResults).sort()
   if (!same(resultKeys, [...plan.targetedCommandHashes].sort())) fail('test_state_invalid')
   if (resultKeys.some(hash => {
@@ -120,19 +123,20 @@ async function readState(repo) {
   return state ? validateState(state) : null
 }
 
-function fullAttemptPath(sourceFingerprint) {
-  if (!hashPattern.test(sourceFingerprint)) fail('test_state_invalid')
-  return `${fullAttemptsPath}/${sourceFingerprint}.json`
+function fullAttemptPath(consumptionFingerprint) {
+  if (!hashPattern.test(consumptionFingerprint)) fail('test_state_invalid')
+  return `${fullAttemptsPath}/${consumptionFingerprint}.json`
 }
 
-function validateFullReservation(value, sourceFingerprint) {
-  if (!value || value.schemaVersion !== 1 || value.sourceFingerprint !== sourceFingerprint || !idPattern.test(value.actionId || '') || !hashPattern.test(value.commandHash || '')) fail('test_full_reservation_invalid')
-  if (!value.identity || !value.snapshot || digest({ identity: value.identity, snapshot: value.snapshot }) !== sourceFingerprint) fail('test_full_reservation_invalid')
+function validateFullReservation(value, consumptionFingerprint) {
+  if (!value || value.schemaVersion !== 1 || value.consumptionFingerprint !== consumptionFingerprint || !hashPattern.test(value.sourceFingerprint || '') || !idPattern.test(value.actionId || '') || !hashPattern.test(value.commandHash || '')) fail('test_full_reservation_invalid')
+  if (!value.identity || !value.snapshot || digest({ identity: value.identity, snapshot: value.snapshot }) !== value.sourceFingerprint) fail('test_full_reservation_invalid')
+  if (digest({ source: { repo: value.identity.repo, branch: value.identity.branch, commit: value.identity.commit }, snapshot: value.snapshot }) !== consumptionFingerprint) fail('test_full_reservation_invalid')
   return value
 }
 
-async function readFullReservation(repo, sourceFingerprint) {
-  return jsonFile(repo, fullAttemptPath(sourceFingerprint)).then(value => validateFullReservation(value, sourceFingerprint)).catch(error => {
+async function readFullReservation(repo, consumptionFingerprint) {
+  return jsonFile(repo, fullAttemptPath(consumptionFingerprint)).then(value => validateFullReservation(value, consumptionFingerprint)).catch(error => {
     if (error.code === 'ENOENT') return null
     throw error
   })
@@ -148,6 +152,7 @@ async function reserveFullAttempt(repo, state, actionId, commandHash) {
   const reservation = {
     schemaVersion: 1,
     sourceFingerprint: state.sourceFingerprint,
+    consumptionFingerprint: state.consumptionFingerprint,
     identity: state.identity,
     snapshot: state.snapshot,
     actionId,
@@ -155,7 +160,7 @@ async function reserveFullAttempt(repo, state, actionId, commandHash) {
     startedAt: isoNow(),
   }
   try {
-    await atomicJson(join(repo, fullAttemptPath(state.sourceFingerprint)), reservation, { exclusive: true })
+    await atomicJson(join(repo, fullAttemptPath(state.consumptionFingerprint)), reservation, { exclusive: true })
   } catch (error) {
     if (error.code === 'EEXIST') fail('test_full_already_attempted')
     throw error
@@ -225,7 +230,7 @@ export async function createTestImpact(repoCandidate = '.', options = {}) {
     }
     if (plan.targetedCommandHashes.includes(plan.fullCommandHash)) fail('test_full_command_overlaps_targeted')
     const existing = await readState(repo)
-    if (await readFullReservation(repo, current.sourceFingerprint)) fail('test_full_already_attempted')
+    if (await readFullReservation(repo, current.consumptionFingerprint)) fail('test_full_already_attempted')
     if (existing && !freshness(existing, current)) {
       if (existing.fullAttempt || ['full_passed', 'full_failed'].includes(existing.phase)) fail('test_full_already_attempted')
       if (existing.phase === 'candidate_frozen') fail('test_candidate_frozen')
@@ -236,6 +241,7 @@ export async function createTestImpact(repoCandidate = '.', options = {}) {
       identity: current.identity,
       snapshot: current.snapshot,
       sourceFingerprint: current.sourceFingerprint,
+      consumptionFingerprint: current.consumptionFingerprint,
       recorderVersion: current.recorderVersion,
       plan,
       targetedResults: Object.fromEntries(plan.targetedCommandHashes.map(hash => [hash, { status: 'pending' }])),
@@ -249,7 +255,7 @@ export async function createTestImpact(repoCandidate = '.', options = {}) {
 export async function inspectTestState(repoCandidate = '.') {
   const current = await facts(repoCandidate)
   const state = await readState(current.repo)
-  const reservation = await readFullReservation(current.repo, current.sourceFingerprint)
+  const reservation = await readFullReservation(current.repo, current.consumptionFingerprint)
   if (!state) return { schemaVersion: 1, valid: false, phase: 'missing', reason: reservation ? 'test_full_already_attempted' : 'test_impact_missing', statePath }
   const reason = freshness(state, current)
   if (!reason && state.fullAttempt && !reservation) {
@@ -295,7 +301,7 @@ export async function reserveTestRun(repoCandidate = '.', { scope, command, acti
     return { state, commandHash, current }
   }
   if (state.plan.fullCommandHash !== commandHash) fail('test_full_command_unplanned')
-  if (state.fullAttempt || await readFullReservation(current.repo, state.sourceFingerprint) || ['full_passed', 'full_failed'].includes(state.phase)) fail('test_full_already_attempted')
+  if (state.fullAttempt || await readFullReservation(current.repo, state.consumptionFingerprint) || ['full_passed', 'full_failed'].includes(state.phase)) fail('test_full_already_attempted')
   if (state.phase !== 'candidate_frozen') fail('test_candidate_not_frozen')
   await verifyAllTargetedEvidence(current.repo, state)
   const reservation = await reserveFullAttempt(current.repo, state, actionId, commandHash)
@@ -328,7 +334,7 @@ export async function completeTestRun(repoCandidate = '.', { scope, commandHash,
     return writeState(repo, { ...state, phase, targetedResults, updatedAt: finishedAt })
   }
   if (state.fullAttempt?.actionId !== actionId || state.fullAttempt?.commandHash !== commandHash) fail('test_full_reservation_mismatch')
-  const reservation = await readFullReservation(repo, state.sourceFingerprint)
+  const reservation = await readFullReservation(repo, state.consumptionFingerprint)
   if (!reservation || reservation.actionId !== actionId || reservation.commandHash !== commandHash) fail('test_full_reservation_mismatch')
   return writeState(repo, {
     ...state,

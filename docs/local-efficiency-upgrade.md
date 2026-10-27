@@ -28,7 +28,7 @@ node scripts/cap-execute.mjs doctor --repo /path/to/project
 node scripts/cap-execute.mjs status --repo /path/to/project --stage test
 ```
 
-默认发现 package.json 的 test/build 脚本。`stage=test` 先登记影响与定向/full 命令，再按状态机执行；下面以
+默认发现 package.json 的 test/build 脚本。`stage=test` 先登记影响/测试计划与定向/full 命令，再按状态机执行；下面以
 Python 项目为例，登记的 argv 必须与后续执行逐项一致，且最终全量命令不能同时登记为定向命令：
 
 ```sh
@@ -39,6 +39,7 @@ node scripts/cap-execute.mjs run --repo /path/to/project --stage test --test-sco
 ```
 
 implement/release 阶段仍可直接使用 `cap-execute run`，不需要 test 状态或 `--test-scope`。
+状态机验证登记计划的执行顺序和证据；changed-files/checks 的语义完整性仍由 cap-test 的路由与评审保证。
 
 也可在目标仓库 `.cap/execution-config.json` 保存项目入口：
 

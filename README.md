@@ -200,7 +200,7 @@ cap（唯一公开入口）
 
 ## 当前版本摘要
 
-`v0.14.0` 为本地 `cap-test` 增加确定性硬状态机：影响分析、定向验证、候选冻结和最终全量按脚本状态顺序推进，并以源码指纹和独占账本限制同一快照只执行一次最终全量。实现继续复用 canonical execution evidence，且不改变 implement、release、CI、Server Harness 或平台 Test Action。
+`v0.14.0` 为本地 `cap-test` 增加确定性硬状态机：已登记的影响/测试计划、定向验证、候选冻结和最终全量按脚本状态顺序推进，并以不含可变 Task/Session 的源码消费指纹和独占账本限制同一快照只执行一次最终全量。实现继续复用 canonical execution evidence；计划内容的语义完整性仍由 cap-test 路由与评审负责，且不改变 implement、release、CI、Server Harness 或平台 Test Action。
 
 历史版本与完整变更只维护在 [CHANGELOG.md](CHANGELOG.md)。发布步骤见 [docs/releasing.md](docs/releasing.md)。
 

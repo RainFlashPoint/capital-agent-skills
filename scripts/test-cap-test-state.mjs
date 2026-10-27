@@ -216,6 +216,24 @@ test('full-attempt ledger survives state deletion and A-to-B-to-A source changes
   await assert.rejects(impact(root), /test_full_already_attempted/)
 })
 
+test('Task and Session rotation cannot reset a consumed source snapshot', async t => {
+  const root = await fixture(t)
+  await impact(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'targeted', command: passing,
+  })
+  await freezeTestCandidate(root)
+  await runLocalAction(root, {
+    environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
+  })
+  const statePath = join(root, '.cap/STATE.md')
+  const state = await readFile(statePath, 'utf8')
+  await writeFile(statePath, state
+    .replace('task-id: task-test-state', 'task-id: task-rotated')
+    .replace('session-id: session-test-state', 'session-id: session-rotated'))
+  await assert.rejects(impact(root), /test_full_already_attempted/)
+})
+
 test('source changes invalidate impact analysis before another command runs', async t => {
   const root = await fixture(t)
   await impact(root)
@@ -325,7 +343,7 @@ test('deleting only the full-attempt ledger cannot reset a terminal source snaps
     environment: {}, stage: 'test', testScope: 'full', command: fullPassing,
   })
   const terminal = await inspectTestState(root)
-  await rm(join(root, '.cap/execution/test-full-attempts', `${terminal.sourceFingerprint}.json`))
+  await rm(join(root, '.cap/execution/test-full-attempts', `${terminal.consumptionFingerprint}.json`))
   const inspected = await inspectTestState(root)
   assert.equal(inspected.valid, false)
   assert.equal(inspected.reason, 'test_full_attempt_incomplete')

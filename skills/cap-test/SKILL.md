@@ -137,13 +137,17 @@ Commit / 源码指纹、`changed-files`、`active checks`、全部定向命令�
 impact_ready → targeted_passed → candidate_frozen → full_passed | full_failed
 ```
 
+硬状态机机械保证的是**已登记影响/测试计划**的顺序、证据回验与 full 唯一消费；`changed-files` 和
+`active checks` 是否完整，仍由本阶段的 role-routing + PROFILE 解析和评审负责。运行时不复制第二套语义路由器，
+也不能把“登记成功”冒充为“影响分析内容已自动证明完整”。
+
 - 没有 `impact_ready` 时，任何 test 命令都不得启动；未登记的命令不能临时冒充定向测试。
 - 每条定向命令都必须通过 `scripts/cap-execute.mjs` 以 `--test-scope targeted` 在同一源码快照上真实执行；全部
   PASS 后才能冻结候选。冻结与最终 Gate 会回验对应 request / bundle / receipt，不能只改状态 JSON 自报 PASS。
 - 冻结通过 `scripts/cap-test-state.mjs` 完成。冻结前不得执行最终全量；冻结后不得继续追加定向命令。
 - 最终全量命令只能以 `--test-scope full` 执行一次。无论 PASS、失败或中断，这次尝试都已消耗；同一源码
   快照的独占消费记录保存在 `.cap/execution/test-full-attempts/`，删除或重建活动状态、A→B→A 往返以及重新登记
-  影响分析都不能绕过。需要再跑时，先形成新的源码快照并重新做影响分析与定向回归。
+  影响分析、轮换 Task 或 Session 都不能绕过。需要再跑时，先形成新的源码快照并重新做影响分析与定向回归。
 - 冻结前必须按该项目正式门禁的已知耗时为最终全量配置足够的显式执行超时；不能让已知长时套件依赖本地记录器
   的通用默认值。超时同样会消费唯一 full 尝试，不能用“只是超时”作为同快照重跑理由。
 - Task、Session、仓库、分支、Commit、源码指纹或记录器版本变化都会使旧状态和旧证据失效。
