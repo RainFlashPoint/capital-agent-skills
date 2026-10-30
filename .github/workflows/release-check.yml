@@ -11,7 +11,8 @@ permissions:
 jobs:
   full-local-gate:
     name: Full reproducible release gate
-    runs-on: ubuntu-latest
+    # Keep the release gate on the supported image for the Provider sandbox.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y bubblewrap
-          /usr/bin/bwrap --die-with-parent --new-session --unshare-all --share-net --proc /proc --dev /dev --ro-bind /usr /usr --ro-bind /bin /bin /bin/true
+          node --input-type=module -e 'import { inspectSandboxCapability } from "./runtime/local-test-provider.mjs"; const result = inspectSandboxCapability(); console.log(JSON.stringify(result)); if (!result.available) process.exit(1)'
       - run: bash scripts/release-check
         env:
           CAP_RELEASE_DIFF_BASE: HEAD^

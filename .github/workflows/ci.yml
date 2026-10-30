@@ -55,7 +55,10 @@ jobs:
 
   node-regression:
     name: Node regression
-    runs-on: ubuntu-latest
+    # The local Test Provider needs user namespaces for bubblewrap. Keep this
+    # gate on the supported Ubuntu image instead of inheriting a moving
+    # ubuntu-latest policy that may disable that capability.
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +69,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y bubblewrap
-          /usr/bin/bwrap --die-with-parent --new-session --unshare-all --share-net --proc /proc --dev /dev --ro-bind /usr /usr --ro-bind /bin /bin /bin/true
+          node --input-type=module -e 'import { inspectSandboxCapability } from "./runtime/local-test-provider.mjs"; const result = inspectSandboxCapability(); console.log(JSON.stringify(result)); if (!result.available) process.exit(1)'
       - run: node scripts/node-test-runner.mjs
 
   python-regression:

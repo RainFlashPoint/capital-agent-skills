@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 将依赖 bubblewrap 用户命名空间的 Node 回归、完整发布检查和发布 Job 固定到 Ubuntu 22.04，并统一调用本地 Test Provider 的 `inspectSandboxCapability()` 验收沙箱；避免 Ubuntu 24.04 安装了 bubblewrap 但因宿主策略拒绝 uid map 时误判环境已就绪。
+
 ## 0.14.2
 
 - 修复正式发布与 Linux Node 回归环境：GitHub Ubuntu Job 在执行 Provider 测试前安装并实际探测 bubblewrap，确保缺失或不可用的 OS 沙箱在准备阶段明确失败，而不是让整组 Provider 用例静默降级为 `remote-only`。Provider 的隔离、领取与证据契约不变；已公开的 `v0.14.1` 标签保持不可变。

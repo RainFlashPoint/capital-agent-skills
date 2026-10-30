@@ -10,7 +10,8 @@ permissions:
 jobs:
   verify-and-publish:
     name: Verify tag and publish GitHub Release
-    runs-on: ubuntu-latest
+    # Keep publishing on the supported image for the Provider sandbox.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y bubblewrap
-          /usr/bin/bwrap --die-with-parent --new-session --unshare-all --share-net --proc /proc --dev /dev --ro-bind /usr /usr --ro-bind /bin /bin /bin/true
+          node --input-type=module -e 'import { inspectSandboxCapability } from "./runtime/local-test-provider.mjs"; const result = inspectSandboxCapability(); console.log(JSON.stringify(result)); if (!result.available) process.exit(1)'
       - name: Bind tag to manifest version and Commit
         run: node scripts/release-contract.mjs check --phase tag --tag "$GITHUB_REF_NAME"
       - name: Full release gate
