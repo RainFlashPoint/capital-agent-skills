@@ -2,7 +2,7 @@
 
 把 Coding Agent 的需求、实现、测试、评审、发布和经验复用变成一条可恢复、可验证、可移植的研发主线。
 
-<!-- release-version: 0.14.2 -->
+<!-- release-version: 0.14.3 -->
 
 [![CI](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml)
 [![Release Check](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml)
@@ -10,7 +10,7 @@
 
 ## 公开状态与证据
 
-当前候选版本：`v0.14.2`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
+当前候选版本：`v0.14.3`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
 
 公开证据按入口区分：
 
@@ -23,7 +23,7 @@
 | GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
 | Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
-截至 2026-10-30，`v0.14.1` 的本地门禁通过，但 GitHub Ubuntu 发布 Runner 因缺失 bubblewrap 未通过正式发布门禁；既有标签保持不可变。`v0.14.2` 只有在本地门禁、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
+截至 2026-10-30，`v0.14.2` 已修复 GitHub Ubuntu 发布 Runner 缺失 bubblewrap 的问题并完成公开发布；`v0.14.3` 进一步收紧旧 recorder 的证据迁移与混合失败分类。新版本只有在本地门禁、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
 
 普通维护按影响面选择定向测试，例：修改版本契约时执行对应 Node 测试；修改 Python 工具时选择对应 unittest。测试文件需按实际改动替换，未涉及的语言无需运行：
 

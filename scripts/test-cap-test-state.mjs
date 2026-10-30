@@ -4,11 +4,14 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmod, lstat, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { digest } from '../runtime/ontology/schema.mjs'
 import {
   createTestImpact,
+  authorizeEnvironmentRetry,
   freezeTestCandidate,
   inspectTestState,
+  testExecutionGate,
 } from '../runtime/execution/test-state.mjs'
 import { compactExecutionResult, executionNextActions, inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { executionFailurePayload } from './cap-execute.mjs'
@@ -22,6 +25,8 @@ const git = (root, ...args) => execFileSync('git', args, {
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe'],
 }).trim()
+
+const sourceRepo = fileURLToPath(new URL('../', import.meta.url))
 
 async function fixture(t, stage = 'test', changed = true) {
   const root = await mkdtemp(join(tmpdir(), 'cap-test-state-'))
@@ -84,6 +89,8 @@ test('impact CLI preserves explicit baseline-audit scope', () => {
 
 test('retry CLI exposes an explicit authorization operation', () => {
   assert.equal(parseTestStateArguments(['retry-environment', '--repo', '/tmp/example']).operation, 'retry-environment')
+  assert.equal(parseTestStateArguments(['retry-environment', '--repo', '/tmp/example', '--migrate-recorder']).migrateRecorder, true)
+  assert.throws(() => parseTestStateArguments(['status', '--migrate-recorder']), /test_state_cli_option_invalid/)
 })
 
 test('targeted test is blocked before impact analysis and command is not executed', async t => {
@@ -364,9 +371,9 @@ test('a failed full attempt is also consumed and cannot be repeated', async t =>
   assert.equal(status.nextActions[0].requiresSourceChange, true)
 })
 
-async function environmentFixture(t, { script = "require('react')", dependency = 'react' } = {}) {
+async function environmentFixture(t, { script = "require('react')", dependency = 'react', beforeFull = null } = {}) {
   const root = await fixture(t)
-  await writeFile(join(root, '.gitignore'), '.cap/\nnode_modules/\n')
+  await writeFile(join(root, '.gitignore'), '.cap/\nnode_modules/\nweb/runtime-ready\n')
   await mkdir(join(root, 'web'), { recursive: true })
   await writeFile(join(root, 'web/package.json'), JSON.stringify({ dependencies: { [dependency]: '1.0.0' } }))
   await writeFile(join(root, 'web/check.cjs'), script)
@@ -379,6 +386,7 @@ async function environmentFixture(t, { script = "require('react')", dependency =
   })
   await runLocalAction(root, { environment: {}, testScope: 'targeted', command: passing })
   await freezeTestCandidate(root)
+  if (beforeFull) await beforeFull(root)
   const first = await runLocalAction(root, { environment: {}, testScope: 'full', command })
   return { root, command, first }
 }
@@ -387,8 +395,15 @@ test('declared missing dependency permits exactly one explicit environment retry
   const { authorizeEnvironmentRetry } = await import('../runtime/execution/test-state.mjs')
   assert.equal(typeof authorizeEnvironmentRetry, 'function', 'environment retry authorization is implemented')
   const { root, command, first } = await environmentFixture(t)
-  const original = JSON.parse(await readFile(join(root, '.cap/execution/test-state.json'), 'utf8')).fullAttempt
+  const initialState = JSON.parse(await readFile(join(root, '.cap/execution/test-state.json'), 'utf8'))
+  const original = initialState.fullAttempt
   const firstEvidence = await readFile(join(first.artifactDir, 'gate.json'), 'utf8')
+  const firstGate = JSON.parse(firstEvidence)
+  const terminal = JSON.parse(await readFile(join(root, '.git/capital-agent/test-full-attempts', `${initialState.consumptionFingerprint}.terminal.json`), 'utf8'))
+  assert.equal(terminal.recorderVersion, firstGate.envelope.versions.recorder)
+  assert.equal(terminal.requestHash, firstGate.envelopeHash)
+  assert.equal(terminal.receiptHash, firstGate.receiptHash)
+  assert.equal(terminal.diagnosticHash, firstGate.diagnosticHash)
   assert.equal(first.gate.nextActions[0].kind, 'authorize_environment_retry')
   assert.equal(first.gate.nextActions[0].requiresSourceChange, false)
   assert.equal(compactExecutionResult(first).gate.nextActions[0].kind, 'authorize_environment_retry')
@@ -408,6 +423,314 @@ test('declared missing dependency permits exactly one explicit environment retry
   assert.equal(await readFile(join(first.artifactDir, 'gate.json'), 'utf8'), firstEvidence)
   assert.equal((await inspectLocalExecution(root)).passed, true)
   await assert.rejects(runLocalAction(root, { environment: {}, testScope: 'full', command }), /test_full_already_attempted/)
+})
+
+test('failed environment retry cannot be promoted by editing only the state projection', async t => {
+  const { root, command } = await environmentFixture(t)
+  await authorizeEnvironmentRetry(root)
+  const retry = await runLocalAction(root, { environment: {}, testScope: 'full', command })
+  assert.equal(retry.gate.passed, false)
+
+  const statePath = join(root, '.cap/execution/test-state.json')
+  const state = JSON.parse(await readFile(statePath, 'utf8'))
+  assert.equal(state.phase, 'full_failed')
+  state.phase = 'full_passed'
+  state.environmentRetry.attempt.status = 'passed'
+  state.environmentRetry.attempt.resultStatus = 'passed'
+  await writeFile(statePath, JSON.stringify(state))
+
+  const inspected = await inspectTestState(root)
+  assert.equal(inspected.valid, false)
+  assert.equal(inspected.reason, 'test_full_evidence_invalid')
+  const sequenceGate = await testExecutionGate(root, { testScope: 'full', id: retry.envelope.id })
+  assert.equal(sequenceGate.passed, false)
+  assert.equal(sequenceGate.reason, 'test_full_evidence_invalid')
+  const gate = await inspectLocalExecution(root)
+  assert.equal(gate.passed, false)
+})
+
+test('environment retry restores a valid authorization sidecar after projection write interruption', async t => {
+  const { root } = await environmentFixture(t)
+  const statePath = join(root, '.cap/execution/test-state.json')
+  const failed = JSON.parse(await readFile(statePath, 'utf8'))
+  const authorized = await authorizeEnvironmentRetry(root)
+  await writeFile(statePath, JSON.stringify(failed))
+
+  const restored = await authorizeEnvironmentRetry(root)
+  assert.equal(restored.phase, 'environment_retry_ready')
+  assert.deepEqual(restored.environmentRetry, authorized.environmentRetry)
+  assert.equal((await inspectTestState(root)).valid, true)
+})
+
+test('terminal reconciliation recreates the current recorder anchor before environment authorization', async t => {
+  const { root } = await environmentFixture(t)
+  const statePath = join(root, '.cap/execution/test-state.json')
+  const completed = JSON.parse(await readFile(statePath, 'utf8'))
+  const terminalPath = join(root, '.git/capital-agent/test-full-attempts', `${completed.consumptionFingerprint}.terminal.json`)
+  await rm(terminalPath)
+  await writeFile(statePath, JSON.stringify({
+    ...completed,
+    phase: 'candidate_frozen',
+    fullAttempt: {
+      actionId: completed.fullAttempt.actionId,
+      commandHash: completed.fullAttempt.commandHash,
+      status: 'running',
+      startedAt: completed.fullAttempt.startedAt,
+      finishedAt: null,
+    },
+  }))
+  const lock = join(root, '.cap/execution/.lock')
+  await mkdir(lock)
+  await writeFile(join(lock, 'owner.json'), JSON.stringify({
+    schemaVersion: 2,
+    pid: 2147483647,
+    id: completed.fullAttempt.actionId,
+    startedAt: completed.fullAttempt.startedAt,
+  }))
+
+  await recoverLocalExecution(root)
+  assert.equal((await inspectLocalExecution(root)).reason, 'test_environment_retry_available')
+  const authorized = await authorizeEnvironmentRetry(root)
+  assert.equal(authorized.phase, 'environment_retry_ready')
+  assert.equal((await inspectTestState(root)).valid, true)
+  assert.equal(JSON.parse(await readFile(terminalPath, 'utf8')).targetedEvidenceRoot, authorized.environmentRetry.authorization.targetedEvidenceRoot)
+})
+
+const legacyRecorder = '7cae17ccd075cf322c03b3c8c5c5ffadcf43f618f329deccd8a131159e78c611'
+const legacyRecorderCommit = '41a839af98dba01edb20902256f0a153f83451e6'
+const stableLegacyEnvironmentScript = "const fs = require('fs'); if (!fs.existsSync('web/runtime-ready')) { console.error('bwrap: creating new namespace failed: Operation not permitted'); process.exit(1) }"
+
+async function legacyEnvironmentFixture(t) {
+  return environmentFixture(t, { script: stableLegacyEnvironmentScript })
+}
+
+test('legacy recorder allowlist digest is derived from its archived implementation', t => {
+  let sources
+  try {
+    sources = ['local-flow.mjs', 'local-support.mjs', 'test-state.mjs'].map(name => (
+      execFileSync('git', ['show', `${legacyRecorderCommit}:runtime/execution/${name}`], {
+        cwd: sourceRepo,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    ))
+  } catch {
+    t.skip('archived implementation is unavailable in this shallow checkout; the fail-closed anchor limitation remains documented')
+    return
+  }
+  assert.equal(digest(sources), legacyRecorder)
+})
+
+async function targetedEvidenceRoot(root, state) {
+  const records = []
+  for (const commandHash of [...state.plan.targetedCommandHashes].sort()) {
+    const result = state.targetedResults[commandHash]
+    const evidence = JSON.parse(await readFile(join(root, '.cap/execution', result.actionId, 'gate.json'), 'utf8'))
+    records.push({
+      commandHash,
+      actionHash: digest(result.actionId),
+      requestHash: evidence.envelopeHash,
+      receiptHash: evidence.receiptHash,
+      diagnosticHash: evidence.diagnosticHash,
+    })
+  }
+  return digest(records)
+}
+
+// Construct a historical recorder fixture, including all canonical hashes.
+async function historicalRecorder(root, recorder = legacyRecorder, mutate = () => {}) {
+  const path = join(root, '.cap/execution/test-state.json')
+  const state = JSON.parse(await readFile(path, 'utf8'))
+  for (const result of [...Object.values(state.targetedResults), state.fullAttempt]) {
+    const gatePath = join(root, '.cap/execution', result.actionId, 'gate.json')
+    const evidence = JSON.parse(await readFile(gatePath, 'utf8'))
+    evidence.envelope.versions.recorder = recorder
+    mutate(evidence)
+    evidence.envelopeHash = digest(evidence.envelope)
+    evidence.receipt.envelopeHash = evidence.envelopeHash
+    evidence.receiptHash = digest(evidence.receipt)
+    evidence.diagnosticHash = digest(evidence.diagnostic)
+    result.requestHash = evidence.envelopeHash
+    result.receiptHash = evidence.receiptHash
+    await writeFile(gatePath, JSON.stringify(evidence))
+  }
+  state.recorderVersion = recorder
+  await writeFile(path, JSON.stringify(state))
+  await writeFile(join(root, '.cap/execution/latest-test.json'), JSON.stringify({ schemaVersion: 2, id: state.fullAttempt.actionId, requestHash: state.fullAttempt.requestHash }))
+  const targetedRoot = await targetedEvidenceRoot(root, state)
+  const reservationPath = join(root, '.git/capital-agent/test-full-attempts', `${state.consumptionFingerprint}.json`)
+  const reservation = JSON.parse(await readFile(reservationPath, 'utf8'))
+  await writeFile(reservationPath, JSON.stringify({ ...reservation, schemaVersion: 2, targetedEvidenceRoot: targetedRoot }))
+  const fullGate = JSON.parse(await readFile(join(root, '.cap/execution', state.fullAttempt.actionId, 'gate.json'), 'utf8'))
+  const terminalPath = join(root, '.git/capital-agent/test-full-attempts', `${state.consumptionFingerprint}.terminal.json`)
+  await writeFile(terminalPath, JSON.stringify({
+    schemaVersion: 2,
+    identityHash: digest(state.identity),
+    sourceFingerprint: state.sourceFingerprint,
+    consumptionFingerprint: state.consumptionFingerprint,
+    actionId: state.fullAttempt.actionId,
+    commandHash: state.plan.fullCommandHash,
+    recorderVersion: recorder,
+    protocolVersion: fullGate.envelope.versions.protocol,
+    ontologyVersion: fullGate.envelope.versions.ontology,
+    requestHash: fullGate.envelopeHash,
+    receiptHash: fullGate.receiptHash,
+    diagnosticHash: fullGate.diagnosticHash,
+    targetedEvidenceRoot: targetedRoot,
+    resultStatus: fullGate.receipt.status,
+    finishedAt: fullGate.receipt.finishedAt,
+  }))
+  return state
+}
+
+test('historical recorder migration rejects coherently rewritten targeted evidence when the full anchor is unchanged', async t => {
+  const { root } = await legacyEnvironmentFixture(t)
+  const original = await historicalRecorder(root)
+  const commandHash = original.plan.targetedCommandHashes[0]
+  const result = original.targetedResults[commandHash]
+  const gatePath = join(root, '.cap/execution', result.actionId, 'gate.json')
+  const evidence = JSON.parse(await readFile(gatePath, 'utf8'))
+  evidence.envelope.startedAt = new Date(Date.parse(evidence.envelope.startedAt) - 1000).toISOString()
+  evidence.envelopeHash = digest(evidence.envelope)
+  evidence.receipt.envelopeHash = evidence.envelopeHash
+  evidence.receiptHash = digest(evidence.receipt)
+  evidence.diagnostic = { ...evidence.diagnostic, stdout: 'rewritten targeted output\n' }
+  evidence.diagnosticHash = digest(evidence.diagnostic)
+  await writeFile(gatePath, JSON.stringify(evidence))
+  await writeFile(join(root, '.cap/execution/test-state.json'), JSON.stringify({
+    ...original,
+    targetedResults: {
+      ...original.targetedResults,
+      [commandHash]: { ...result, requestHash: evidence.envelopeHash, receiptHash: evidence.receiptHash },
+    },
+  }))
+
+  await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_recorder_migration_invalid/)
+})
+
+test('historical recorder migration rejects coherently rewritten editable evidence when the shared terminal anchor is unchanged', async t => {
+  const { root } = await environmentFixture(t, { script: "require('node:assert').equal(1, 2)" })
+  const original = await historicalRecorder(root)
+  const gatePath = join(root, '.cap/execution', original.fullAttempt.actionId, 'gate.json')
+  const evidence = JSON.parse(await readFile(gatePath, 'utf8'))
+  evidence.envelope.startedAt = new Date(Date.parse(evidence.envelope.startedAt) - 1000).toISOString()
+  evidence.diagnostic = { ...evidence.diagnostic, stdout: '', stderr: 'npm ERR! request failed ENOTFOUND registry.invalid\n', truncated: false }
+  evidence.envelopeHash = digest(evidence.envelope)
+  evidence.receipt.envelopeHash = evidence.envelopeHash
+  evidence.receiptHash = digest(evidence.receipt)
+  evidence.diagnosticHash = digest(evidence.diagnostic)
+  await writeFile(gatePath, JSON.stringify(evidence))
+  const rewritten = {
+    ...original,
+    fullAttempt: { ...original.fullAttempt, requestHash: evidence.envelopeHash, receiptHash: evidence.receiptHash },
+  }
+  await writeFile(join(root, '.cap/execution/test-state.json'), JSON.stringify(rewritten))
+  await writeFile(join(root, '.cap/execution/latest-test.json'), JSON.stringify({ schemaVersion: 2, id: original.fullAttempt.actionId, requestHash: evidence.envelopeHash }))
+  await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_recorder_migration_invalid/)
+})
+
+test('historical recorder migration rejects an installed package root with a missing subpath', async t => {
+  const { root } = await environmentFixture(t, {
+    script: "require('react/missing-subpath')",
+    beforeFull: async repo => {
+      await mkdir(join(repo, 'web/node_modules/react'), { recursive: true })
+      await writeFile(join(repo, 'web/node_modules/react/index.js'), 'module.exports = {}\n')
+    },
+  })
+  await historicalRecorder(root)
+  await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_environment_retry_not_allowed/)
+})
+
+test('historical recorder migration fails closed when the original terminal anchor is absent', async t => {
+  const { root } = await legacyEnvironmentFixture(t)
+  const original = await historicalRecorder(root)
+  await rm(join(root, '.git/capital-agent/test-full-attempts', `${original.consumptionFingerprint}.terminal.json`))
+  await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_recorder_migration_invalid/)
+})
+
+test('historical recorder cannot be migrated by coherently synthesizing every local evidence file', async t => {
+  const { root, first } = await legacyEnvironmentFixture(t)
+  const original = await historicalRecorder(root)
+  const before = await readFile(join(first.artifactDir, 'gate.json'), 'utf8')
+  await assert.rejects(authorizeEnvironmentRetry(root), /test_recorder_changed/)
+  await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_recorder_migration_unsupported/)
+  assert.deepEqual(JSON.parse(await readFile(join(root, '.cap/execution/test-state.json'), 'utf8')), original)
+  assert.equal(await readFile(join(first.artifactDir, 'gate.json'), 'utf8'), before)
+  for (const kind of ['migration', 'environment', 'retry']) {
+    await assert.rejects(readFile(join(root, '.git/capital-agent/test-full-attempts', `${original.consumptionFingerprint}.${kind}.json`)), { code: 'ENOENT' })
+  }
+})
+
+test('environment classification rejects mixed failures without an Error prefix', async t => {
+  for (const failure of ['DOMAIN VALIDATION FAILED', 'FAIL business rule', 'not ok 1 - business constraint', '✖ invalid result']) {
+    for (const environment of ['bwrap: creating new namespace failed: Operation not permitted', 'npm ERR! request failed ENOTFOUND registry.invalid']) {
+      const { root, first } = await environmentFixture(t, {
+        script: `console.log(${JSON.stringify(failure)}); console.error(${JSON.stringify(environment)}); process.exit(1)`,
+      })
+      await assert.rejects(authorizeEnvironmentRetry(root), /test_environment_retry_not_allowed/, `${failure}: ${environment}`)
+      assert.equal(first.gate.nextActions[0].requiresSourceChange, true)
+    }
+  }
+  const { root, first } = await environmentFixture(t, {
+    script: "console.log('DOMAIN VALIDATION FAILED'); require('react')",
+  })
+  await assert.rejects(authorizeEnvironmentRetry(root), /test_environment_retry_not_allowed/, 'business failure plus declared missing package')
+  assert.equal(first.gate.nextActions[0].requiresSourceChange, true)
+  for (const line of [
+    'FAIL business rule; bwrap: creating new namespace failed: Operation not permitted',
+    'DOMAIN VALIDATION FAILED; npm ERR! request failed ENOTFOUND registry.invalid',
+  ]) {
+    const sameLine = await environmentFixture(t, {
+      script: `console.error(${JSON.stringify(line)}); process.exit(1)`,
+    })
+    await assert.rejects(authorizeEnvironmentRetry(sameLine.root), /test_environment_retry_not_allowed/, line)
+    assert.equal(sameLine.first.gate.nextActions[0].requiresSourceChange, true)
+  }
+  const sameLineMissing = await environmentFixture(t, {
+    script: "process.stderr.write('FAIL business rule; '); require('react')",
+  })
+  await assert.rejects(authorizeEnvironmentRetry(sameLineMissing.root), /test_environment_retry_not_allowed/, 'business failure and missing package on the same line')
+  assert.equal(sameLineMissing.first.gate.nextActions[0].requiresSourceChange, true)
+})
+
+test('historical recorder migration refuses unknown, truncated, incompatible and code failure evidence', async t => {
+  for (const kind of ['unknown-recorder', 'truncated', 'protocol', 'ontology', 'assertion', 'unknown-failure']) {
+    const { root } = await environmentFixture(t, { script: kind === 'assertion' ? "require('node:assert').equal(1, 2)" : kind === 'unknown-failure' ? "throw new Error('business failure')" : undefined })
+    await historicalRecorder(root, kind === 'unknown-recorder' ? 'a'.repeat(64) : legacyRecorder, evidence => {
+      if (kind === 'truncated') evidence.diagnostic.truncated = true
+      if (kind === 'protocol') evidence.envelope.versions.protocol += 1
+      if (kind === 'ontology') evidence.envelope.versions.ontology = 'b'.repeat(64)
+    })
+    await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_(?:recorder_changed|environment_retry_not_allowed|targeted_evidence_invalid|full_evidence_invalid)/, kind)
+    assert.equal((await inspectTestState(root)).valid, false)
+  }
+})
+
+test('historical recorder migration rejects drift and corrupted original evidence', async t => {
+  for (const kind of ['source', 'session', 'receipt']) {
+    const { root, first } = await environmentFixture(t)
+    await historicalRecorder(root)
+    if (kind === 'source') await writeFile(join(root, 'source.txt'), 'drift\n')
+    if (kind === 'session') {
+      const path = join(root, '.cap/STATE.md')
+      await writeFile(path, (await readFile(path, 'utf8')).replace('session-test-state', 'another-session'))
+    }
+    if (kind === 'receipt') {
+      const path = join(first.artifactDir, 'gate.json')
+      const evidence = JSON.parse(await readFile(path, 'utf8'))
+      evidence.receipt.exitCode = 0
+      await writeFile(path, JSON.stringify(evidence))
+    }
+    await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_(?:source_changed|identity_changed|full_evidence_invalid)/, kind)
+  }
+})
+
+test('unsupported historical recorder remains blocked after projection rewind', async t => {
+  const { root } = await legacyEnvironmentFixture(t)
+  const original = await historicalRecorder(root)
+  await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_recorder_migration_unsupported/)
+  await writeFile(join(root, '.cap/execution/test-state.json'), JSON.stringify(original))
+  await assert.rejects(authorizeEnvironmentRetry(root, { migrateRecorder: true }), /test_recorder_migration_unsupported/)
 })
 
 test('environment retry fails closed for relative, undeclared, assertion and unknown failures', async t => {
@@ -1143,7 +1466,10 @@ test('an interrupted full attempt reports source change instead of an impossible
     `import { runLocalAction } from ${JSON.stringify(moduleUrl)}; await runLocalAction(process.argv[1], { environment: {}, stage: 'test', testScope: 'full', command: JSON.parse(process.argv[2]), timeoutMs: 60000 })`,
     root,
     JSON.stringify(slowFull),
-  ], { stdio: 'ignore' })
+  ], { stdio: ['ignore', 'ignore', 'pipe'] })
+  let runnerError = ''
+  runner.stderr.setEncoding('utf8')
+  runner.stderr.on('data', chunk => { runnerError += chunk })
   t.after(() => { if (runner.exitCode === null) runner.kill('SIGKILL') })
 
   let interruptedPointer = null
@@ -1157,7 +1483,7 @@ test('an interrupted full attempt reports source change instead of an impossible
       interruptedPointer = pointer
       break
     }
-    if (runner.exitCode !== null) assert.fail(`full runner exited before publishing pending evidence: ${runner.exitCode}`)
+    if (runner.exitCode !== null) assert.fail(`full runner exited before publishing pending evidence: ${runner.exitCode}: ${runnerError.trim()}`)
     await new Promise(resolve => setTimeout(resolve, 5))
   }
   assert.ok(interruptedPointer, 'full runner did not publish pending evidence')
