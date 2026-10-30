@@ -93,5 +93,8 @@ jobs:
       - name: Sandboxed Provider integration
         if: matrix.os == 'macos-latest'
         run: |
+          sudo mkdir -p /usr/local/lib/cap-ci/bin
+          sudo cp "$(command -v node)" /usr/local/lib/cap-ci/bin/node
+          export PATH="/usr/local/lib/cap-ci/bin:$PATH"
           node --input-type=module -e "import { inspectSandboxCapability } from './runtime/local-test-provider.mjs'; const sandbox = inspectSandboxCapability(); if (!sandbox.available) throw new Error(JSON.stringify(sandbox))"
           node --test scripts/test-local-test-provider.mjs
