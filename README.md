@@ -2,7 +2,7 @@
 
 把 Coding Agent 的需求、实现、测试、评审、发布和经验复用变成一条可恢复、可验证、可移植的研发主线。
 
-<!-- release-version: 0.14.1 -->
+<!-- release-version: 0.14.2 -->
 
 [![CI](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml)
 [![Release Check](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml)
@@ -10,7 +10,7 @@
 
 ## 公开状态与证据
 
-当前候选版本：`v0.14.1`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
+当前候选版本：`v0.14.2`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
 
 公开证据按入口区分：
 
@@ -23,7 +23,7 @@
 | GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
 | Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
-截至 2026-10-30，本轮发布前公开 `main`、Git Tag 与 GitHub Latest Release 的真实状态仍需在推送后回读；`v0.14.1` 只有在本地门禁、独立复核、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
+截至 2026-10-30，`v0.14.1` 的本地门禁通过，但 GitHub Ubuntu 发布 Runner 因缺失 bubblewrap 未通过正式发布门禁；既有标签保持不可变。`v0.14.2` 只有在本地门禁、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
 
 普通维护按影响面选择定向测试，例：修改版本契约时执行对应 Node 测试；修改 Python 工具时选择对应 unittest。测试文件需按实际改动替换，未涉及的语言无需运行：
 
@@ -199,6 +199,8 @@ cap（唯一公开入口）
 - [本地效率升级说明](docs/local-efficiency-upgrade.md)
 
 ## 当前版本摘要
+
+`v0.14.2` 为运行完整 Node 与发布回归的 GitHub Ubuntu Job 安装并实际探测 bubblewrap，使 Linux CI 与本地 macOS `sandbox-exec` 使用同一“真实沙箱可用后才执行 Provider 回归”的门禁，不把沙箱缺失误报成业务回归失败，也不放宽 Provider 隔离要求。
 
 `v0.14.1` 在 `v0.14.0` 的本地 `cap-test` 硬状态机上增加失败关闭的环境恢复通道：首次 full 的 canonical evidence 只有在确定性证明为执行器、依赖解析/网络/证书、沙箱/共享内存，或“manifest 已声明但尚未安装的 Node 外部依赖”时，才能显式授权同一候选、同一命令的一次恢复重试。首次失败证据与第二次 action 分开保留；代码/断言/未知失败、身份或源码漂移、第二次失败/超时/中断仍关闭该快照。候选 Delivery 只绑定真实 PASS 的 action，不因授权本身放行。
 

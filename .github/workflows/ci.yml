@@ -62,6 +62,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install and verify Linux sandbox
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y bubblewrap
+          /usr/bin/bwrap --die-with-parent --new-session --unshare-all --share-net --proc /proc --dev /dev --ro-bind /usr /usr --ro-bind /bin /bin /bin/true
       - run: node scripts/node-test-runner.mjs
 
   python-regression:

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.14.2
+
+- 修复正式发布与 Linux Node 回归环境：GitHub Ubuntu Job 在执行 Provider 测试前安装并实际探测 bubblewrap，确保缺失或不可用的 OS 沙箱在准备阶段明确失败，而不是让整组 Provider 用例静默降级为 `remote-only`。Provider 的隔离、领取与证据契约不变；已公开的 `v0.14.1` 标签保持不可变。
+
 ## 0.14.1
 
 - `cap-test` 为首次 full 的确定性环境准备失败增加一次显式恢复额度：原始失败 action、request/receipt/diagnostic hashes 保持不可覆盖；授权与第二次 attempt 以 git-common-dir 共享的独占记录保存，删除活动状态、Task/Session/branch/worktree 轮换、A→B→A 或空提交不能恢复额度。第二次无论 PASS、失败、超时或中断都关闭该快照，候选 Delivery 只绑定真实 PASS 的 action。

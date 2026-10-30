@@ -22,6 +22,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install and verify Linux sandbox
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y bubblewrap
+          /usr/bin/bwrap --die-with-parent --new-session --unshare-all --share-net --proc /proc --dev /dev --ro-bind /usr /usr --ro-bind /bin /bin /bin/true
       - name: Bind tag to manifest version and Commit
         run: node scripts/release-contract.mjs check --phase tag --tag "$GITHUB_REF_NAME"
       - name: Full release gate
