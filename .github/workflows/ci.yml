@@ -62,11 +62,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install and verify Linux sandbox
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y bubblewrap
-          /usr/bin/bwrap --die-with-parent --new-session --unshare-all --share-net --proc /proc --dev /dev --ro-bind /usr /usr --ro-bind /bin /bin /bin/true
       - run: node scripts/node-test-runner.mjs
 
   python-regression:
@@ -95,3 +90,11 @@ jobs:
           node-version: 20
       - name: Native Node and CLI contract
         run: node --test scripts/test-setup.mjs scripts/test-release-contract.mjs scripts/test-cap-status-compact.mjs scripts/test-windows-support.mjs
+      - name: Sandboxed Provider integration
+        if: matrix.os == 'macos-latest'
+        run: |
+          sudo mkdir -p /usr/local/lib/cap-ci/bin
+          sudo cp "$(command -v node)" /usr/local/lib/cap-ci/bin/node
+          export PATH="/usr/local/lib/cap-ci/bin:$PATH"
+          node --input-type=module -e "import { inspectSandboxCapability } from './runtime/local-test-provider.mjs'; const sandbox = inspectSandboxCapability(); if (!sandbox.available) throw new Error(JSON.stringify(sandbox))"
+          node --test scripts/test-local-test-provider.mjs

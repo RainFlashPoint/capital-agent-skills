@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { lstat, mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, readlink, realpath, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { activationRuleBlock, activationRuleTargets, bootstrapLocalTestProvider, checkLocalTestProvider, checkPlatformConnection, checkPlatformHandshake, clientRestartNotice, codexConfigPath, cursorMcpConfigPath, hasActivationRule, hasCodexMcpConfig, hasCursorMcpConfig, hasSkillLink, inspectClaudeMcpConfig, inspectCodexMcpConfig, inspectCursorMcpConfig, inspectInstallationState, inspectInstallManifest, inspectLegacyCodexSkills, inspectLocalTestProvider, installActivationRule, installClaudeMcpConfig, installCodexMcpConfig, installCursorActivationRule, installCursorMcpConfig, installLocalTestProvider, installSkillLinks, installationNeedsAttention, isCompatibleLocalNode, isCompatibleMcpNode, legacySkillNames, migrateLegacyCodexSkills, minimumLocalNodeVersion, minimumMcpNodeVersion, normalizeServerUrl, parseSetupArgs, pollDeviceAuthorization, probeRemoteMcp, publicSkillNames, resolveSystemAddresses, skillTargets, systemCurlJson, writeInstallManifest } from './setup-lib.mjs'
@@ -34,12 +34,12 @@ test('requires the Node version needed by the fixed MCP runtime', () => {
   assert.equal(isCompatibleMcpNode('v24.14.0'),true)
 })
 test('uses the current Codex user skill discovery directory', () => {
-  assert.equal(skillTargets('/home/dev').codex, '/home/dev/.agents/skills')
-  assert.equal(activationRuleTargets('/home/dev').codex, '/home/dev/.codex/AGENTS.md')
-  assert.equal(codexConfigPath('/home/dev'), '/home/dev/.codex/config.toml')
-  assert.equal(skillTargets('/home/dev').cursor, '/home/dev/.cursor/skills')
-  assert.equal(activationRuleTargets('/home/dev').cursor, '/home/dev/.cursor/rules/capital-agent.mdc')
-  assert.equal(cursorMcpConfigPath('/home/dev'), '/home/dev/.cursor/mcp.json')
+  assert.equal(skillTargets('/home/dev').codex, join('/home/dev', '.agents', 'skills'))
+  assert.equal(activationRuleTargets('/home/dev').codex, join('/home/dev', '.codex', 'AGENTS.md'))
+  assert.equal(codexConfigPath('/home/dev'), join('/home/dev', '.codex', 'config.toml'))
+  assert.equal(skillTargets('/home/dev').cursor, join('/home/dev', '.cursor', 'skills'))
+  assert.equal(activationRuleTargets('/home/dev').cursor, join('/home/dev', '.cursor', 'rules', 'capital-agent.mdc'))
+  assert.equal(cursorMcpConfigPath('/home/dev'), join('/home/dev', '.cursor', 'mcp.json'))
 })
 test('installs native HTTP Codex MCP config without persisting the user key or replacing other config', async () => {
   const home = await mkdtemp(join(tmpdir(),'cap-codex-config-'))
@@ -421,7 +421,7 @@ test('installs only the cap public entry without replacing an existing directory
   await mkdir(join(target,'harvest-experience'), { recursive: true })
   assert.deepEqual(publicSkillNames, ['cap'])
   assert.deepEqual(await installSkillLinks(source,target), ['cap'])
-  assert.equal(await readlink(join(target,'cap')), join(source,'cap'))
+  assert.equal(await realpath(join(target,'cap')), await realpath(join(source,'cap')))
   assert.equal(await hasSkillLink(source,target), true)
   assert.equal((await lstat(join(target,'harvest-experience'))).isDirectory(), true)
   await assert.rejects(readlink(join(target,'cap-flow')))

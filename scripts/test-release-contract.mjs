@@ -20,7 +20,7 @@ test('maintenance profile requires explicit affected tests instead of automatic 
 })
 
 test('maintenance instructions reserve the full release gate for an explicit formal Skills release', async () => {
-  const contributing = await readFile(join(packageRoot, 'CONTRIBUTING.md'), 'utf8')
+  const contributing = await readFile(join(packageRoot, 'CONTRIBUTING.md'), 'utf8').then(text => text.replace(/\r\n/g, '\n'))
   const maintenance = contributing.match(/^## 普通维护\n([\s\S]*?)(?=^## )/m)?.[1] || ''
   for (const command of ['node --test', 'python3 -m unittest', 'bash scripts/validate-skills', 'git diff --check']) assert.ok(maintenance.includes(command), command)
   assert.doesNotMatch(maintenance, /scripts\/release-check|--stress|test-\*\.mjs/)
