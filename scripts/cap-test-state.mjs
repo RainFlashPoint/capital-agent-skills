@@ -2,6 +2,7 @@
 import { pathToFileURL } from 'node:url'
 import { parseJson } from '../runtime/ontology/json.mjs'
 import {
+  authorizeEnvironmentRetry,
   createTestImpact,
   freezeTestCandidate,
   inspectTestState,
@@ -11,7 +12,7 @@ export function parseArguments(argv) {
   const out = { operation: 'status', repo: '.', targetedCommands: [] }
   let index = 0
   if (argv[0] && !argv[0].startsWith('-')) out.operation = argv[index++]
-  if (!['impact', 'freeze', 'status'].includes(out.operation)) throw new Error('test_state_cli_operation')
+  if (!['impact', 'freeze', 'retry-environment', 'status'].includes(out.operation)) throw new Error('test_state_cli_operation')
   for (; index < argv.length; index += 1) {
     const key = argv[index]
     if (key === '--help' || key === '-h') { out.help = true; continue }
@@ -33,12 +34,13 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const options = parseArguments(argv)
     if (options.help) {
-      process.stdout.write('cap-test state machine\nUsage:\n  node scripts/cap-test-state.mjs impact --repo <repository> [--plan-mode change|baseline-audit] [--audit-scope full-chain] --changed-files <json-array> --active-checks <json-array> --targeted-command <json-argv> [--targeted-command <json-argv> ...] --full-command <json-argv>\n  node scripts/cap-test-state.mjs freeze --repo <repository>\n  node scripts/cap-test-state.mjs status --repo <repository>\n')
+      process.stdout.write('cap-test state machine\nUsage:\n  node scripts/cap-test-state.mjs impact --repo <repository> [--plan-mode change|baseline-audit] [--audit-scope full-chain] --changed-files <json-array> --active-checks <json-array> --targeted-command <json-argv> [--targeted-command <json-argv> ...] --full-command <json-argv>\n  node scripts/cap-test-state.mjs freeze --repo <repository>\n  node scripts/cap-test-state.mjs retry-environment --repo <repository>\n  node scripts/cap-test-state.mjs status --repo <repository>\n')
       return 0
     }
     let result
     if (options.operation === 'impact') result = await createTestImpact(options.repo, options)
     else if (options.operation === 'freeze') result = await freezeTestCandidate(options.repo)
+    else if (options.operation === 'retry-environment') result = await authorizeEnvironmentRetry(options.repo)
     else result = await inspectTestState(options.repo)
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
     return 0

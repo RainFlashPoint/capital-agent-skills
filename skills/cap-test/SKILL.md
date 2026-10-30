@@ -135,6 +135,7 @@ Commit / 源码指纹、`changed-files`、`active checks`、全部定向命令�
 
 ```text
 impact_ready → targeted_passed → candidate_frozen → full_passed | full_failed
+                                                     └→ environment_retry_ready → full_passed | full_failed
 ```
 
 硬状态机机械保证的是影响/测试计划的顺序、证据回验与 full 唯一消费；其中 `changed-files` 必须与
@@ -151,17 +152,26 @@ impact_ready → targeted_passed → candidate_frozen → full_passed | full_fai
 - 每条定向命令都必须通过 `scripts/cap-execute.mjs` 以 `--test-scope targeted` 在同一源码快照上真实执行；全部
   PASS 后才能冻结候选。冻结与最终 Gate 会回验对应 request / bundle / receipt，不能只改状态 JSON 自报 PASS。
 - 冻结通过 `scripts/cap-test-state.mjs` 完成。冻结前不得执行最终全量；冻结后不得继续追加定向命令。
-- 最终全量命令只能以 `--test-scope full` 执行一次。无论 PASS、失败或中断，这次尝试都已消耗；同一源码
+- 最终全量命令通常只能以 `--test-scope full` 执行一次。无论 PASS、失败或中断，首次尝试都已消耗；同一源码
   快照的独占消费记录保存在当前仓库 `git-common-dir` 下的 `capital-agent/test-full-attempts/`，由同仓全部
   worktree 共享。删除或重建活动状态、A→B→A 往返、重新登记影响分析、Task 切换、Retire、轮换
   Task/Session、分支改名、工作树路径变化或切到 sibling worktree 都不能绕过。
   消费键只绑定 Commit 与 index/worktree/untracked 内容指纹；Task/Session/branch/root 仍保留在执行证据和新鲜度检查中。
-  需要再跑时，先形成新的源码快照并重新做影响分析与定向回归。
+  除下述环境恢复例外外，需要再跑时必须先形成新的源码快照并重新做影响分析与定向回归。
+- 首次 full 的 canonical terminal evidence 若能由确定性白名单证明为环境准备阻塞，可显式执行
+  `cap-test-state retry-environment` 授权同一 Task、Session、branch、Commit、源码指纹和 full 命令的唯一一次恢复重试。
+  第一版只接受：执行器未能启动；依赖解析/制品仓库/DNS/网络/证书阻塞；沙箱/共享内存资源阻塞；以及
+  Node 诊断中缺失的外部包已在适用 `package.json` 声明、但安装树中不存在。相对源码模块、未声明包、
+  已安装包的缺失子路径、语法/类型/编译/AssertionError、业务错误、超时、输出上限、混合或未知诊断一律失败关闭。
+  Agent 不根据聊天或模型判断自签环境错误，也不自动安装依赖。
+- 环境授权和第二次 full 使用 git-common-dir 下独立的不可覆盖记录；首次失败 action、request/receipt/diagnostic hashes
+  始终保留。修复外部环境后，第二次 full 仍必须使用原命令且源码指纹不变；第二次无论 PASS、失败、超时或中断
+  都终止该快照，不能进行第三次。最终候选 Delivery 只绑定真正 PASS 的 action；授权本身不形成 PASS。
 - 若命令已原子写出 terminal `gate.json`，但进程在更新 test-state 前崩溃，状态读取会在 execution lock 下重新
   校验 pointer、envelope、receipt、reservation、命令、身份、源码快照与 hashes；全部一致时幂等补写终态，
   损坏或错绑证据失败关闭，不能把可编辑摘要当成恢复依据。
 - 冻结前必须按该项目正式门禁的已知耗时为最终全量配置足够的显式执行超时；不能让已知长时套件依赖本地记录器
-  的通用默认值。超时同样会消费唯一 full 尝试，不能用“只是超时”作为同快照重跑理由。
+  的通用默认值。首次超时不属于环境恢复白名单；第二次恢复尝试超时同样关闭该快照。
 - Task、Session、仓库、分支、Commit、源码指纹或记录器版本变化都会使旧状态和旧证据失效。
 - test 命令执行期间若源码发生变化，恢复动作必须先对新快照重新登记 impact，不能直接更换 Action ID 重跑旧计划。
 

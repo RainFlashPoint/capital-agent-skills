@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { compactExecutionResult } from '../runtime/execution/local-flow.mjs'
+import { compactExecutionResult, executionNextActions } from '../runtime/execution/local-flow.mjs'
 import { observeCommand } from '../runtime/execution/local-support.mjs'
 
 const sha = char => char.repeat(64)
@@ -101,6 +101,18 @@ test('failed execution falls back to bounded head and tail diagnostics', () => {
   assert.match(projected.diagnostic.stdout, /last assertion failed/)
   assert.match(projected.diagnostic.stderr, /REDACTED/)
   assert.doesNotMatch(projected.diagnostic.stderr, /sk-123456789012345/)
+})
+
+test('environment retry projections distinguish authorization from the one permitted rerun', () => {
+  assert.deepEqual(executionNextActions('test_environment_retry_available', { stage: 'test', action: 'test' }).map(action => [action.kind, action.requiresSourceChange]), [
+    ['authorize_environment_retry', false],
+  ])
+  assert.deepEqual(executionNextActions('test_environment_retry_ready', { stage: 'test', action: 'test' }).map(action => [action.kind, action.requiresSourceChange]), [
+    ['run_environment_retry', false],
+  ])
+  assert.deepEqual(executionNextActions('test_full_failed', { stage: 'test', action: 'test' }).map(action => [action.kind, action.requiresSourceChange]), [
+    ['change_source_then_refresh_test_impact', true],
+  ])
 })
 
 test('source drift and execution failures always restore diagnostics', () => {

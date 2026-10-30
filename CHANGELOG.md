@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.14.1
+
+- `cap-test` 为首次 full 的确定性环境准备失败增加一次显式恢复额度：原始失败 action、request/receipt/diagnostic hashes 保持不可覆盖；授权与第二次 attempt 以 git-common-dir 共享的独占记录保存，删除活动状态、Task/Session/branch/worktree 轮换、A→B→A 或空提交不能恢复额度。第二次无论 PASS、失败、超时或中断都关闭该快照，候选 Delivery 只绑定真实 PASS 的 action。
+- 环境分类保持失败关闭：允许执行器未能启动、依赖解析/制品仓库/DNS/网络/证书、沙箱/共享内存，以及 manifest 已声明但安装树中不存在的 Node 外部依赖；相对模块、未声明包、已安装包缺失子路径、语法/类型/编译/AssertionError、业务、混合或未知错误均要求源码变化。分类从 canonical hashed evidence 与 manifest 重算，手工改状态或授权记录不能自签。
+- `runLocalAction`、compact、status 与 nextActions 统一投影环境恢复状态，不再对同一次 full 失败同时建议“直接重跑”和“必须改源码”；新增 `cap-test-state retry-environment` 显式授权入口，不自动安装依赖。
+
 ## 0.14.0
 
 - `cap-test` 新增仅作用于本地 `stage=test` 的硬状态机：先登记影响/测试计划和互不重叠的定向/full 命令，定向回归全部通过且 canonical gate evidence 回验有效后冻结候选，再以只绑定 Commit 与 index/worktree/untracked 内容的消费指纹和任务生命周期外的独占账本约束同一源码快照唯一一次最终全量；活动 Task 内单独删除状态或账本仍会失败关闭，源码 A→B→A 往返、Task 切换/Retire、轮换 Task/Session、分支改名或工作树路径变化也不能重置次数，崩溃恢复沿用既有 execution owner 锁，已知长时正式门禁须在冻结前配置足够的显式超时且超时同样消费 full 尝试。状态机证明登记计划的顺序与证据，计划语义完整性仍由 cap-test 路由与评审负责；implement、release、CI、Server Harness 与平台 Test Action 保持原行为。

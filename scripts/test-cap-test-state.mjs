@@ -4,12 +4,13 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmod, lstat, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { digest } from '../runtime/ontology/schema.mjs'
 import {
   createTestImpact,
   freezeTestCandidate,
   inspectTestState,
 } from '../runtime/execution/test-state.mjs'
-import { executionNextActions, inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
+import { compactExecutionResult, executionNextActions, inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { executionFailurePayload } from './cap-execute.mjs'
 import { switchTaskState } from './cap-task-state-switch.mjs'
 import { parseArguments as parseTestStateArguments } from './cap-test-state.mjs'
@@ -79,6 +80,10 @@ test('impact CLI preserves explicit baseline-audit scope', () => {
   assert.equal(options.planMode, 'baseline-audit')
   assert.equal(options.auditScope, 'full-chain')
   assert.deepEqual(options.changedFiles, [])
+})
+
+test('retry CLI exposes an explicit authorization operation', () => {
+  assert.equal(parseTestStateArguments(['retry-environment', '--repo', '/tmp/example']).operation, 'retry-environment')
 })
 
 test('targeted test is blocked before impact analysis and command is not executed', async t => {
@@ -357,6 +362,151 @@ test('a failed full attempt is also consumed and cannot be repeated', async t =>
   assert.equal(status.reason, 'test_full_failed')
   assert.equal(status.nextActions[0].kind, 'change_source_then_refresh_test_impact')
   assert.equal(status.nextActions[0].requiresSourceChange, true)
+})
+
+async function environmentFixture(t, { script = "require('react')", dependency = 'react' } = {}) {
+  const root = await fixture(t)
+  await writeFile(join(root, '.gitignore'), '.cap/\nnode_modules/\n')
+  await mkdir(join(root, 'web'), { recursive: true })
+  await writeFile(join(root, 'web/package.json'), JSON.stringify({ dependencies: { [dependency]: '1.0.0' } }))
+  await writeFile(join(root, 'web/check.cjs'), script)
+  git(root, 'add', '.gitignore', 'web')
+  git(root, 'commit', '-qm', 'declare fixture dependency')
+  const command = [process.execPath, 'web/check.cjs']
+  await createTestImpact(root, {
+    changedFiles: ['.gitignore', 'source.txt', 'web/check.cjs', 'web/package.json'],
+    activeChecks: ['logic'], targetedCommands: [passing], fullCommand: command,
+  })
+  await runLocalAction(root, { environment: {}, testScope: 'targeted', command: passing })
+  await freezeTestCandidate(root)
+  const first = await runLocalAction(root, { environment: {}, testScope: 'full', command })
+  return { root, command, first }
+}
+
+test('declared missing dependency permits exactly one explicit environment retry and preserves both actions', async t => {
+  const { authorizeEnvironmentRetry } = await import('../runtime/execution/test-state.mjs')
+  assert.equal(typeof authorizeEnvironmentRetry, 'function', 'environment retry authorization is implemented')
+  const { root, command, first } = await environmentFixture(t)
+  const original = JSON.parse(await readFile(join(root, '.cap/execution/test-state.json'), 'utf8')).fullAttempt
+  const firstEvidence = await readFile(join(first.artifactDir, 'gate.json'), 'utf8')
+  assert.equal(first.gate.nextActions[0].kind, 'authorize_environment_retry')
+  assert.equal(first.gate.nextActions[0].requiresSourceChange, false)
+  assert.equal(compactExecutionResult(first).gate.nextActions[0].kind, 'authorize_environment_retry')
+  assert.equal((await inspectLocalExecution(root)).reason, 'test_environment_retry_available')
+  const authorized = await authorizeEnvironmentRetry(root)
+  assert.equal(authorized.phase, 'environment_retry_ready')
+  await assert.rejects(authorizeEnvironmentRetry(root), /test_environment_retry_already_authorized/)
+  await mkdir(join(root, 'web/node_modules/react'), { recursive: true })
+  await writeFile(join(root, 'web/node_modules/react/index.js'), 'module.exports = {}\n')
+  const retry = await runLocalAction(root, { environment: {}, testScope: 'full', command })
+  assert.equal(retry.gate.passed, true)
+  const state = await inspectTestState(root)
+  assert.equal(state.phase, 'full_passed')
+  assert.deepEqual(state.fullAttempt, original)
+  assert.equal(state.environmentRetry.attempt.actionId, retry.envelope.id)
+  assert.notEqual(retry.envelope.id, first.envelope.id)
+  assert.equal(await readFile(join(first.artifactDir, 'gate.json'), 'utf8'), firstEvidence)
+  assert.equal((await inspectLocalExecution(root)).passed, true)
+  await assert.rejects(runLocalAction(root, { environment: {}, testScope: 'full', command }), /test_full_already_attempted/)
+})
+
+test('environment retry fails closed for relative, undeclared, assertion and unknown failures', async t => {
+  const { authorizeEnvironmentRetry } = await import('../runtime/execution/test-state.mjs')
+  assert.equal(typeof authorizeEnvironmentRetry, 'function')
+  for (const script of ["require('./absent.cjs')", "require('not-declared-cap-fixture')", "require('node:assert').equal(1, 2)", "throw new Error('business failure')", 'process.exit(7)', "console.error('connection refused'); throw new TypeError('bug')"]) {
+    const { root, first } = await environmentFixture(t, { script })
+    await assert.rejects(authorizeEnvironmentRetry(root), /test_environment_retry_not_allowed/)
+    assert.equal(first.gate.nextActions[0].requiresSourceChange, true)
+    assert.equal((await inspectLocalExecution(root)).nextActions[0].requiresSourceChange, true)
+  }
+})
+
+test('second environment failure consumes retry even if active state is deleted or rewound', async t => {
+  const { authorizeEnvironmentRetry } = await import('../runtime/execution/test-state.mjs')
+  assert.equal(typeof authorizeEnvironmentRetry, 'function')
+  const { root, command } = await environmentFixture(t)
+  await authorizeEnvironmentRetry(root)
+  const authorized = await readFile(join(root, '.cap/execution/test-state.json'), 'utf8')
+  const retry = await runLocalAction(root, { environment: {}, testScope: 'full', command })
+  assert.equal(retry.gate.passed, false)
+  assert.equal(retry.gate.nextActions[0].requiresSourceChange, true)
+  await assert.rejects(authorizeEnvironmentRetry(root), /test_environment_retry_already_authorized/)
+  await writeFile(join(root, '.cap/execution/test-state.json'), authorized)
+  await assert.rejects(runLocalAction(root, { environment: {}, testScope: 'full', command }), /test_full_already_attempted/)
+  await rm(join(root, '.cap/execution/test-state.json'))
+  await assert.rejects(impact(root), /test_full_already_attempted/)
+})
+
+test('environment authorization does not survive source, command or session drift', async t => {
+  const { authorizeEnvironmentRetry } = await import('../runtime/execution/test-state.mjs')
+  assert.equal(typeof authorizeEnvironmentRetry, 'function')
+  const { root, command } = await environmentFixture(t)
+  await authorizeEnvironmentRetry(root)
+  await assert.rejects(runLocalAction(root, { environment: {}, testScope: 'full', command: fullPassing }), /test_full_command_unplanned/)
+  await writeFile(join(root, 'source.txt'), 'changed after authorization\n')
+  await assert.rejects(runLocalAction(root, { environment: {}, testScope: 'full', command }), /test_source_changed/)
+  await writeFile(join(root, 'source.txt'), 'feature\n')
+  const path = join(root, '.cap/STATE.md')
+  await writeFile(path, (await readFile(path, 'utf8')).replace('session-test-state', 'another-session'))
+  await assert.rejects(runLocalAction(root, { environment: {}, testScope: 'full', command }), /test_identity_changed/)
+})
+
+test('missing executor and declared node_modules tool path are deterministic environment failures', async t => {
+  const { authorizeEnvironmentRetry } = await import('../runtime/execution/test-state.mjs')
+  assert.equal(typeof authorizeEnvironmentRetry, 'function')
+
+  const missingRoot = await fixture(t)
+  const missingCommand = ['cap-fixture-executable-that-does-not-exist']
+  await createTestImpact(missingRoot, { changedFiles: ['source.txt'], activeChecks: ['logic'], targetedCommands: [passing], fullCommand: missingCommand })
+  await runLocalAction(missingRoot, { environment: {}, testScope: 'targeted', command: passing })
+  await freezeTestCandidate(missingRoot)
+  await runLocalAction(missingRoot, { environment: {}, testScope: 'full', command: missingCommand })
+  assert.equal((await authorizeEnvironmentRetry(missingRoot)).phase, 'environment_retry_ready')
+
+  const root = await fixture(t)
+  await mkdir(join(root, 'web'), { recursive: true })
+  await writeFile(join(root, 'web/package.json'), JSON.stringify({ devDependencies: { typescript: '5.0.0' } }))
+  git(root, 'add', 'web/package.json')
+  git(root, 'commit', '-qm', 'declare typescript tool')
+  const command = [process.execPath, join(root, 'web/node_modules/typescript/lib/typescript.js')]
+  await createTestImpact(root, { changedFiles: ['source.txt', 'web/package.json'], activeChecks: ['logic'], targetedCommands: [passing], fullCommand: command })
+  await runLocalAction(root, { environment: {}, testScope: 'targeted', command: passing })
+  await freezeTestCandidate(root)
+  const first = await runLocalAction(root, { environment: {}, testScope: 'full', command })
+  assert.equal(first.gate.nextActions[0].kind, 'authorize_environment_retry', JSON.stringify(first.diagnostic))
+  const state = await authorizeEnvironmentRetry(root)
+  assert.equal(state.environmentRetry.authorization.classification.dependencies[0].packageName, 'typescript')
+})
+
+test('timed-out environment retry consumes the only recovery attempt', async t => {
+  const { authorizeEnvironmentRetry } = await import('../runtime/execution/test-state.mjs')
+  assert.equal(typeof authorizeEnvironmentRetry, 'function')
+  const { root, command } = await environmentFixture(t, { script: "require('react'); setTimeout(() => {}, 1000)" })
+  await authorizeEnvironmentRetry(root)
+  await mkdir(join(root, 'web/node_modules/react'), { recursive: true })
+  await writeFile(join(root, 'web/node_modules/react/index.js'), 'module.exports = {}\n')
+  const retry = await runLocalAction(root, { environment: {}, testScope: 'full', command, timeoutMs: 10 })
+  assert.equal(retry.receipt.status, 'timed_out')
+  assert.equal((await inspectTestState(root)).phase, 'full_failed')
+  await assert.rejects(runLocalAction(root, { environment: {}, testScope: 'full', command }), /test_full_already_attempted/)
+})
+
+test('edited retry authorization cannot self-certify an environment failure', async t => {
+  const { authorizeEnvironmentRetry } = await import('../runtime/execution/test-state.mjs')
+  const { root } = await environmentFixture(t)
+  const authorized = await authorizeEnvironmentRetry(root)
+  const ledgerRoot = join(root, git(root, 'rev-parse', '--git-common-dir'), 'capital-agent/test-full-attempts')
+  const path = join(ledgerRoot, `${authorized.consumptionFingerprint}.environment.json`)
+  const forged = { ...authorized.environmentRetry.authorization, classification: { category: 'artifact_network' } }
+  await writeFile(path, JSON.stringify(forged))
+  const statePath = join(root, '.cap/execution/test-state.json')
+  const state = JSON.parse(await readFile(statePath, 'utf8'))
+  state.environmentRetry.authorization = forged
+  state.environmentRetry.authorizationHash = digest(forged)
+  await writeFile(statePath, JSON.stringify(state))
+  const inspected = await inspectTestState(root)
+  assert.equal(inspected.valid, false)
+  assert.equal(inspected.reason, 'test_environment_retry_evidence_invalid')
 })
 
 test('full-attempt ledger survives state deletion and A-to-B-to-A source changes', async t => {

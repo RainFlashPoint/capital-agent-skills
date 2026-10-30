@@ -2,7 +2,7 @@
 
 把 Coding Agent 的需求、实现、测试、评审、发布和经验复用变成一条可恢复、可验证、可移植的研发主线。
 
-<!-- release-version: 0.14.0 -->
+<!-- release-version: 0.14.1 -->
 
 [![CI](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml)
 [![Release Check](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml)
@@ -10,7 +10,7 @@
 
 ## 公开状态与证据
 
-当前候选版本：`v0.14.0`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
+当前候选版本：`v0.14.1`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
 
 公开证据按入口区分：
 
@@ -23,7 +23,7 @@
 | GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
 | Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
-截至 2026-10-27，本轮发布前公开 `main`、Git Tag 与 GitHub Latest Release 的真实状态仍需在推送后回读；`v0.14.0` 只有在本地门禁、独立复核、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
+截至 2026-10-30，本轮发布前公开 `main`、Git Tag 与 GitHub Latest Release 的真实状态仍需在推送后回读；`v0.14.1` 只有在本地门禁、独立复核、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
 
 普通维护按影响面选择定向测试，例：修改版本契约时执行对应 Node 测试；修改 Python 工具时选择对应 unittest。测试文件需按实际改动替换，未涉及的语言无需运行：
 
@@ -200,7 +200,7 @@ cap（唯一公开入口）
 
 ## 当前版本摘要
 
-`v0.14.0` 为本地 `cap-test` 增加确定性硬状态机：已登记的影响/测试计划、定向验证、候选冻结和最终全量按脚本状态顺序推进，并以同仓 worktree 共享、只绑定 Commit 与源码内容的消费账本限制同一快照只执行一次最终全量。terminal evidence 与状态更新之间的崩溃窗口可经严格重验后幂等恢复；clean-tree 现状审计必须显式声明 `baseline-audit + full-chain journey`，普通变更仍要求非空改动集。实现继续复用 canonical execution evidence；计划内容的语义完整性仍由 cap-test 路由与评审负责，且不改变 implement、release、CI、Server Harness 或平台 Test Action。
+`v0.14.1` 在 `v0.14.0` 的本地 `cap-test` 硬状态机上增加失败关闭的环境恢复通道：首次 full 的 canonical evidence 只有在确定性证明为执行器、依赖解析/网络/证书、沙箱/共享内存，或“manifest 已声明但尚未安装的 Node 外部依赖”时，才能显式授权同一候选、同一命令的一次恢复重试。首次失败证据与第二次 action 分开保留；代码/断言/未知失败、身份或源码漂移、第二次失败/超时/中断仍关闭该快照。候选 Delivery 只绑定真实 PASS 的 action，不因授权本身放行。
 
 历史版本与完整变更只维护在 [CHANGELOG.md](CHANGELOG.md)。发布步骤见 [docs/releasing.md](docs/releasing.md)。
 
