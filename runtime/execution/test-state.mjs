@@ -322,6 +322,7 @@ async function verifyRetryRecords(repo, state, current = null) {
   // revalidation must not fail merely because the operator has since installed it.
   const classification = await classifyEnvironmentFailure(repo, first, { requireMissingInstall: false })
   if (!classification || !same(classification, authorization.classification)) fail('test_environment_retry_evidence_invalid')
+  if (state.environmentRetry.attempt?.status !== 'running') await verifyProjectedTerminalResult(repo, state)
 }
 
 async function validateRecorderMigration(repo, current, state, migration, { requireLatest = true } = {}) {
@@ -500,6 +501,19 @@ async function terminalFullResult(repo, state, actionId, { requireLatest = true,
     diagnostic: evidence.diagnostic,
     finishedAt: receipt.finishedAt,
   }
+}
+
+async function verifyProjectedTerminalResult(repo, state, { requireLatest = false } = {}) {
+  const attempt = finalAttempt(state)
+  if (!attempt || attempt.status === 'running') return null
+  const result = await terminalFullResult(repo, state, attempt.actionId, { requireLatest })
+  if (
+    result.passed !== (attempt.status === 'passed')
+    || result.requestHash !== attempt.requestHash
+    || result.receiptHash !== attempt.receiptHash
+    || result.resultStatus !== attempt.resultStatus
+  ) fail('test_full_evidence_invalid')
+  return result
 }
 
 async function anchorFullTerminal(repo, state, reservation, result) {
@@ -813,10 +827,12 @@ export async function completeTestRun(repoCandidate = '.', { scope, commandHash,
   if (state.environmentRetry?.attempt?.actionId === actionId) {
     const retry = await retryRecord(repo, state, 'retry')
     if (!retry || retry.actionId !== actionId || retry.commandHash !== commandHash || retry.authorizationHash !== state.environmentRetry.authorizationHash) fail('test_full_reservation_mismatch')
+    const terminal = await terminalFullResult(repo, state, actionId)
+    if (terminal.requestHash !== requestHash || terminal.receiptHash !== receiptHash || terminal.passed !== passed || terminal.resultStatus !== resultStatus) fail('test_full_evidence_invalid')
     return writeState(repo, {
       ...state,
       phase: passed ? 'full_passed' : 'full_failed',
-      environmentRetry: { ...state.environmentRetry, attempt: { ...state.environmentRetry.attempt, status: passed ? 'passed' : 'failed', requestHash, receiptHash, resultStatus, finishedAt } },
+      environmentRetry: { ...state.environmentRetry, attempt: { ...state.environmentRetry.attempt, status: passed ? 'passed' : 'failed', requestHash, receiptHash, resultStatus, finishedAt: terminal.finishedAt } },
       updatedAt: finishedAt,
     })
   }
@@ -887,5 +903,10 @@ export async function testExecutionGate(repoCandidate = '.', request = {}) {
   }
   if (state.phase !== 'full_passed') return { passed: false, reason: `test_${state.phase}`, state }
   if (request.testScope !== 'full' || finalAttempt(state)?.actionId !== request.id) return { passed: false, reason: 'test_full_evidence_mismatch', state }
+  try {
+    await verifyProjectedTerminalResult(await repoRoot(repoCandidate), state, { requireLatest: true })
+  } catch {
+    return { passed: false, reason: 'test_full_evidence_invalid', state }
+  }
   return { passed: true, reason: 'verified_test_sequence', state }
 }

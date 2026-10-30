@@ -12,7 +12,8 @@
   已完成但 anchor 尚未落盘时，也会在中断协调中补齐相同证据根后再允许环境授权，不再永久吞掉唯一额度或留下半成品。
   历史 recorder hash 由归档 Commit 的真实实现推导，但该实现尚未生成 terminal anchor，因此当前只可诊断、不可迁移；
   即使一致性重写 gate/state/reservation/terminal 也不能事后制造资格。环境分类同时拒绝无 `Error:` 前缀的业务失败与
-  bwrap、网络等环境特征混合出现，历史 Node 缺包诊断也不允许迁移。
+  bwrap、网络等环境特征混合出现，历史 Node 缺包诊断也不允许迁移。第二次环境重试的终态投影现在会在完成、状态读取
+  与最终 Gate 阶段重新核对 canonical terminal evidence，失败重试不能再通过单独篡改 `test-state.json` 伪装成 PASS。
 
 ## 0.14.2
 

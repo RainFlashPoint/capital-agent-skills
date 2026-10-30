@@ -11,6 +11,7 @@ import {
   authorizeEnvironmentRetry,
   freezeTestCandidate,
   inspectTestState,
+  testExecutionGate,
 } from '../runtime/execution/test-state.mjs'
 import { compactExecutionResult, executionNextActions, inspectLocalExecution, recoverLocalExecution, runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { executionFailurePayload } from './cap-execute.mjs'
@@ -422,6 +423,30 @@ test('declared missing dependency permits exactly one explicit environment retry
   assert.equal(await readFile(join(first.artifactDir, 'gate.json'), 'utf8'), firstEvidence)
   assert.equal((await inspectLocalExecution(root)).passed, true)
   await assert.rejects(runLocalAction(root, { environment: {}, testScope: 'full', command }), /test_full_already_attempted/)
+})
+
+test('failed environment retry cannot be promoted by editing only the state projection', async t => {
+  const { root, command } = await environmentFixture(t)
+  await authorizeEnvironmentRetry(root)
+  const retry = await runLocalAction(root, { environment: {}, testScope: 'full', command })
+  assert.equal(retry.gate.passed, false)
+
+  const statePath = join(root, '.cap/execution/test-state.json')
+  const state = JSON.parse(await readFile(statePath, 'utf8'))
+  assert.equal(state.phase, 'full_failed')
+  state.phase = 'full_passed'
+  state.environmentRetry.attempt.status = 'passed'
+  state.environmentRetry.attempt.resultStatus = 'passed'
+  await writeFile(statePath, JSON.stringify(state))
+
+  const inspected = await inspectTestState(root)
+  assert.equal(inspected.valid, false)
+  assert.equal(inspected.reason, 'test_full_evidence_invalid')
+  const sequenceGate = await testExecutionGate(root, { testScope: 'full', id: retry.envelope.id })
+  assert.equal(sequenceGate.passed, false)
+  assert.equal(sequenceGate.reason, 'test_full_evidence_invalid')
+  const gate = await inspectLocalExecution(root)
+  assert.equal(gate.passed, false)
 })
 
 test('environment retry restores a valid authorization sidecar after projection write interruption', async t => {
