@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.3
+
 - 修复 CI 测试的跨平台契约：无可用 OS 沙箱时明确跳过依赖沙箱的 Provider 集成，独立验证 missing/unusable 的 remote-only 降级；macOS CI 必须通过预检并执行真实沙箱集成，Linux 门禁移除宿主拒绝 uid map 时必然失败的强制准备步骤。文档检查统一 LF，路径检查采用本机路径和真实目标，compact CLI 使用隔离 fixture，避免宿主 Task 状态污染。
 - 为 `cap-test` 增加旧 recorder 失败回执的受控兼容检查：只有归档实现能证明旧 recorder 在原执行时产出可信 anchor，
   才可能通过显式 `--migrate-recorder` 恢复一次既有环境重试资格；迁移必须命中原执行时独占写入、绑定 recorder 与
