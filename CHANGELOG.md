@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- 修复 CI 测试的跨平台契约：无可用 OS 沙箱时明确跳过依赖沙箱的 Provider 集成，独立验证 missing/unusable 的 remote-only 降级；macOS CI 执行真实沙箱集成。文档检查统一 LF，路径检查采用本机路径和真实目标，compact CLI 使用隔离 fixture，避免宿主 Task 状态污染。
+- 修复 CI 测试的跨平台契约：无可用 OS 沙箱时明确跳过依赖沙箱的 Provider 集成，独立验证 missing/unusable 的 remote-only 降级；macOS CI 必须通过预检并执行真实沙箱集成，Linux 门禁移除宿主拒绝 uid map 时必然失败的强制准备步骤。文档检查统一 LF，路径检查采用本机路径和真实目标，compact CLI 使用隔离 fixture，避免宿主 Task 状态污染。
 
 ## 0.14.2
 
