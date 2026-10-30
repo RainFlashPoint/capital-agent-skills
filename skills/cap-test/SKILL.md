@@ -167,6 +167,14 @@ impact_ready → targeted_passed → candidate_frozen → full_passed | full_fai
 - 环境授权和第二次 full 使用 git-common-dir 下独立的不可覆盖记录；首次失败 action、request/receipt/diagnostic hashes
   始终保留。修复外部环境后，第二次 full 仍必须使用原命令且源码指纹不变；第二次无论 PASS、失败、超时或中断
   都终止该快照，不能进行第三次。最终候选 Delivery 只绑定真正 PASS 的 action；授权本身不形成 PASS。
+- Skills 升级后若旧状态只因记录器版本变化而不可读，可显式使用
+  `cap-test-state retry-environment --migrate-recorder` 做一次兼容迁移。迁移只接受白名单中的已知旧记录器，且
+  必须重新校验同一 Task/Session/branch/Commit、源码与命令指纹、共享 full reservation，以及原执行完成时在
+  git-common-dir 独占写入的 terminal anchor；anchor 必须绑定旧 recorder、request、receipt、diagnostic hashes 和
+  终态。没有该原始 anchor 的既有证据失败关闭，不能事后从可编辑 gate/state 补造。协议和 ontology 必须不变。
+  原始 gate/receipt 不改写，迁移只写独立审计记录，并按原规则写入环境重试授权。历史 Node missing-package 诊断
+  无法证明失败当时安装树确实缺少包根，因此不属于迁移白名单；即使当前补齐或删除依赖，也不能反向改变历史分类。
+  截断诊断、未知/代码失败、身份或源码漂移、证据篡改及未知旧版本一律拒绝。
 - 若命令已原子写出 terminal `gate.json`，但进程在更新 test-state 前崩溃，状态读取会在 execution lock 下重新
   校验 pointer、envelope、receipt、reservation、命令、身份、源码快照与 hashes；全部一致时幂等补写终态，
   损坏或错绑证据失败关闭，不能把可编辑摘要当成恢复依据。
