@@ -95,3 +95,8 @@ jobs:
           node-version: 20
       - name: Native Node and CLI contract
         run: node --test scripts/test-setup.mjs scripts/test-release-contract.mjs scripts/test-cap-status-compact.mjs scripts/test-windows-support.mjs
+      - name: Sandboxed Provider integration
+        if: matrix.os == 'macos-latest'
+        run: |
+          node --input-type=module -e "import { inspectSandboxCapability } from './runtime/local-test-provider.mjs'; const sandbox = inspectSandboxCapability(); if (!sandbox.available) throw new Error(JSON.stringify(sandbox))"
+          node --test scripts/test-local-test-provider.mjs

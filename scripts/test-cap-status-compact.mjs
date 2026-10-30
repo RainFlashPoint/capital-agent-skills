@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { compactCapStatus, statusDecisionSignature } from './cap-status.mjs'
@@ -161,7 +162,7 @@ test('mock A/B cuts normal status JSON by at least 50 percent on average', t => 
 })
 
 test('public Skill entry stays lightweight and keeps the compact and fallback contract', async () => {
-  const skill = await readFile(join(root, 'skills/cap/SKILL.md'), 'utf8')
+  const skill = await readFile(join(root, 'skills/cap/SKILL.md'), 'utf8').then(text => text.replace(/\r\n/g, '\n'))
   assert.ok(Buffer.byteLength(skill) <= 9000, `cap/SKILL.md is ${Buffer.byteLength(skill)} bytes`)
   assert.match(skill, /cap-status\.mjs.*--compact/)
   assert.match(skill, /full-fallback/)
@@ -171,14 +172,17 @@ test('public Skill entry stays lightweight and keeps the compact and fallback co
   assert.match(skill, /create_or_attach_task[\s\S]{0,500}不适用于[\s\S]{0,300}restart_required[\s\S]{0,300}local_explicit[\s\S]{0,300}local_fallback_explicit/)
 })
 
-test('CLI --compact emits the compact JSON contract without requiring --json', () => {
-  const output = execFileSync(process.execPath, [join(root, 'scripts/cap-status.mjs'), root, '--compact', '--mcp-runtime', 'missing', '--allow-local-once'], {
+test('CLI --compact emits the compact JSON contract without requiring --json', async t => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-compact-cli-'))
+  t.after(() => rm(repo, { recursive: true, force: true }))
+  execFileSync('git', ['init', repo], { stdio: 'ignore' })
+  const output = execFileSync(process.execPath, [join(root, 'scripts/cap-status.mjs'), repo, '--compact', '--mcp-runtime', 'missing', '--allow-local-once'], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+    env: { ...process.env, CAPITAL_AGENT_MODE: 'local', CAPITAL_AGENT_SESSION_LOCK_DIR: join(repo, 'session-locks') },
   })
   const status = JSON.parse(output)
   assert.equal(status.outputMode, 'compact')
-  assert.equal(status.repository.root, root)
+  assert.equal(await realpath(status.repository.root), await realpath(repo))
   assert.ok(status.workflow?.action)
 })

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 修复 CI 测试的跨平台契约：无可用 OS 沙箱时明确跳过依赖沙箱的 Provider 集成，独立验证 missing/unusable 的 remote-only 降级；macOS CI 执行真实沙箱集成。文档检查统一 LF，路径检查采用本机路径和真实目标，compact CLI 使用隔离 fixture，避免宿主 Task 状态污染。
+
 ## 0.14.2
 
 - 修复正式发布与 Linux Node 回归环境：GitHub Ubuntu Job 在执行 Provider 测试前安装并实际探测 bubblewrap，确保缺失或不可用的 OS 沙箱在准备阶段明确失败，而不是让整组 Provider 用例静默降级为 `remote-only`。Provider 的隔离、领取与证据契约不变；已公开的 `v0.14.1` 标签保持不可变。
