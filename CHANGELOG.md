@@ -3,10 +3,14 @@
 ## Unreleased
 
 - 修复 CI 测试的跨平台契约：无可用 OS 沙箱时明确跳过依赖沙箱的 Provider 集成，独立验证 missing/unusable 的 remote-only 降级；macOS CI 必须通过预检并执行真实沙箱集成，Linux 门禁移除宿主拒绝 uid map 时必然失败的强制准备步骤。文档检查统一 LF，路径检查采用本机路径和真实目标，compact CLI 使用隔离 fixture，避免宿主 Task 状态污染。
-- 为 `cap-test` 增加旧 recorder 失败回执的受控兼容迁移：仅在协议/ontology 不变、同一候选的完整环境证据可重验时，
-  通过显式 `--migrate-recorder` 恢复一次既有环境重试资格；迁移必须命中原执行时独占写入、绑定 recorder 与
-  request/receipt/diagnostic hashes 的共享 terminal anchor，缺失或不一致一律失败关闭。历史 Node 缺包诊断不再
-  允许迁移，避免把已安装包的错误子路径或事后安装状态误判成原始环境阻塞。
+- 为 `cap-test` 增加旧 recorder 失败回执的受控兼容检查：只有归档实现能证明旧 recorder 在原执行时产出可信 anchor，
+  才可能通过显式 `--migrate-recorder` 恢复一次既有环境重试资格；迁移必须命中原执行时独占写入、绑定 recorder 与
+  full request/receipt/diagnostic hashes、终态及完整 targeted 证据根的共享 reservation/terminal anchor，缺失或不一致
+  一律失败关闭。授权侧车已写但活动状态尚未更新的崩溃窗口会在完整重验后幂等恢复；当前 recorder 的 terminal gate
+  已完成但 anchor 尚未落盘时，也会在中断协调中补齐相同证据根后再允许环境授权，不再永久吞掉唯一额度或留下半成品。
+  历史 recorder hash 由归档 Commit 的真实实现推导，但该实现尚未生成 terminal anchor，因此当前只可诊断、不可迁移；
+  即使一致性重写 gate/state/reservation/terminal 也不能事后制造资格。环境分类同时拒绝无 `Error:` 前缀的业务失败与
+  bwrap、网络等环境特征混合出现，历史 Node 缺包诊断也不允许迁移。
 
 ## 0.14.2
 

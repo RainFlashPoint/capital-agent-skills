@@ -165,13 +165,21 @@ impact_ready → targeted_passed → candidate_frozen → full_passed | full_fai
   已安装包的缺失子路径、语法/类型/编译/AssertionError、业务错误、超时、输出上限、混合或未知诊断一律失败关闭。
   Agent 不根据聊天或模型判断自签环境错误，也不自动安装依赖。
 - 环境授权和第二次 full 使用 git-common-dir 下独立的不可覆盖记录；首次失败 action、request/receipt/diagnostic hashes
-  始终保留。修复外部环境后，第二次 full 仍必须使用原命令且源码指纹不变；第二次无论 PASS、失败、超时或中断
-  都终止该快照，不能进行第三次。最终候选 Delivery 只绑定真正 PASS 的 action；授权本身不形成 PASS。
+  始终保留。授权侧车先落盘、活动 test-state 投影尚未更新时，下一次显式授权必须完整回验原 reservation、
+  targeted evidence root、terminal anchor、首次失败证据和环境分类，再幂等恢复 `environment_retry_ready`；不能因崩溃窗口
+  永久消耗额度，也不能只凭侧车存在直接放行。修复外部环境后，第二次 full 仍必须使用原命令且源码指纹不变；
+  第二次无论 PASS、失败、超时或中断都终止该快照，不能进行第三次。最终候选 Delivery 只绑定真正 PASS 的 action；
+  授权本身不形成 PASS。
 - Skills 升级后若旧状态只因记录器版本变化而不可读，可显式使用
-  `cap-test-state retry-environment --migrate-recorder` 做一次兼容迁移。迁移只接受白名单中的已知旧记录器，且
+  `cap-test-state retry-environment --migrate-recorder` 请求兼容迁移。迁移只接受白名单中**经归档实现证明会在原执行时
+  产出可信 anchor** 的旧记录器，且
   必须重新校验同一 Task/Session/branch/Commit、源码与命令指纹、共享 full reservation，以及原执行完成时在
-  git-common-dir 独占写入的 terminal anchor；anchor 必须绑定旧 recorder、request、receipt、diagnostic hashes 和
-  终态。没有该原始 anchor 的既有证据失败关闭，不能事后从可编辑 gate/state 补造。协议和 ontology 必须不变。
+  git-common-dir 独占写入的 terminal anchor；full reservation 与 anchor 必须共同绑定按命令稳定排序的
+  targeted command/action/request/receipt/diagnostic 证据根，以及旧 recorder、full request/receipt/diagnostic hashes 和
+  终态。迁移和中断恢复都必须重新计算并精确比较该根。没有这些原执行时 anchor 的既有证据失败关闭，不能事后从
+  可编辑 gate/state 补造。白名单 recorder digest 对应归档 Commit `41a839af98dba01edb20902256f0a153f83451e6`；该历史实现
+  本身尚未生成 terminal anchor，因此当前没有可迁移的历史 recorder；该 hash 只能用于诊断，显式迁移也必须返回
+  `test_recorder_migration_unsupported`。不能以事后补齐全部本地 JSON 或 hashes 的方式制造资格。协议和 ontology 必须不变。
   原始 gate/receipt 不改写，迁移只写独立审计记录，并按原规则写入环境重试授权。历史 Node missing-package 诊断
   无法证明失败当时安装树确实缺少包根，因此不属于迁移白名单；即使当前补齐或删除依赖，也不能反向改变历史分类。
   截断诊断、未知/代码失败、身份或源码漂移、证据篡改及未知旧版本一律拒绝。

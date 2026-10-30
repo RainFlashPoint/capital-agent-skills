@@ -30,6 +30,11 @@ const emptyFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca49599
 const legacyRecorderVersions = new Set([
   '7cae17ccd075cf322c03b3c8c5c5ffadcf43f618f329deccd8a131159e78c611',
 ])
+// A recorder may be recognized for diagnosis without being eligible for
+// migration. Eligibility requires archived proof that the implementation
+// itself emitted the trusted reservation and terminal anchor at execution
+// time. The currently recognized historical recorder predates those anchors.
+const legacyRecorderAnchorProducers = new Set()
 const same = (left, right) => canonical(left) === canonical(right)
 const validDate = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
 const finalAttempt = state => state.environmentRetry?.attempt || state.fullAttempt
@@ -161,8 +166,9 @@ function validateState(state) {
   if (state.phase === 'candidate_frozen' && state.fullAttempt && state.fullAttempt.status !== 'running') fail('test_state_invalid')
   if (state.environmentRetry) {
     const retry = state.environmentRetry
-    if (state.fullAttempt?.status !== 'failed' || !retry.authorization || !hashPattern.test(retry.authorizationHash || '') || digest(retry.authorization) !== retry.authorizationHash) fail('test_state_invalid')
-    if (!hashPattern.test(retry.authorization.identityHash || '') || retry.authorization.firstActionId !== state.fullAttempt.actionId || retry.authorization.sourceFingerprint !== state.sourceFingerprint || retry.authorization.commandHash !== plan.fullCommandHash) fail('test_state_invalid')
+    if (state.fullAttempt?.status !== 'failed' || retry.authorization?.schemaVersion !== 2 || !hashPattern.test(retry.authorizationHash || '') || digest(retry.authorization) !== retry.authorizationHash) fail('test_state_invalid')
+    if (!hashPattern.test(retry.authorization.identityHash || '') || !hashPattern.test(retry.authorization.targetedEvidenceRoot || '') || retry.authorization.firstActionId !== state.fullAttempt.actionId || retry.authorization.sourceFingerprint !== state.sourceFingerprint || retry.authorization.commandHash !== plan.fullCommandHash) fail('test_state_invalid')
+    if (retry.authorization.recorderMigration && (retry.authorization.recorderMigration.schemaVersion !== 2 || !hashPattern.test(retry.authorization.recorderMigration.targetedEvidenceRoot || ''))) fail('test_state_invalid')
     if (retry.attempt) {
       const attempt = retry.attempt
       if (!idPattern.test(attempt.actionId || '') || attempt.actionId === state.fullAttempt.actionId || attempt.commandHash !== plan.fullCommandHash || !['running', 'passed', 'failed'].includes(attempt.status)) fail('test_state_invalid')
@@ -206,7 +212,7 @@ async function fullAttemptLocation(repo, consumptionFingerprint, { create = fals
 }
 
 function validateFullReservation(value, consumptionFingerprint) {
-  if (!value || value.schemaVersion !== 1 || value.consumptionFingerprint !== consumptionFingerprint || !hashPattern.test(value.sourceFingerprint || '') || !idPattern.test(value.actionId || '') || !hashPattern.test(value.commandHash || '')) fail('test_full_reservation_invalid')
+  if (!value || value.schemaVersion !== 2 || value.consumptionFingerprint !== consumptionFingerprint || !hashPattern.test(value.sourceFingerprint || '') || !idPattern.test(value.actionId || '') || !hashPattern.test(value.commandHash || '') || !hashPattern.test(value.targetedEvidenceRoot || '')) fail('test_full_reservation_invalid')
   if (!value.identity || !value.snapshot || digest({ identity: value.identity, snapshot: value.snapshot }) !== value.sourceFingerprint) fail('test_full_reservation_invalid')
   if (digest({ commit: value.identity.commit, index: value.snapshot.index, worktree: value.snapshot.worktree, untracked: value.snapshot.untracked }) !== consumptionFingerprint) fail('test_full_reservation_invalid')
   return value
@@ -239,10 +245,10 @@ async function fullTerminalRecord(repo, state, value = null) {
   })
 }
 
-function validateFullTerminal(record, state, reservation, result, expectedRecorder) {
+function validateFullTerminal(record, state, reservation, result, expectedRecorder, targetedEvidenceRoot) {
   if (
     !record
-    || record.schemaVersion !== 1
+    || record.schemaVersion !== 2
     || record.identityHash !== digest(state.identity)
     || record.sourceFingerprint !== state.sourceFingerprint
     || record.consumptionFingerprint !== state.consumptionFingerprint
@@ -254,6 +260,7 @@ function validateFullTerminal(record, state, reservation, result, expectedRecord
     || record.requestHash !== result.requestHash
     || record.receiptHash !== result.receiptHash
     || record.diagnosticHash !== result.diagnosticHash
+    || record.targetedEvidenceRoot !== targetedEvidenceRoot
     || record.resultStatus !== result.resultStatus
     || record.finishedAt !== result.finishedAt
     || !reservation
@@ -261,6 +268,7 @@ function validateFullTerminal(record, state, reservation, result, expectedRecord
     || reservation.commandHash !== record.commandHash
     || reservation.sourceFingerprint !== record.sourceFingerprint
     || reservation.consumptionFingerprint !== record.consumptionFingerprint
+    || reservation.targetedEvidenceRoot !== record.targetedEvidenceRoot
   ) fail('test_recorder_migration_invalid')
   return record
 }
@@ -298,13 +306,18 @@ async function verifyRetryRecords(repo, state, current = null) {
     if (!recordedMigration || !same(recordedMigration, migration)) fail('test_recorder_migration_invalid')
     await validateRecorderMigration(repo, current || await facts(repo), state, migration, { requireLatest: false })
   }
-  if (authorization.schemaVersion !== 1 || !validDate(authorization.authorizedAt) || authorization.firstActionId !== state.fullAttempt.actionId || authorization.commandHash !== state.plan.fullCommandHash || authorization.sourceFingerprint !== state.sourceFingerprint || authorization.consumptionFingerprint !== state.consumptionFingerprint || authorization.identityHash !== digest(state.identity)) fail('test_environment_retry_evidence_invalid')
+  if (authorization.schemaVersion !== 2 || !validDate(authorization.authorizedAt) || authorization.firstActionId !== state.fullAttempt.actionId || authorization.commandHash !== state.plan.fullCommandHash || authorization.sourceFingerprint !== state.sourceFingerprint || authorization.consumptionFingerprint !== state.consumptionFingerprint || authorization.identityHash !== digest(state.identity) || !hashPattern.test(authorization.targetedEvidenceRoot || '')) fail('test_environment_retry_evidence_invalid')
   if (state.environmentRetry.attempt) {
     const current = state.environmentRetry.attempt
     if (!attempt || attempt.schemaVersion !== 1 || !validDate(attempt.startedAt) || attempt.identityHash !== digest(state.identity) || attempt.sourceFingerprint !== state.sourceFingerprint || attempt.consumptionFingerprint !== state.consumptionFingerprint || attempt.actionId !== current.actionId || attempt.commandHash !== current.commandHash || attempt.authorizationHash !== state.environmentRetry.authorizationHash) fail('test_environment_retry_evidence_invalid')
   } else if (attempt) fail('test_full_already_attempted')
+  const targeted = await verifyAllTargetedEvidence(repo, state, { expectedRecorder: expectedFirstRecorder(state) })
+  if (targeted.root !== authorization.targetedEvidenceRoot) fail('test_environment_retry_evidence_invalid')
+  const reservation = await readFullReservation(repo, state.consumptionFingerprint)
+  if (!reservation || reservation.actionId !== state.fullAttempt.actionId || reservation.targetedEvidenceRoot !== targeted.root) fail('test_environment_retry_evidence_invalid')
   const first = await terminalFullResult(repo, state, state.fullAttempt.actionId, { requireLatest: false, expectedRecorder: expectedFirstRecorder(state) })
   if (first.passed || first.requestHash !== authorization.requestHash || first.receiptHash !== authorization.receiptHash || first.diagnosticHash !== authorization.diagnosticHash) fail('test_environment_retry_evidence_invalid')
+  validateFullTerminal(await fullTerminalRecord(repo, state), state, reservation, first, expectedFirstRecorder(state), targeted.root)
   // The authorization already proved the package was missing at first run;
   // revalidation must not fail merely because the operator has since installed it.
   const classification = await classifyEnvironmentFailure(repo, first, { requireMissingInstall: false })
@@ -312,9 +325,12 @@ async function verifyRetryRecords(repo, state, current = null) {
 }
 
 async function validateRecorderMigration(repo, current, state, migration, { requireLatest = true } = {}) {
+  if (legacyRecorderVersions.has(migration?.originalRecorder) && !legacyRecorderAnchorProducers.has(migration.originalRecorder)) {
+    fail('test_recorder_migration_unsupported')
+  }
   if (
     !migration
-    || migration.schemaVersion !== 1
+    || migration.schemaVersion !== 2
     || migration.kind !== 'legacy_recorder_environment_retry'
     || !legacyRecorderVersions.has(migration.originalRecorder)
     || migration.currentRecorder !== current.recorderVersion
@@ -327,14 +343,16 @@ async function validateRecorderMigration(repo, current, state, migration, { requ
     || !hashPattern.test(migration.requestHash || '')
     || !hashPattern.test(migration.receiptHash || '')
     || !hashPattern.test(migration.diagnosticHash || '')
+    || !hashPattern.test(migration.targetedEvidenceRoot || '')
     || !validDate(migration.migratedAt)
   ) fail('test_recorder_migration_invalid')
   const reservation = await readFullReservation(repo, state.consumptionFingerprint)
   if (!reservation || reservation.actionId !== state.fullAttempt.actionId || !same(reservation.identity, state.identity) || reservation.commandHash !== state.plan.fullCommandHash) fail('test_recorder_migration_invalid')
-  await verifyAllTargetedEvidence(repo, state, { expectedRecorder: migration.originalRecorder })
+  const targeted = await verifyAllTargetedEvidence(repo, state, { expectedRecorder: migration.originalRecorder })
+  if (targeted.root !== migration.targetedEvidenceRoot || reservation.targetedEvidenceRoot !== targeted.root) fail('test_recorder_migration_invalid')
   const result = await terminalFullResult(repo, state, state.fullAttempt.actionId, { expectedRecorder: migration.originalRecorder, requireLatest })
   if (result.passed || result.requestHash !== migration.requestHash || result.receiptHash !== migration.receiptHash || result.diagnosticHash !== migration.diagnosticHash) fail('test_recorder_migration_invalid')
-  validateFullTerminal(await fullTerminalRecord(repo, state), state, reservation, result, migration.originalRecorder)
+  validateFullTerminal(await fullTerminalRecord(repo, state), state, reservation, result, migration.originalRecorder, targeted.root)
   const classification = await classifyLegacyEnvironmentFailure(repo, result)
   if (!classification || !same(classification, migration.classification)) fail('test_recorder_migration_invalid')
   return migration
@@ -354,14 +372,16 @@ async function migrateLegacyRecorder(repo, current, state) {
   }
   const reservation = await readFullReservation(repo, state.consumptionFingerprint)
   if (!reservation || reservation.actionId !== state.fullAttempt.actionId || !same(reservation.identity, state.identity) || reservation.commandHash !== state.plan.fullCommandHash) fail('test_full_reservation_mismatch')
-  await verifyAllTargetedEvidence(repo, state, { expectedRecorder: state.recorderVersion })
+  const targeted = await verifyAllTargetedEvidence(repo, state, { expectedRecorder: state.recorderVersion })
+  if (reservation.targetedEvidenceRoot !== targeted.root) fail('test_recorder_migration_invalid')
   const result = await terminalFullResult(repo, state, state.fullAttempt.actionId, { expectedRecorder: state.recorderVersion, requireLatest: true })
   if (result.passed || result.requestHash !== state.fullAttempt.requestHash || result.receiptHash !== state.fullAttempt.receiptHash || result.diagnosticHash !== digest(result.diagnostic)) fail('test_full_evidence_invalid')
-  validateFullTerminal(await fullTerminalRecord(repo, state), state, reservation, result, state.recorderVersion)
+  validateFullTerminal(await fullTerminalRecord(repo, state), state, reservation, result, state.recorderVersion, targeted.root)
   const classification = await classifyLegacyEnvironmentFailure(repo, result)
   if (!classification) fail('test_environment_retry_not_allowed')
+  if (!legacyRecorderAnchorProducers.has(state.recorderVersion)) fail('test_recorder_migration_unsupported')
   const migration = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'legacy_recorder_environment_retry',
     originalRecorder: state.recorderVersion,
     currentRecorder: current.recorderVersion,
@@ -374,6 +394,7 @@ async function migrateLegacyRecorder(repo, current, state) {
     requestHash: result.requestHash,
     receiptHash: result.receiptHash,
     diagnosticHash: result.diagnosticHash,
+    targetedEvidenceRoot: targeted.root,
     classification,
     migratedAt: isoNow(),
   }
@@ -386,16 +407,17 @@ async function assertExecutionOwner(repo, actionId) {
   if (owner?.id !== actionId || owner?.pid !== process.pid) fail('execution_in_progress_or_interrupted')
 }
 
-async function reserveFullAttempt(repo, state, actionId, commandHash) {
+async function reserveFullAttempt(repo, state, actionId, commandHash, targetedEvidenceRoot) {
   const location = await fullAttemptLocation(repo, state.consumptionFingerprint, { create: true })
   const reservation = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceFingerprint: state.sourceFingerprint,
     consumptionFingerprint: state.consumptionFingerprint,
     identity: state.identity,
     snapshot: state.snapshot,
     actionId,
     commandHash,
+    targetedEvidenceRoot,
     startedAt: isoNow(),
   }
   try {
@@ -431,11 +453,19 @@ async function verifyTargetedEvidence(repo, state, commandHash, { expectedRecord
   if (evidence.envelopeHash !== result.requestHash || evidence.receiptHash !== result.receiptHash || digest(receipt) !== result.receiptHash || evidence.diagnosticHash !== digest(evidence.diagnostic)) fail('test_targeted_evidence_invalid')
   if (receipt?.authority !== 'local-observed' || receipt.envelopeId !== result.actionId || receipt.envelopeHash !== result.requestHash || receipt.status !== 'passed' || receipt.exitCode !== 0 || receipt.signal || !same(receipt.afterSnapshot, request.snapshot)) fail('test_targeted_evidence_invalid')
   for (const key of ['repo', 'task', 'session', 'branch', 'commit']) if (receipt[key] !== state.identity[key]) fail('test_targeted_evidence_invalid')
-  return true
+  return {
+    commandHash,
+    actionHash: digest(result.actionId),
+    requestHash: evidence.envelopeHash,
+    receiptHash: evidence.receiptHash,
+    diagnosticHash: evidence.diagnosticHash,
+  }
 }
 
 async function verifyAllTargetedEvidence(repo, state, { expectedRecorder = state.recorderVersion } = {}) {
-  for (const commandHash of state.plan.targetedCommandHashes) await verifyTargetedEvidence(repo, state, commandHash, { expectedRecorder })
+  const records = []
+  for (const commandHash of [...state.plan.targetedCommandHashes].sort()) records.push(await verifyTargetedEvidence(repo, state, commandHash, { expectedRecorder }))
+  return { records, root: digest(records) }
 }
 
 async function terminalFullResult(repo, state, actionId, { requireLatest = true, expectedRecorder = null } = {}) {
@@ -470,6 +500,26 @@ async function terminalFullResult(repo, state, actionId, { requireLatest = true,
     diagnostic: evidence.diagnostic,
     finishedAt: receipt.finishedAt,
   }
+}
+
+async function anchorFullTerminal(repo, state, reservation, result) {
+  return fullTerminalRecord(repo, state, {
+    schemaVersion: 2,
+    identityHash: digest(state.identity),
+    sourceFingerprint: state.sourceFingerprint,
+    consumptionFingerprint: state.consumptionFingerprint,
+    actionId: state.fullAttempt.actionId,
+    commandHash: state.plan.fullCommandHash,
+    recorderVersion: state.recorderVersion,
+    protocolVersion: versions.protocol,
+    ontologyVersion: versions.ontology,
+    requestHash: result.requestHash,
+    receiptHash: result.receiptHash,
+    diagnosticHash: result.diagnosticHash,
+    targetedEvidenceRoot: reservation.targetedEvidenceRoot,
+    resultStatus: result.resultStatus,
+    finishedAt: result.finishedAt,
+  })
 }
 
 async function declaredMissingPackage(repo, specifier, diagnostic, { requireMissingInstall = true } = {}) {
@@ -509,6 +559,15 @@ async function classifyEnvironmentFailure(repo, result, { requireMissingInstall 
   if (result.resultStatus === 'spawn_failed') return { category: 'executable_unavailable' }
   const text = `${result.diagnostic?.stdout || ''}\n${result.diagnostic?.stderr || ''}`
   if (/AssertionError|ERR_ASSERTION|SyntaxError|TypeError|ReferenceError|(?:error TS\d+)|(?:compilation (?:error|failed))|expected:|actual:/i.test(text)) return null
+  const failureSignal = /\b(?:error|fail(?:ed|ure)?|not ok)\b|(?<!\.)\binvalid\b|npm\s+(?:ERR!|error)|[✖×]/i
+  const unexplainedFailure = allowed => {
+    const flags = [...new Set(`${allowed.flags.replace(/g/g, '')}g`)].join('')
+    const recognized = new RegExp(`(?:Error:\\s*)?(?:${allowed.source})`, flags)
+    return text
+      .split(/\r?\n/)
+      .filter(line => failureSignal.test(line))
+      .some(line => failureSignal.test(line.replace(recognized, ' ')))
+  }
   const missing = [...text.matchAll(/Cannot find (?:module|package) ['"]([^'"\r\n]+)['"]/g)]
   if (missing.length) {
     const dependencies = []
@@ -517,8 +576,8 @@ async function classifyEnvironmentFailure(repo, result, { requireMissingInstall 
       if (!dependency) return null
       dependencies.push(dependency)
     }
-    // Unknown companion errors must not be hidden by one recognized failure.
-    if (/\bError:(?! Cannot find (?:module|package) ['"])/.test(text)) return null
+    // Unknown companion failures must not be hidden by one recognized error.
+    if (unexplainedFailure(/Cannot find (?:module|package) ['"]|MODULE_NOT_FOUND/i)) return null
     return { category: 'declared_node_dependency_missing', dependencies }
   }
   const patterns = [
@@ -529,8 +588,7 @@ async function classifyEnvironmentFailure(repo, result, { requireMissingInstall 
   ]
   for (const [category, pattern] of patterns) {
     if (!pattern.test(text)) continue
-    const errors = text.split(/\r?\n/).filter(line => /\b(?:Error:|error:|ERROR\b)/.test(line))
-    if (errors.some(line => !pattern.test(line))) return null
+    if (unexplainedFailure(pattern)) return null
     return { category }
   }
   return null
@@ -549,7 +607,8 @@ export async function authorizeEnvironmentRetry(repoCandidate = '.', { migrateRe
     let state = await readState(repo)
     if (!state) fail('test_impact_missing')
     let migration = await retryRecord(repo, state, 'migration')
-    if (state.environmentRetry || await retryRecord(repo, state, 'environment') || await retryRecord(repo, state, 'retry')) fail('test_environment_retry_already_authorized')
+    const recordedAuthorization = await retryRecord(repo, state, 'environment')
+    if (state.environmentRetry || await retryRecord(repo, state, 'retry')) fail('test_environment_retry_already_authorized')
     if (state.recorderVersion !== current.recorderVersion) {
       if (!migrateRecorder) fail('test_recorder_changed')
       const migrated = await migrateLegacyRecorder(repo, current, state)
@@ -560,14 +619,26 @@ export async function authorizeEnvironmentRetry(repoCandidate = '.', { migrateRe
     const reason = freshness(state, current)
     if (reason) fail(reason)
     if (state.phase !== 'full_failed' || state.fullAttempt?.status !== 'failed') fail('test_environment_retry_not_allowed')
+    if (recordedAuthorization) {
+      const projected = validateState({
+        ...state,
+        phase: 'environment_retry_ready',
+        environmentRetry: { authorization: recordedAuthorization, authorizationHash: digest(recordedAuthorization), attempt: null },
+        updatedAt: isoNow(),
+      })
+      await verifyRetryRecords(repo, projected, current)
+      return writeState(repo, projected)
+    }
     const reservation = await readFullReservation(repo, state.consumptionFingerprint)
     if (!reservation || reservation.actionId !== state.fullAttempt.actionId || !same(reservation.identity, state.identity)) fail('test_full_reservation_mismatch')
-    await verifyAllTargetedEvidence(repo, state, { expectedRecorder: migration?.originalRecorder || state.recorderVersion })
+    const targeted = await verifyAllTargetedEvidence(repo, state, { expectedRecorder: migration?.originalRecorder || state.recorderVersion })
+    if (reservation.targetedEvidenceRoot !== targeted.root) fail('test_recorder_migration_invalid')
     const result = await terminalFullResult(repo, state, state.fullAttempt.actionId, { expectedRecorder: migration?.originalRecorder || state.recorderVersion })
     if (result.requestHash !== state.fullAttempt.requestHash || result.receiptHash !== state.fullAttempt.receiptHash) fail('test_full_evidence_invalid')
+    validateFullTerminal(await fullTerminalRecord(repo, state), state, reservation, result, migration?.originalRecorder || state.recorderVersion, targeted.root)
     const classification = migration?.classification || await classifyEnvironmentFailure(repo, result)
     if (!classification) fail('test_environment_retry_not_allowed')
-    const authorization = { schemaVersion: 1, identityHash: digest(state.identity), sourceFingerprint: state.sourceFingerprint, consumptionFingerprint: state.consumptionFingerprint, commandHash: state.plan.fullCommandHash, firstActionId: state.fullAttempt.actionId, requestHash: result.requestHash, receiptHash: result.receiptHash, diagnosticHash: result.diagnosticHash, classification, ...(migration ? { recorderMigration: migration } : {}), authorizedAt: isoNow() }
+    const authorization = { schemaVersion: 2, identityHash: digest(state.identity), sourceFingerprint: state.sourceFingerprint, consumptionFingerprint: state.consumptionFingerprint, commandHash: state.plan.fullCommandHash, firstActionId: state.fullAttempt.actionId, requestHash: result.requestHash, receiptHash: result.receiptHash, diagnosticHash: result.diagnosticHash, targetedEvidenceRoot: targeted.root, classification, ...(migration ? { recorderMigration: migration } : {}), authorizedAt: isoNow() }
     await retryRecord(repo, state, 'environment', authorization)
     return writeState(repo, { ...state, phase: 'environment_retry_ready', environmentRetry: { authorization, authorizationHash: digest(authorization), attempt: null }, updatedAt: isoNow() })
   })
@@ -713,8 +784,8 @@ export async function reserveTestRun(repoCandidate = '.', { scope, command, acti
   }
   if (state.fullAttempt || await readFullReservation(current.repo, state.consumptionFingerprint) || ['full_passed', 'full_failed'].includes(state.phase)) fail('test_full_already_attempted')
   if (state.phase !== 'candidate_frozen') fail('test_candidate_not_frozen')
-  await verifyAllTargetedEvidence(current.repo, state)
-  const reservation = await reserveFullAttempt(current.repo, state, actionId, commandHash)
+  const targeted = await verifyAllTargetedEvidence(current.repo, state)
+  const reservation = await reserveFullAttempt(current.repo, state, actionId, commandHash, targeted.root)
   const next = { ...state, fullAttempt: { actionId, commandHash, status: 'running', startedAt: reservation.startedAt, finishedAt: null }, updatedAt: isoNow() }
   await writeState(current.repo, next)
   return { state: next, commandHash, current }
@@ -754,22 +825,7 @@ export async function completeTestRun(repoCandidate = '.', { scope, commandHash,
   if (!reservation || reservation.actionId !== actionId || reservation.commandHash !== commandHash) fail('test_full_reservation_mismatch')
   const terminal = await terminalFullResult(repo, state, actionId)
   if (terminal.requestHash !== requestHash || terminal.receiptHash !== receiptHash || terminal.passed !== passed || terminal.resultStatus !== resultStatus) fail('test_full_evidence_invalid')
-  await fullTerminalRecord(repo, state, {
-    schemaVersion: 1,
-    identityHash: digest(state.identity),
-    sourceFingerprint: state.sourceFingerprint,
-    consumptionFingerprint: state.consumptionFingerprint,
-    actionId,
-    commandHash,
-    recorderVersion: state.recorderVersion,
-    protocolVersion: versions.protocol,
-    ontologyVersion: versions.ontology,
-    requestHash,
-    receiptHash,
-    diagnosticHash: terminal.diagnosticHash,
-    resultStatus,
-    finishedAt: terminal.finishedAt,
-  })
+  await anchorFullTerminal(repo, state, reservation, terminal)
   return writeState(repo, {
     ...state,
     phase: passed ? 'full_passed' : 'full_failed',
@@ -797,6 +853,7 @@ export async function reconcileTerminalTestRun(repoCandidate = '.', actionId = '
     const result = await terminalFullResult(repo, state, actionId)
     const finishedAt = isoNow()
     const { passed, ...evidenceResult } = result
+    if (!retrying) await anchorFullTerminal(repo, state, reservation, result)
     return writeState(repo, retrying ? {
       ...state,
       phase: passed ? 'full_passed' : 'full_failed',
