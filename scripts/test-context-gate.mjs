@@ -163,13 +163,24 @@ test('refreshing only task-context inspected-at preserves the semantic binding',
 
 test('legacy task-context source and semantic hashes remain readable', async t => {
   const { repo } = await fixture(t)
+  const taskContextPath = join(repo, '.cap/task-context.md')
+  writeFileSync(taskContextPath, readFileSync(taskContextPath, 'utf8').replace('- profile-used-as: index-only', '- inspected-at: 2026-11-02T07:00:00Z\n- profile-used-as: index-only'))
   const manifest = await publish(repo)
   delete manifest.entry.semanticsProjection
   const source = manifest.sources.find(item => item.path === '.cap/task-context.md')
   delete source.projection
-  source.sha256 = createHash('sha256').update(readFileSync(join(repo, source.path), 'utf8')).digest('hex')
+  const taskContext = readFileSync(join(repo, source.path), 'utf8')
+  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const section = heading => {
+    const body = state.split(new RegExp(`^## ${heading}[ \\t]*$`, 'mi'))[1] || ''
+    return body.split(/^## /m)[0].split('\n').filter(line => !/^(?:context-|provider-compaction(?:-|:)|updated:)/.test(line)).join('\n').trim()
+  }
+  source.sha256 = createHash('sha256').update(taskContext).digest('hex')
+  manifest.entry.semanticsHash = createHash('sha256').update(JSON.stringify({ taskContext, spec: '', plan: '', authorization: section('External operation authorization'), decisions: section('Decisions log'), gates: section('Gates passed'), nextAction: section('Next action') })).digest('hex')
   writeFileSync(join(repo, '.cap/context/manifest.json'), JSON.stringify(manifest))
   assert.equal((await inspectSemanticContext(repo)).passed, true)
+  writeFileSync(taskContextPath, taskContext.replace('inspected-at: 2026-11-02T07:00:00Z', 'inspected-at: 2026-11-02T08:00:00Z'))
+  assert.equal((await inspectSemanticContext(repo)).passed, false)
 })
 
 test('authorization and decision corrections invalidate same-Commit checkpoints', async t => {

@@ -144,6 +144,29 @@ test('prepare does not silently replace a damaged recovery receipt without an ob
   assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
 })
 
+for (const field of ['sessionId', 'runtimeSessionId']) {
+  test(`prepare cannot treat a tampered entry ${field} as a legitimate session handoff`, async t => {
+    const { repo, path } = await fixture(t)
+    const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+    assert.equal(first.valid, true, JSON.stringify(first))
+    const manifestPath = join(repo, first.manifest)
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.entry[field] = `forged-${field}`
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_identity_changed')
+
+    const samePath = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+    assert.equal(samePath.valid, false, JSON.stringify(samePath))
+    assert.ok(samePath.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(samePath))
+
+    const duplicatePath = `.cap/context/checkpoint-tampered-${field}.json`
+    writeFileSync(join(repo, duplicatePath), readFileSync(join(repo, path), 'utf8'))
+    const duplicate = await prepareContext(repo, { checkpointPath: duplicatePath, budgetTokens: 20000, environment })
+    assert.equal(duplicate.valid, false, JSON.stringify(duplicate))
+    assert.ok(duplicate.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(duplicate))
+  })
+}
+
 test('unbound legacy runtime accepts a host while a bound runtime rejects another session', async t => {
   const { repo, path } = await fixture(t)
   assert.equal((await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })).valid, true)

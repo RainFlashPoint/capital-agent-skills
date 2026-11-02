@@ -4,7 +4,7 @@
 
 ## 0.14.4
 
-- 收敛语义检查点重复准备：内容完全相同但文件名不同的候选自动归一到已发布 checkpoint 并返回 compact reuse，不再因临时 `Date.now()` 文件名制造 duplicate 修复循环；`task-context` 的 `inspected-at` 仅作为侦察时间元数据，不再单独改变语义或来源绑定，真实意图、HEAD、源码指纹、授权、范围和阶段变化仍按原门禁失效。重复候选只能刷新可证明的来源/压力/会话变化或显式恢复事件，已发布 manifest 的身份、前驱、source projection 或 recovery receipt 损坏继续失败关闭，不能借重发“洗白”。流程同时明确同一轮先收敛 STATE/task-context/spec/plan/源码，再统一 prepare；真实恢复热内容的分段协议留待独立兼容改动。
+- 收敛语义检查点重复准备：内容完全相同但文件名不同的候选自动归一到已发布 checkpoint 并返回 compact reuse，不再因临时 `Date.now()` 文件名制造 duplicate 修复循环；`task-context` 的 `inspected-at` 仅作为侦察时间元数据，不再单独改变语义或来源绑定，真实意图、HEAD、源码指纹、授权、范围和阶段变化仍按原门禁失效。重复候选只能刷新可证明的来源/压力变化或显式恢复事件；已发布 manifest 的身份、Session/runtime Session、前驱、source projection 或 recovery receipt 损坏继续失败关闭，不能借重发“洗白”，合法的 legacy unbound runtime 仍通过既有门禁完成首次绑定。流程同时明确同一轮先收敛 STATE/task-context/spec/plan/源码，再统一 prepare；真实恢复热内容的分段协议留待独立兼容改动。
 
 ## 0.14.3
 

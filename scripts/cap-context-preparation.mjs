@@ -21,11 +21,11 @@ function refreshablePublishedSnapshot(reason, snapshot, binding, { event } = {})
   if (reason === 'context_pressure_increased') return !sourceDrift
   if (reason === 'context_recovery_required') return Boolean(event)
   if (reason === 'context_entry_binding_missing') return !snapshot.manifest.entry && !sourceDrift
-  if (reason !== 'context_identity_changed' || !snapshot.manifest.entry) return false
-  const identityKeys = ['taskId', 'repo', 'branch', 'commit', 'stage']
-  const stableIdentity = identityKeys.every(key => snapshot.checkpoint.identity?.[key] === binding[key] && snapshot.manifest.identity?.[key] === binding[key] && snapshot.manifest.entry?.[key] === binding[key])
-  const sessionChanged = snapshot.manifest.entry.sessionId !== binding.sessionId || (snapshot.manifest.entry.runtimeSessionId && snapshot.manifest.entry.runtimeSessionId !== 'none' && snapshot.manifest.entry.runtimeSessionId !== binding.runtimeSessionId)
-  return stableIdentity && sessionChanged
+  // Session fields live inside the editable manifest. A mismatch is not proof
+  // of a legitimate handoff and must not authorize replacing the evidence that
+  // reported it. Legacy unbound runtime entries already pass the gate and can
+  // be rebound through the normal publication path.
+  return false
 }
 
 async function replaceState(repo, previous, next) {
