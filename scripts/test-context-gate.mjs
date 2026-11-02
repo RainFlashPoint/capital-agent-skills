@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -141,6 +142,34 @@ test('valid current checkpoint is reusable; publication pointers do not invalida
   writeFileSync(join(repo, '.cap/STATE.md'), readFileSync(join(repo, '.cap/STATE.md'), 'utf8') + '\nupdated: 2026-10-14T00:00:00Z\n')
   assert.equal((await inspectSemanticContext(repo)).passed, true)
   assert.equal((await inspectSemanticContext(repo, { stage: 'test' })).reason, 'context_stage_changed')
+})
+
+test('refreshing only task-context inspected-at preserves the semantic binding', async t => {
+  const { repo } = await fixture(t)
+  const path = join(repo, '.cap/task-context.md')
+  writeFileSync(path, readFileSync(path, 'utf8').replace('- profile-used-as: index-only', '- inspected-at: 2026-11-02T07:00:00Z\n- profile-used-as: index-only'))
+  const manifest = await publish(repo)
+  const source = manifest.sources.find(item => item.path === '.cap/task-context.md')
+  assert.equal(source.projection, 'task-context-without-inspected-at-v1')
+  const beforeBinding = await captureContextBinding(repo)
+  writeFileSync(path, readFileSync(path, 'utf8').replace('inspected-at: 2026-11-02T07:00:00Z', 'inspected-at: 2026-11-02T08:00:00Z'))
+  const afterBinding = await captureContextBinding(repo)
+  assert.equal(afterBinding.semanticsHash, beforeBinding.semanticsHash, JSON.stringify({ beforeBinding, afterBinding }))
+  const refreshed = await inspectSemanticContext(repo)
+  assert.equal(refreshed.passed, true, JSON.stringify(refreshed))
+  writeFileSync(path, readFileSync(path, 'utf8').replace('Preserve the public contract', 'Change the public contract'))
+  assert.equal((await inspectSemanticContext(repo)).reason, 'context_semantics_changed')
+})
+
+test('legacy task-context source and semantic hashes remain readable', async t => {
+  const { repo } = await fixture(t)
+  const manifest = await publish(repo)
+  delete manifest.entry.semanticsProjection
+  const source = manifest.sources.find(item => item.path === '.cap/task-context.md')
+  delete source.projection
+  source.sha256 = createHash('sha256').update(readFileSync(join(repo, source.path), 'utf8')).digest('hex')
+  writeFileSync(join(repo, '.cap/context/manifest.json'), JSON.stringify(manifest))
+  assert.equal((await inspectSemanticContext(repo)).passed, true)
 })
 
 test('authorization and decision corrections invalidate same-Commit checkpoints', async t => {

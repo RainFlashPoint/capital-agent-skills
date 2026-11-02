@@ -69,7 +69,7 @@
 - index-fingerprint: <调查时暂存区 fingerprint>
 - worktree-fingerprint: <调查时未暂存 tracked fingerprint>
 - untracked-fingerprint: <调查时未跟踪文件 fingerprint；排除 .cap 工作态>
-- inspected-at: <UTC 时间>
+- inspected-at: <UTC 时间；只在实际重新调查代码事实时更新，不把“确认是否仍当前”写成新的语义变化>
 - profile-used-as: index-only
 
 ## Entry points

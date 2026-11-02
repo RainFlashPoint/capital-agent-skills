@@ -61,6 +61,11 @@ test('prepare publishes a reviewed initial snapshot and reuses an unchanged bind
     const first = await prepareContext(repo, { checkpointPath: path, ...options })
     assert.equal(first.valid, true, JSON.stringify(first))
     assert.equal(first.reused, false)
+    if (!event) {
+      assert.equal(first.outputMode, 'compact')
+      assert.equal(first.recovery, null)
+      assert.match(first.nextAction, /No recovery replay is required/)
+    }
     assert.equal((await inspectSemanticContext(repo, { environment })).passed, true)
     const snapshot = () => [join(repo, '.cap/STATE.md'), ...readdirSync(join(repo, '.cap/context')).sort().map(name => join(repo, '.cap/context', name))]
       .map(file => ({ file, content: readFileSync(file, 'utf8'), mtime: statSync(file, { bigint: true }).mtimeNs }))
@@ -75,6 +80,68 @@ test('prepare publishes a reviewed initial snapshot and reuses an unchanged bind
       assert.deepEqual(snapshot(), before)
     }
   }
+})
+
+test('prepare canonicalizes a content-identical checkpoint instead of publishing a duplicate snapshot', async t => {
+  const { repo, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const duplicatePath = '.cap/context/checkpoint-implement-duplicate.json'
+  writeFileSync(join(repo, duplicatePath), readFileSync(join(repo, path), 'utf8'))
+  const snapshot = () => [join(repo, '.cap/STATE.md'), ...readdirSync(join(repo, '.cap/context')).sort().map(name => join(repo, '.cap/context', name))]
+    .map(file => ({ file, content: readFileSync(file, 'utf8'), mtime: statSync(file, { bigint: true }).mtimeNs }))
+  const before = snapshot()
+
+  const reused = await prepareContext(repo, { checkpointPath: duplicatePath, budgetTokens: 20000, environment })
+
+  assert.equal(reused.valid, true, JSON.stringify(reused))
+  assert.equal(reused.reused, true)
+  assert.equal(reused.outputMode, 'compact')
+  assert.equal(reused.checkpoint, path)
+  assert.equal(reused.ignoredCheckpoint, duplicatePath)
+  assert.equal(reused.manifest, first.manifest)
+  assert.equal(Object.hasOwn(reused, 'recovery'), false)
+  assert.deepEqual(snapshot(), before)
+})
+
+for (const [name, mutate, reason] of [
+  ['identity', manifest => { manifest.identity.taskId = 'forged-task' }, 'context_identity_changed'],
+  ['predecessor pointer', manifest => { manifest.entry.previousManifest = '.cap/context/forged.json' }, 'context_predecessor_invalid'],
+  ['source projection', manifest => { manifest.sources.find(source => source.path === '.cap/task-context.md').projection = 'forged-projection' }, 'context_manifest_invalid'],
+]) {
+  test(`prepare cannot replace a published manifest with tampered ${name}`, async t => {
+    const { repo, path } = await fixture(t)
+    const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+    assert.equal(first.valid, true, JSON.stringify(first))
+    const manifestPath = join(repo, first.manifest)
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    mutate(manifest)
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    assert.equal((await inspectSemanticContext(repo, { environment })).reason, reason)
+    const duplicatePath = `.cap/context/checkpoint-tampered-${name.replaceAll(' ', '-')}.json`
+    writeFileSync(join(repo, duplicatePath), readFileSync(join(repo, path), 'utf8'))
+
+    const blocked = await prepareContext(repo, { checkpointPath: duplicatePath, budgetTokens: 20000, environment })
+
+    assert.equal(blocked.valid, false, JSON.stringify(blocked))
+    assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
+    assert.equal((await inspectSemanticContext(repo, { environment })).reason, reason)
+  })
+}
+
+test('prepare does not silently replace a damaged recovery receipt without an observed event', async t => {
+  const { repo, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event: 'visible-resume:receipt', environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const receiptPath = state.match(/^context-recovery-receipt: (.+)$/m)[1]
+  writeFileSync(join(repo, receiptPath), JSON.stringify({ ...first.recovery, digest: 'tampered' }))
+  assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_recovery_required')
+
+  const blocked = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+
+  assert.equal(blocked.valid, false, JSON.stringify(blocked))
+  assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
 })
 
 test('unbound legacy runtime accepts a host while a bound runtime rejects another session', async t => {

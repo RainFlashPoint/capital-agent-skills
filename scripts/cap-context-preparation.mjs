@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { writeFile, readFile, rename, rm, open } from 'node:fs/promises'
 import { join, posix } from 'node:path'
 import { captureContextBinding, captureContextPressure, captureCoverageRequirements, capturePublishedPredecessor, inspectSemanticContext, loadContextManifest, readContained, validateRecoveryReceipt } from './cap-context-gate.mjs'
-import { checkpointDigest, createManifest, fileSource, validateCheckpointTransition, validateManifest, planContext, contextReplay } from './cap-context-checkpoint.mjs'
+import { checkpointDigest, createManifest, fileSource, validateCheckpointTransition, validateManifest, planContext, contextReplay, manifestSourceHash } from './cap-context-checkpoint.mjs'
 import { validateSemanticCoverage, semanticProtectionAdvisories } from './cap-context-coverage.mjs'
 import { resolveExecutionStage } from '../runtime/execution/local-support.mjs'
 
@@ -11,6 +11,22 @@ const setField = (text, key, value) => new RegExp(`^(?:- )?${key}:.*$`, 'm').tes
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const problem = (code, path = '$') => ({ code, path })
 const failed = errors => ({ valid: false, errors })
+
+function refreshablePublishedSnapshot(reason, snapshot, binding, { event } = {}) {
+  const checked = validateManifest(snapshot.manifest, { checkpoint: snapshot.checkpoint, previous: snapshot.previous, atomLogContent: snapshot.atomLogContent, sourceContents: snapshot.sourceContents })
+  const structuralErrors = checked.errors.filter(error => error.code !== 'manifest_source_hash_mismatch')
+  if (structuralErrors.length) return false
+  const sourceDrift = (snapshot.manifest.sources || []).some(source => typeof snapshot.sourceContents[source.path] === 'string' && source.sha256 !== manifestSourceHash(source, snapshot.sourceContents[source.path]))
+  if (['context_sources_changed', 'context_semantics_changed'].includes(reason)) return sourceDrift
+  if (reason === 'context_pressure_increased') return !sourceDrift
+  if (reason === 'context_recovery_required') return Boolean(event)
+  if (reason === 'context_entry_binding_missing') return !snapshot.manifest.entry && !sourceDrift
+  if (reason !== 'context_identity_changed' || !snapshot.manifest.entry) return false
+  const identityKeys = ['taskId', 'repo', 'branch', 'commit', 'stage']
+  const stableIdentity = identityKeys.every(key => snapshot.checkpoint.identity?.[key] === binding[key] && snapshot.manifest.identity?.[key] === binding[key] && snapshot.manifest.entry?.[key] === binding[key])
+  const sessionChanged = snapshot.manifest.entry.sessionId !== binding.sessionId || (snapshot.manifest.entry.runtimeSessionId && snapshot.manifest.entry.runtimeSessionId !== 'none' && snapshot.manifest.entry.runtimeSessionId !== binding.runtimeSessionId)
+  return stableIdentity && sessionChanged
+}
 
 async function replaceState(repo, previous, next) {
   const path = join(repo, '.cap', `.STATE-prepare-${randomUUID()}.tmp`)
@@ -73,9 +89,12 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   catch { errors.push(problem('context_published_predecessor_invalid')) }
   try { requirements = await captureCoverageRequirements(repo, { environment }) }
   catch { return failed([...errors, problem('context_inputs_invalid')]) }
-  const same = predecessor?.digest === checkpointDigest(checkpoint) && predecessor?.path === checkpointPath
+  const candidateDigest = checkpointDigest(checkpoint)
+  const sameContent = predecessor?.digest === candidateDigest
+  const ignoredCheckpoint = sameContent && predecessor?.path !== checkpointPath ? checkpointPath : null
+  if (sameContent) checkpointPath = predecessor.path
+  const same = Boolean(predecessor && sameContent)
   if (predecessor && !same) errors.push(...validateCheckpointTransition(predecessor.checkpoint, checkpoint).errors)
-  if (predecessor && !same && predecessor.digest === checkpointDigest(checkpoint)) errors.push(problem('context_snapshot_duplicate'))
   const plan = planContext(checkpoint, { budgetTokens })
   errors.push(...plan.errors, ...validateSemanticCoverage(checkpoint, requirements))
   const binding = await captureContextBinding(repo, { environment })
@@ -91,9 +110,12 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   if (provider.status === 'succeeded' && (!binding.recoveryEvent || binding.recoveryEvent === 'none' || provider.eventRef !== binding.recoveryEvent)) errors.push(problem('context_provider_event_mismatch'))
   if (errors.length) return failed(errors)
   const existing = await inspectSemanticContext(repo, { environment })
-  if (same && existing.passed) {
-    const snapshot = await loadContextManifest(repo, existing.manifest)
-    if (snapshot.manifest.hotBudgetTokens === budgetTokens && snapshot.manifest.entry.runtimeSessionId === binding.runtimeSessionId) return { valid: true, reused: true, manifest: existing.manifest, digest: existing.digest, errors: [], warnings: semanticProtectionAdvisories(checkpoint, requirements) }
+  if (same) {
+    let snapshot
+    try { snapshot = await loadContextManifest(repo, predecessor.manifestPath) }
+    catch { return failed([problem('context_published_predecessor_invalid')]) }
+    if (existing.passed && snapshot.manifest.hotBudgetTokens === budgetTokens && snapshot.manifest.entry.runtimeSessionId === binding.runtimeSessionId) return { valid: true, reused: true, outputMode: 'compact', checkpoint: checkpointPath, ...(ignoredCheckpoint ? { ignoredCheckpoint } : {}), manifest: existing.manifest, digest: existing.digest, errors: [], warnings: semanticProtectionAdvisories(checkpoint, requirements) }
+    if (!existing.passed && !refreshablePublishedSnapshot(existing.reason, snapshot, binding, { event })) return failed([problem('context_published_predecessor_invalid'), problem(existing.reason, 'publishedManifest')])
   }
 
   const sources = {}
@@ -171,5 +193,5 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
     }
   }
   const gate = await inspectSemanticContext(repo, { environment })
-  return { valid: gate.passed, reused: false, manifest: manifestPath, digest: manifest.digest, recovery, warnings: semanticProtectionAdvisories(checkpoint, requirements), errors: gate.passed ? [] : [problem(gate.reason)], contextGate: gate, nextAction: gate.passed ? 'Read replayed hot atoms and resolve needed warm references before continuing; rerun the full stage guard.' : gate.remediation }
+  return { valid: gate.passed, reused: false, outputMode: recovery ? 'recovery-full' : 'compact', checkpoint: checkpointPath, ...(ignoredCheckpoint ? { ignoredCheckpoint } : {}), manifest: manifestPath, digest: manifest.digest, recovery, warnings: semanticProtectionAdvisories(checkpoint, requirements), errors: gate.passed ? [] : [problem(gate.reason)], contextGate: gate, nextAction: gate.passed ? recovery ? 'Read replayed hot atoms and resolve needed warm references before continuing; rerun the full stage guard.' : 'No recovery replay is required; rerun the full stage guard.' : gate.remediation }
 }

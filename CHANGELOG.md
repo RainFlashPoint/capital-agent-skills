@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 收敛语义检查点重复准备：内容完全相同但文件名不同的候选自动归一到已发布 checkpoint 并返回 compact reuse，不再因临时 `Date.now()` 文件名制造 duplicate 修复循环；`task-context` 的 `inspected-at` 仅作为侦察时间元数据，不再单独改变语义或来源绑定，真实意图、HEAD、源码指纹、授权、范围和阶段变化仍按原门禁失效。重复候选只能刷新可证明的来源/压力/会话变化或显式恢复事件，已发布 manifest 的身份、前驱、source projection 或 recovery receipt 损坏继续失败关闭，不能借重发“洗白”。流程同时明确同一轮先收敛 STATE/task-context/spec/plan/源码，再统一 prepare；真实恢复热内容的分段协议留待独立兼容改动。
+
 ## 0.14.0
 
 - `cap-test` 新增仅作用于本地 `stage=test` 的硬状态机：先登记影响/测试计划和互不重叠的定向/full 命令，定向回归全部通过且 canonical gate evidence 回验有效后冻结候选，再以只绑定 Commit 与 index/worktree/untracked 内容的消费指纹和任务生命周期外的独占账本约束同一源码快照唯一一次最终全量；活动 Task 内单独删除状态或账本仍会失败关闭，源码 A→B→A 往返、Task 切换/Retire、轮换 Task/Session、分支改名或工作树路径变化也不能重置次数，崩溃恢复沿用既有 execution owner 锁，已知长时正式门禁须在冻结前配置足够的显式超时且超时同样消费 full 尝试。状态机证明登记计划的顺序与证据，计划语义完整性仍由 cap-test 路由与评审负责；implement、release、CI、Server Harness 与平台 Test Action 保持原行为。

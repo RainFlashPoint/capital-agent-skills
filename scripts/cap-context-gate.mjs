@@ -5,7 +5,7 @@ import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { checkpointDigest, classifyPressure, validateManifest, contextReplay } from './cap-context-checkpoint.mjs'
+import { checkpointDigest, classifyPressure, validateManifest, contextReplay, TASK_CONTEXT_PROJECTION, projectTaskContext } from './cap-context-checkpoint.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { sanitizeRepositoryUrl } from './client-delivery.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
@@ -107,6 +107,8 @@ async function inputs(candidate, options = {}) {
     const observed = classifyPressure(Number(used), Number(window))
     if (PRESSURES.indexOf(observed) > PRESSURES.indexOf(pressure)) pressure = observed
   }
+  const semanticInputs = { taskContext: projectTaskContext(context), spec, plan, authorization: section(state, 'External operation authorization'), decisions: section(state, 'Decisions log'), gates: section(state, 'Gates passed'), nextAction: section(state, 'Next action') }
+  const legacySemanticInputs = { ...semanticInputs, taskContext: context }
   const binding = {
     schemaVersion: 1,
     runtimeSessionId: (options.environment || process.env).CODEX_THREAD_ID || (options.environment || process.env).CODEX_SESSION_ID || 'none',
@@ -117,13 +119,14 @@ async function inputs(candidate, options = {}) {
     commit: git(repo, ['rev-parse', '--verify', 'HEAD']) || 'working-tree',
     stage,
     sourceFingerprint: hash(await inspectContextFingerprint(repo)),
-    semanticsHash: hash({ taskContext: context, spec, plan, authorization: section(state, 'External operation authorization'), decisions: section(state, 'Decisions log'), gates: section(state, 'Gates passed'), nextAction: section(state, 'Next action') }),
+    semanticsHash: hash(semanticInputs),
+    semanticsProjection: TASK_CONTEXT_PROJECTION,
     recoveryEvent: field(state, 'context-recovery-event') || 'none',
     recoveryReceipt: field(state, 'context-recovery-receipt') || 'none',
   }
   const observedResumeEvent = options.resumeEvent || (options.environment || process.env).CAPITAL_AGENT_CONTEXT_RESUME_EVENT || ''
   if (observedResumeEvent && (!/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,199}$/.test(observedResumeEvent) || observedResumeEvent === 'none')) throw new Error('context_recovery_event_invalid')
-  return { repo, state, context, binding, pressure, observedResumeEvent, coverageSources: { '.cap/task-context.md': context, '.cap/STATE.md': state, ...(spec ? { '.cap/spec.md': spec } : {}), ...(plan ? { '.cap/plan.md': plan } : {}) } }
+  return { repo, state, context, binding, legacySemanticsHash: hash(legacySemanticInputs), pressure, observedResumeEvent, coverageSources: { '.cap/task-context.md': context, '.cap/STATE.md': state, ...(spec ? { '.cap/spec.md': spec } : {}), ...(plan ? { '.cap/plan.md': plan } : {}) } }
 }
 
 export async function captureCoverageRequirements(repo, options = {}) {
@@ -164,7 +167,7 @@ export async function inspectSemanticContext(candidate, options = {}) {
     remediation: passed || !required ? '' : '按 context-compaction.md 核对原始来源，保留前驱并生成当前阶段的检查点，用 create-manifest --bind-entry 绑定输入；校验后由 STATE 单写者更新指针，再重跑阶段门。不要向用户索取新的实施授权。',
   })
   try { input = await inputs(candidate, options) } catch { return result('context_inputs_invalid') }
-  const { repo, state, context, binding, pressure, observedResumeEvent, coverageSources } = input
+  const { repo, state, context, binding, legacySemanticsHash, pressure, observedResumeEvent, coverageSources } = input
   const pointer = field(state, 'context-manifest')
   const active = binding.taskId && field(state, 'stage') && context && binding.stage !== 'done'
   const required = Boolean(active && (observedResumeEvent || STAGES.has(binding.stage) || PRESSURES.indexOf(pressure) >= 2 || (pointer && pointer !== 'none')))
@@ -186,7 +189,9 @@ export async function inspectSemanticContext(candidate, options = {}) {
     if (entry.runtimeSessionId && entry.runtimeSessionId !== 'none' && entry.runtimeSessionId !== binding.runtimeSessionId) return result('context_identity_changed')
     if (entry.sourceFingerprint !== binding.sourceFingerprint) return result('context_sources_changed')
     if (manifest.identity.stage !== binding.stage || entry.stage !== binding.stage) return result('context_stage_changed')
-    if (entry.semanticsHash !== binding.semanticsHash) return result('context_semantics_changed')
+    if (entry.semanticsProjection !== undefined && entry.semanticsProjection !== TASK_CONTEXT_PROJECTION) return result('context_entry_binding_invalid')
+    const expectedSemanticsHash = entry.semanticsProjection === TASK_CONTEXT_PROJECTION ? binding.semanticsHash : legacySemanticsHash
+    if (entry.semanticsHash !== expectedSemanticsHash) return result('context_semantics_changed')
     const providerStatus = field(state, 'provider-compaction')
     if (['requested', 'running', 'failed'].includes(providerStatus) || ['requested', 'running', 'failed'].includes(manifest.provider.status)) return result('context_provider_pending', { kind: 'recover_context_checkpoint' })
     if (manifest.provider.status === 'succeeded' && providerStatus !== 'succeeded') return result('context_recovery_required', { kind: 'recover_context_checkpoint' })

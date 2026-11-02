@@ -470,11 +470,23 @@ function contentHash(content) {
   return createHash('sha256').update(content).digest('hex')
 }
 
+export const TASK_CONTEXT_PROJECTION = 'task-context-without-inspected-at-v1'
+export function projectTaskContext(content) {
+  let metadata = true
+  return content.replace(/\r\n/g, '\n').split('\n').filter(line => {
+    if (/^## /.test(line)) metadata = false
+    return !(metadata && /^(?:- )?inspected-at:[^\r\n]*$/i.test(line))
+  }).join('\n')
+}
+
 // STATE cursor publication is derived metadata. Preserve every semantic field,
 // including provider lifecycle and pressure, while ignoring only these cursors.
-function sourceHash(source, content) {
+export function manifestSourceHash(source, content) {
   if (source.projection === 'state-without-cursors-v1' && source.path === '.cap/STATE.md') {
     return contentHash(content.split(/\r?\n/).filter(line => line.trim() && !/^(?:- )?(?:context-checkpoint(?:-digest)?|context-manifest|context-previous-(?:manifest|digest)|context-pressure|context-used-tokens|context-window-tokens|updated):/.test(line)).join('\n'))
+  }
+  if (source.projection === TASK_CONTEXT_PROJECTION && source.path === '.cap/task-context.md') {
+    return contentHash(projectTaskContext(content))
   }
   return contentHash(content)
 }
@@ -519,8 +531,8 @@ export function createManifest(checkpoint, { checkpointPath, previous = null, pr
     identity: checkpoint.identity,
     atomLog: { path: atomLogPath, sha256: typeof atomLogContent === 'string' ? contentHash(atomLogContent) : null },
     sources: Object.keys(sourceContents).sort(ordinalCompare).map(path => {
-      const source = { path, ...(path === '.cap/STATE.md' ? { projection: 'state-without-cursors-v1' } : {}) }
-      return { ...source, sha256: sourceHash(source, sourceContents[path]) }
+      const source = { path, ...(path === '.cap/STATE.md' ? { projection: 'state-without-cursors-v1' } : path === '.cap/task-context.md' ? { projection: TASK_CONTEXT_PROJECTION } : {}) }
+      return { ...source, sha256: manifestSourceHash(source, sourceContents[path]) }
     }),
     trigger,
     pressure,
@@ -559,8 +571,8 @@ export function validateManifest(manifest, { checkpoint, previous = null, atomLo
   errors.push(...validateAtomLog(atomLogContent, checkpoint))
   if (!Array.isArray(manifest.sources)) fail('manifest_sources_invalid', 'sources', 'source hash list is required')
   else for (const source of manifest.sources) {
-    if (source?.projection !== undefined && (source.projection !== 'state-without-cursors-v1' || source.path !== '.cap/STATE.md')) fail('manifest_source_projection_invalid', 'sources', 'source projection is unsupported')
-    if (!isNonEmptyString(source?.path) || typeof sourceContents[source.path] !== 'string' || source.sha256 !== sourceHash(source, sourceContents[source.path])) fail('manifest_source_hash_mismatch', 'sources', 'source hash is missing or differs')
+    if (source?.projection !== undefined && !((source.projection === 'state-without-cursors-v1' && source.path === '.cap/STATE.md') || (source.projection === TASK_CONTEXT_PROJECTION && source.path === '.cap/task-context.md'))) fail('manifest_source_projection_invalid', 'sources', 'source projection is unsupported')
+    if (!isNonEmptyString(source?.path) || typeof sourceContents[source.path] !== 'string' || source.sha256 !== manifestSourceHash(source, sourceContents[source.path])) fail('manifest_source_hash_mismatch', 'sources', 'source hash is missing or differs')
   }
   const indexedSources = new Set((Array.isArray(manifest.sources) ? manifest.sources : []).map(source => source?.path))
   if (manifest.entry) for (const path of ['.cap/task-context.md', '.cap/STATE.md']) if (!indexedSources.has(path)) fail('manifest_coverage_source_missing', 'sources', `bound coverage requires ${path}`)
