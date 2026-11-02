@@ -21,7 +21,7 @@ export async function observeContextResume(repo, { event = `visible-resume:${ran
     const manifestPath = field(state, 'context-manifest')
     snapshot = await loadContextManifest(repo, manifestPath)
     const expectedManifestSha256 = field(state, 'context-manifest-sha256')
-    const integrity = await validatePublishedSnapshotIntegrity(repo, snapshot, binding, { expectedManifestSha256, allowSourceDrift: Boolean(expectedManifestSha256), manifestPath })
+    const integrity = await validatePublishedSnapshotIntegrity(repo, snapshot, binding, { expectedManifestSha256, allowSourceDrift: false, manifestPath })
     errors = [...integrity.errors]
     for (const key of ['taskId', 'repo', 'branch', 'commit', 'stage']) if (snapshot.manifest.identity[key] !== binding[key]) errors.push({ code: 'context_identity_changed', path: key })
     if (snapshot.manifest.entry?.sessionId !== binding.sessionId) errors.push({ code: 'context_identity_changed', path: 'sessionId' })

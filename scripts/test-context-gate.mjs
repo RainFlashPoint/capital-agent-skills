@@ -374,6 +374,40 @@ test('visible resume rejects a damaged entry receipt before replay', async t => 
   assert.ok(result.errors.some(error => error.code === 'published_recovery_receipt_invalid'), JSON.stringify(result))
 })
 
+test('visible resume rejects drift in a bound non-core artifact source', async t => {
+  const { repo } = await fixture(t)
+  mkdirSync(join(repo, '.cap/verify'), { recursive: true })
+  const artifactPath = join(repo, '.cap/verify/local.json')
+  writeFileSync(artifactPath, '{"passed":true}\n')
+  await publish(repo)
+  const checkpointPath = join(repo, '.cap/context/checkpoint.json')
+  const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf8'))
+  checkpoint.atoms.push({ ...checkpoint.atoms[0], id: 'local-artifact-evidence', type: 'evidence', protection: 'P2', priority: 80, assertion: 'Local artifact passed', trust: 'local-observed', scopeBinding: 'commit', recoverability: 'source-backed', sourceRefs: ['artifact:.cap/verify/local.json'] })
+  const log = checkpoint.atoms.map(atom => JSON.stringify(atom)).join('\n') + '\n'
+  const statePath = join(repo, '.cap/STATE.md')
+  const state = readFileSync(statePath, 'utf8')
+  const sourceContents = { '.cap/STATE.md': state, '.cap/task-context.md': readFileSync(join(repo, '.cap/task-context.md'), 'utf8'), '.cap/verify/local.json': readFileSync(artifactPath, 'utf8') }
+  const manifest = createManifest(checkpoint, { checkpointPath: 'checkpoint.json', atomLogPath: 'atoms.jsonl', atomLogContent: log, sourceContents, budgetTokens: 20000, trigger: 'stage-entry', pressure: 'unknown' })
+  manifest.entry = await captureContextBinding(repo)
+  manifest.entry.previousManifest = 'none'
+  manifest.entry.previousDigest = null
+  manifest.entry.previousManifestSha256 = null
+  writeFileSync(checkpointPath, JSON.stringify(checkpoint))
+  writeFileSync(join(repo, '.cap/context/atoms.jsonl'), log)
+  const manifestSha = writeManifest(repo, '.cap/context/manifest.json', manifest)
+  writeFileSync(statePath, bindManifestSha(state.replace(/^context-checkpoint-digest:.*$/m, `context-checkpoint-digest: ${manifest.digest}`), manifestSha))
+  const current = await inspectSemanticContext(repo)
+  assert.equal(current.passed, true, JSON.stringify(current))
+  writeFileSync(artifactPath, '{"passed":false}\n')
+  assert.equal((await inspectSemanticContext(repo)).reason, 'context_manifest_invalid')
+
+  const result = await observeContextResume(repo, { event: 'visible-resume:artifact-drift', environment: env })
+
+  assert.equal(result.valid, false)
+  assert.equal(result.recovery, null)
+  assert.ok(result.errors.some(error => error.code === 'manifest_source_hash_mismatch'), JSON.stringify(result))
+})
+
 test('STATE provider lifecycle cannot reuse an unavailable manifest or a different success event', async t => {
   const { repo } = await fixture(t)
   const path = join(repo, '.cap/STATE.md')
