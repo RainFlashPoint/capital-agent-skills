@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -48,8 +49,9 @@ async function prepareCliContext(root) {
  manifest.entry.previousDigest=null
  await writeFile(join(root,'.cap/context/checkpoint.json'),JSON.stringify(checkpoint))
  await writeFile(join(root,'.cap/context/atoms.jsonl'),log)
- await writeFile(join(root,'.cap/context/manifest.json'),JSON.stringify(manifest))
- await writeFile(join(root,'.cap/STATE.md'),sources['.cap/STATE.md']+`\ncontext-manifest: .cap/context/manifest.json\ncontext-checkpoint: .cap/context/checkpoint.json\ncontext-checkpoint-digest: ${manifest.digest}\ncontext-previous-manifest: none\ncontext-previous-digest: none\n`)
+ const manifestText=JSON.stringify(manifest),manifestSha=createHash('sha256').update(manifestText).digest('hex')
+ await writeFile(join(root,'.cap/context/manifest.json'),manifestText)
+ await writeFile(join(root,'.cap/STATE.md'),sources['.cap/STATE.md']+`\ncontext-manifest: .cap/context/manifest.json\ncontext-manifest-sha256: ${manifestSha}\ncontext-checkpoint: .cap/context/checkpoint.json\ncontext-checkpoint-digest: ${manifest.digest}\ncontext-previous-manifest: none\ncontext-previous-digest: none\n`)
 }
 
 async function completeTestSequence(root, targetedCommand, fullCommand = fullOptsCommand) {

@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url'
 import { captureContextBinding, captureCoverageRequirements, inspectSemanticContext } from './cap-context-gate.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { prepareContext } from './cap-context-preparation.mjs'
-import { main as contextCheckpointMain } from './cap-context-checkpoint.mjs'
 import { inspectTaskContext } from './cap-runtime.mjs'
 import { handleContextHook, recoverContextHook, codexHooksConfig } from './cap-context-hooks.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
@@ -209,13 +208,14 @@ test('manifest source-hash tampering cannot be hidden by real source drift or a 
   assert.equal(next.valid, false, JSON.stringify(next))
   assert.ok(next.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(next))
 
-  const lowLevel = await contextCheckpointMain([
+  const lowLevel = spawnSync(process.execPath, [join(packageRoot, 'scripts/cap-context-checkpoint.mjs'),
     'create-manifest', join(repo, successorPath), '--bind-entry', repo, '--previous', join(repo, path),
     '--atom-log', join(repo, atomLogPath), '--budget-tokens', '20000', '--trigger', 'stage-entry',
     '--pressure', 'unknown', '--provider-kind', 'none', '--provider-status', 'unavailable', '--provider-event', 'none',
     '--output', join(repo, '.cap/context/manifest-low-level-successor.json'),
-  ])
-  assert.equal(lowLevel.valid, false, JSON.stringify(lowLevel))
+  ], { cwd: repo, env: environment, encoding: 'utf8' })
+  assert.equal(lowLevel.status, 1, lowLevel.stdout + lowLevel.stderr)
+  assert.equal(JSON.parse(lowLevel.stdout).valid, false, lowLevel.stdout)
   assert.throws(() => readFileSync(join(repo, '.cap/context/manifest-low-level-successor.json')), /ENOENT/)
 })
 
