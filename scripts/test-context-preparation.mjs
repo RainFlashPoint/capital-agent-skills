@@ -110,7 +110,7 @@ for (const [name, mutate, reason] of [
   ['source projection', manifest => { manifest.sources.find(source => source.path === '.cap/task-context.md').projection = 'forged-projection' }, 'context_manifest_invalid'],
 ]) {
   test(`prepare cannot replace a published manifest with tampered ${name}`, async t => {
-    const { repo, path } = await fixture(t)
+    const { repo, checkpoint, path } = await fixture(t)
     const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
     assert.equal(first.valid, true, JSON.stringify(first))
     const manifestPath = join(repo, first.manifest)
@@ -126,6 +126,14 @@ for (const [name, mutate, reason] of [
     assert.equal(blocked.valid, false, JSON.stringify(blocked))
     assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
     assert.equal((await inspectSemanticContext(repo, { environment })).reason, reason)
+
+    const successor = structuredClone(checkpoint)
+    successor.atoms.push({ ...successor.atoms[0], id: `successor-${name.replaceAll(' ', '-')}`, type: 'constraint', protection: 'P2', assertion: 'A legitimate successor cannot repair damaged predecessor evidence' })
+    const successorPath = `.cap/context/checkpoint-successor-${name.replaceAll(' ', '-')}.json`
+    writeFileSync(join(repo, successorPath), JSON.stringify(successor))
+    const successorResult = await prepareContext(repo, { checkpointPath: successorPath, budgetTokens: 20000, environment })
+    assert.equal(successorResult.valid, false, JSON.stringify(successorResult))
+    assert.ok(successorResult.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(successorResult))
   })
 }
 
@@ -143,6 +151,25 @@ test('prepare does not silently replace a damaged recovery receipt without an ob
   assert.equal(blocked.valid, false, JSON.stringify(blocked))
   assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
 })
+
+for (const damage of ['tampered', 'missing']) {
+  test(`prepare cannot rebuild a ${damage} recovery receipt with the same visible event`, async t => {
+    const { repo, path } = await fixture(t)
+    const event = 'visible-resume:same-event'
+    const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event, environment })
+    assert.equal(first.valid, true, JSON.stringify(first))
+    const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+    const receiptPath = state.match(/^context-recovery-receipt: (.+)$/m)[1]
+    if (damage === 'missing') rmSync(join(repo, receiptPath))
+    else writeFileSync(join(repo, receiptPath), JSON.stringify({ ...first.recovery, digest: 'tampered' }))
+    assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_recovery_required')
+
+    const blocked = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event, environment })
+
+    assert.equal(blocked.valid, false, JSON.stringify(blocked))
+    assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
+  })
+}
 
 for (const field of ['sessionId', 'runtimeSessionId']) {
   test(`prepare cannot treat a tampered entry ${field} as a legitimate session handoff`, async t => {

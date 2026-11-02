@@ -12,19 +12,32 @@ const hash = value => createHash('sha256').update(JSON.stringify(value)).digest(
 const problem = (code, path = '$') => ({ code, path })
 const failed = errors => ({ valid: false, errors })
 
-function refreshablePublishedSnapshot(reason, snapshot, binding, { event } = {}) {
+async function publishedSnapshotIntegrity(repo, snapshot, binding) {
   const checked = validateManifest(snapshot.manifest, { checkpoint: snapshot.checkpoint, previous: snapshot.previous, atomLogContent: snapshot.atomLogContent, sourceContents: snapshot.sourceContents })
   const structuralErrors = checked.errors.filter(error => error.code !== 'manifest_source_hash_mismatch')
   if (structuralErrors.length) return false
+  const entry = snapshot.manifest.entry
+  if (!entry || entry.schemaVersion !== 1) return false
+  for (const key of ['taskId', 'repo', 'branch', 'commit', 'stage']) if (entry[key] !== snapshot.checkpoint.identity?.[key]) return false
+  if (entry.sessionId !== binding.sessionId) return false
+  if (entry.runtimeSessionId && entry.runtimeSessionId !== 'none' && entry.runtimeSessionId !== binding.runtimeSessionId) return false
+  if (entry.recoveryEvent && entry.recoveryEvent !== 'none') {
+    try {
+      if (!entry.recoveryReceipt?.startsWith('.cap/context/')) return false
+      const receipt = JSON.parse(await readContained(repo, entry.recoveryReceipt))
+      if (!validateRecoveryReceipt(receipt, snapshot.manifest, snapshot.checkpoint, entry)) return false
+    } catch { return false }
+  }
+  return true
+}
+
+function refreshablePublishedSnapshot(reason, snapshot, binding, { event, successor = false } = {}) {
   const sourceDrift = (snapshot.manifest.sources || []).some(source => typeof snapshot.sourceContents[source.path] === 'string' && source.sha256 !== manifestSourceHash(source, snapshot.sourceContents[source.path]))
   if (['context_sources_changed', 'context_semantics_changed'].includes(reason)) return sourceDrift
   if (reason === 'context_pressure_increased') return !sourceDrift
-  if (reason === 'context_recovery_required') return Boolean(event)
-  if (reason === 'context_entry_binding_missing') return !snapshot.manifest.entry && !sourceDrift
-  // Session fields live inside the editable manifest. A mismatch is not proof
-  // of a legitimate handoff and must not authorize replacing the evidence that
-  // reported it. Legacy unbound runtime entries already pass the gate and can
-  // be rebound through the normal publication path.
+  if (reason === 'context_recovery_required') return Boolean(event && event !== snapshot.manifest.entry.recoveryEvent)
+  if (successor && reason === 'context_stage_changed') return ['taskId', 'repo', 'branch'].every(key => snapshot.checkpoint.identity?.[key] === binding[key])
+  if (successor && reason === 'context_identity_changed') return ['taskId', 'repo', 'branch'].every(key => snapshot.checkpoint.identity?.[key] === binding[key]) && snapshot.checkpoint.identity?.commit !== binding.commit
   return false
 }
 
@@ -110,12 +123,15 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   if (provider.status === 'succeeded' && (!binding.recoveryEvent || binding.recoveryEvent === 'none' || provider.eventRef !== binding.recoveryEvent)) errors.push(problem('context_provider_event_mismatch'))
   if (errors.length) return failed(errors)
   const existing = await inspectSemanticContext(repo, { environment })
-  if (same) {
-    let snapshot
+  let snapshot = null
+  if (predecessor) {
     try { snapshot = await loadContextManifest(repo, predecessor.manifestPath) }
     catch { return failed([problem('context_published_predecessor_invalid')]) }
+    if (!await publishedSnapshotIntegrity(repo, snapshot, binding)) return failed([problem('context_published_predecessor_invalid')])
+    if (!existing.passed && !refreshablePublishedSnapshot(existing.reason, snapshot, binding, { event, successor: !same })) return failed([problem('context_published_predecessor_invalid'), problem(existing.reason, 'publishedManifest')])
+  }
+  if (same) {
     if (existing.passed && snapshot.manifest.hotBudgetTokens === budgetTokens && snapshot.manifest.entry.runtimeSessionId === binding.runtimeSessionId) return { valid: true, reused: true, outputMode: 'compact', checkpoint: checkpointPath, ...(ignoredCheckpoint ? { ignoredCheckpoint } : {}), manifest: existing.manifest, digest: existing.digest, errors: [], warnings: semanticProtectionAdvisories(checkpoint, requirements) }
-    if (!existing.passed && !refreshablePublishedSnapshot(existing.reason, snapshot, binding, { event })) return failed([problem('context_published_predecessor_invalid'), problem(existing.reason, 'publishedManifest')])
   }
 
   const sources = {}
