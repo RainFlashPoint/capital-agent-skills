@@ -29,6 +29,10 @@ function section(text, heading) {
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export const manifestContentSha256 = content => createHash('sha256').update(content).digest('hex')
 
+function manifestCheckpointPath(repo, manifestPath, checkpointPath) {
+  return join(relative(repo, resolve(repo, manifestPath, '..')), checkpointPath).split(sep).join('/')
+}
+
 // The complete replay payload must match the validated snapshot. Checking only
 // ids permits an edited receipt to silently replace a protected assertion.
 export function validateRecoveryReceipt(receipt, manifest, checkpoint, binding) {
@@ -125,6 +129,12 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
         const ancestor = await loadContextManifest(repo, entry.previousManifest)
         if (ancestor.manifest.digest !== entry.previousDigest || checkpointDigest(ancestor.checkpoint) !== entry.previousDigest) throw new Error('ancestor_digest_invalid')
         if (integrityVersion === 1 && !/^[a-f0-9]{64}$/.test(entry.previousManifestSha256 || '')) throw new Error('ancestor_sha_missing')
+        const currentCheckpointPath = manifestCheckpointPath(repo, manifestPath, snapshot.manifest.checkpoint)
+        const ancestorCheckpointPath = manifestCheckpointPath(repo, entry.previousManifest, ancestor.manifest.checkpoint)
+        const expectedPreviousCheckpoint = relative(resolve(repo, manifestPath, '..'), resolve(repo, ancestorCheckpointPath)).split(sep).join('/')
+        if (snapshot.manifest.previousDigest !== null) {
+          if (snapshot.manifest.previousDigest !== entry.previousDigest || snapshot.manifest.previousCheckpoint !== expectedPreviousCheckpoint) throw new Error('ancestor_chain_split')
+        } else if (entry.previousDigest !== snapshot.manifest.digest || ancestorCheckpointPath !== currentCheckpointPath) throw new Error('ancestor_lifecycle_split')
         const ancestorCheck = await validatePublishedSnapshotIntegrity(repo, ancestor, binding, {
           expectedManifestSha256: entry.previousManifestSha256 || '',
           allowSourceDrift: Boolean(entry.previousManifestSha256),
@@ -270,17 +280,6 @@ export async function inspectSemanticContext(candidate, options = {}) {
     if (entry.recoveryEvent !== binding.recoveryEvent) return result('context_recovery_required', { kind: 'recover_context_checkpoint' })
     const checked = validateManifest(manifest, { checkpoint, previous, atomLogContent, sourceContents })
     if (!checked.valid) return result('context_manifest_invalid', { errors: checked.errors.map(e => e.code) })
-    if (entry.previousManifest === 'none') {
-      if (entry.previousDigest !== null || manifest.previousDigest !== null) return result('context_predecessor_invalid')
-    } else {
-      if (!entry.previousManifest?.startsWith('.cap/context/')) return result('context_predecessor_invalid')
-      const ancestor = await loadContextManifest(repo, entry.previousManifest)
-      const ancestorPath = join(relative(repo, resolve(repo, entry.previousManifest, '..')), ancestor.manifest.checkpoint).split(sep).join('/')
-      if (ancestor.manifest.digest !== entry.previousDigest || checkpointDigest(ancestor.checkpoint) !== entry.previousDigest) return result('context_predecessor_invalid')
-      const expectedPrevious = relative(resolve(repo, pointer, '..'), resolve(repo, ancestorPath)).split(sep).join('/')
-      if (manifest.previousDigest !== null && (manifest.previousDigest !== entry.previousDigest || manifest.previousCheckpoint !== expectedPrevious)) return result('context_predecessor_invalid')
-      if (manifest.previousDigest === null && (entry.previousDigest !== manifest.digest || ancestorPath !== field(state, 'context-checkpoint'))) return result('context_predecessor_invalid')
-    }
     const coverageErrors = validateSemanticCoverage(checkpoint, semanticCoverageRequirements(coverageSources))
     if (coverageErrors.length) return result('context_semantic_coverage_incomplete', { errors: coverageErrors })
     if (binding.recoveryEvent !== 'none') {

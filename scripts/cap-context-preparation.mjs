@@ -12,9 +12,11 @@ const hash = value => createHash('sha256').update(JSON.stringify(value)).digest(
 const problem = (code, path = '$') => ({ code, path })
 const failed = errors => ({ valid: false, errors })
 
-function refreshablePublishedSnapshot(reason, snapshot, binding, { event, successor = false } = {}) {
+function refreshablePublishedSnapshot(reason, snapshot, binding, { event, successor = false, currentSources = {} } = {}) {
   const sourceDrift = (snapshot.manifest.sources || []).some(source => typeof snapshot.sourceContents[source.path] === 'string' && source.sha256 !== manifestSourceHash(source, snapshot.sourceContents[source.path]))
-  if (['context_sources_changed', 'context_semantics_changed'].includes(reason)) return sourceDrift
+  const indexedSources = new Set((snapshot.manifest.sources || []).map(source => source.path))
+  const optionalSemanticSourceAdded = ['.cap/spec.md', '.cap/plan.md'].some(path => Object.hasOwn(currentSources, path) && !indexedSources.has(path))
+  if (['context_sources_changed', 'context_semantics_changed'].includes(reason)) return sourceDrift || optionalSemanticSourceAdded
   if (reason === 'context_pressure_increased') return !sourceDrift
   if (reason === 'context_recovery_required') return Boolean(event && event !== snapshot.manifest.entry.recoveryEvent)
   if (successor && reason === 'context_stage_changed') return ['taskId', 'repo', 'branch'].every(key => snapshot.checkpoint.identity?.[key] === binding[key])
@@ -103,15 +105,6 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   if (['requested', 'running', 'failed'].includes(provider.status)) errors.push(problem('context_provider_pending'))
   if (provider.status === 'succeeded' && (!binding.recoveryEvent || binding.recoveryEvent === 'none' || provider.eventRef !== binding.recoveryEvent)) errors.push(problem('context_provider_event_mismatch'))
   if (errors.length) return failed(errors)
-  const existing = await inspectSemanticContext(repo, { environment })
-  const snapshot = predecessor?.snapshot || null
-  if (predecessor) {
-    if (!existing.passed && !refreshablePublishedSnapshot(existing.reason, snapshot, binding, { event, successor: !same })) return failed([problem('context_published_predecessor_invalid'), problem(existing.reason, 'publishedManifest')])
-  }
-  if (same) {
-    if (existing.passed && snapshot.manifest.hotBudgetTokens === budgetTokens && snapshot.manifest.entry.runtimeSessionId === binding.runtimeSessionId) return { valid: true, reused: true, outputMode: 'compact', checkpoint: checkpointPath, ...(ignoredCheckpoint ? { ignoredCheckpoint } : {}), manifest: existing.manifest, digest: existing.digest, errors: [], warnings: semanticProtectionAdvisories(checkpoint, requirements) }
-  }
-
   const sources = {}
   for (const path of ['.cap/STATE.md', '.cap/task-context.md', '.cap/spec.md', '.cap/plan.md']) {
     try { sources[path] = await readContained(repo, path) } catch (cause) { if (cause.code !== 'ENOENT') throw cause }
@@ -119,6 +112,14 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   for (const atom of checkpoint.atoms) for (const ref of atom.sourceRefs) {
     const path = fileSource(ref)
     if (path && !Object.hasOwn(sources, path)) sources[path] = await readContained(repo, path)
+  }
+  const existing = await inspectSemanticContext(repo, { environment })
+  const snapshot = predecessor?.snapshot || null
+  if (predecessor) {
+    if (!existing.passed && !refreshablePublishedSnapshot(existing.reason, snapshot, binding, { event, successor: !same, currentSources: sources })) return failed([problem('context_published_predecessor_invalid'), problem(existing.reason, 'publishedManifest')])
+  }
+  if (same) {
+    if (existing.passed && snapshot.manifest.hotBudgetTokens === budgetTokens && snapshot.manifest.entry.runtimeSessionId === binding.runtimeSessionId) return { valid: true, reused: true, outputMode: 'compact', checkpoint: checkpointPath, ...(ignoredCheckpoint ? { ignoredCheckpoint } : {}), manifest: existing.manifest, digest: existing.digest, errors: [], warnings: semanticProtectionAdvisories(checkpoint, requirements) }
   }
   const id = randomUUID()
   const log = checkpoint.atoms.map(atom => JSON.stringify(atom)).join('\n') + '\n'

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -267,6 +268,85 @@ test('a successor binds the direct predecessor manifest bytes and rejects later 
   const blocked = await prepareContext(repo, { checkpointPath: thirdPath, budgetTokens: 20000, environment })
   assert.equal(blocked.valid, false, JSON.stringify(blocked))
   assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
+})
+
+test('recursive integrity rejects a split checkpoint and manifest predecessor chain', async t => {
+  const { repo, checkpoint, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+
+  const alternate = structuredClone(checkpoint)
+  alternate.atoms.push({ ...alternate.atoms[0], id: 'alternate-predecessor', type: 'constraint', protection: 'P2', assertion: 'Alternate predecessor branch' })
+  const alternatePath = '.cap/context/checkpoint-alternate-predecessor.json'
+  const alternateLogPath = '.cap/context/atoms-alternate-predecessor.jsonl'
+  const alternateManifestPath = '.cap/context/manifest-alternate-predecessor.json'
+  writeFileSync(join(repo, alternatePath), JSON.stringify(alternate))
+  writeFileSync(join(repo, alternateLogPath), `${alternate.atoms.map(atom => JSON.stringify(atom)).join('\n')}\n`)
+  const alternateResult = spawnSync(process.execPath, [
+    join(packageRoot, 'scripts/cap-context-checkpoint.mjs'), 'create-manifest', alternatePath, '--bind-entry', repo, '--previous', path,
+    '--atom-log', alternateLogPath, '--budget-tokens', '20000', '--trigger', 'stage-entry',
+    '--pressure', 'unknown', '--provider-kind', 'none', '--provider-status', 'unavailable', '--provider-event', 'none',
+    '--output', alternateManifestPath,
+  ], { cwd: repo, env: environment, encoding: 'utf8' })
+  assert.equal(alternateResult.status, 0, alternateResult.stdout + alternateResult.stderr)
+
+  const middle = structuredClone(checkpoint)
+  middle.atoms.push({ ...middle.atoms[0], id: 'middle-predecessor', type: 'constraint', protection: 'P2', assertion: 'Middle predecessor branch' })
+  const middlePath = '.cap/context/checkpoint-middle-predecessor.json'
+  writeFileSync(join(repo, middlePath), JSON.stringify(middle))
+  const second = await prepareContext(repo, { checkpointPath: middlePath, budgetTokens: 20000, environment })
+  assert.equal(second.valid, true, JSON.stringify(second))
+
+  const current = structuredClone(middle)
+  current.atoms.push({ ...current.atoms[0], id: 'current-predecessor', type: 'constraint', protection: 'P2', assertion: 'Current predecessor branch' })
+  const currentPath = '.cap/context/checkpoint-current-predecessor.json'
+  writeFileSync(join(repo, currentPath), JSON.stringify(current))
+  const third = await prepareContext(repo, { checkpointPath: currentPath, budgetTokens: 20000, environment })
+  assert.equal(third.valid, true, JSON.stringify(third))
+
+  const alternateManifestText = readFileSync(join(repo, alternateManifestPath), 'utf8')
+  const alternateManifest = JSON.parse(alternateManifestText)
+  const middleManifestPath = join(repo, second.manifest)
+  const middleManifest = JSON.parse(readFileSync(middleManifestPath, 'utf8'))
+  middleManifest.entry.previousManifest = alternateManifestPath
+  middleManifest.entry.previousDigest = alternateManifest.digest
+  middleManifest.entry.previousManifestSha256 = createHash('sha256').update(alternateManifestText).digest('hex')
+  const middleManifestText = JSON.stringify(middleManifest)
+  writeFileSync(middleManifestPath, middleManifestText)
+
+  const currentManifestPath = join(repo, third.manifest)
+  const currentManifest = JSON.parse(readFileSync(currentManifestPath, 'utf8'))
+  currentManifest.entry.previousManifestSha256 = createHash('sha256').update(middleManifestText).digest('hex')
+  const currentManifestText = JSON.stringify(currentManifest)
+  writeFileSync(currentManifestPath, currentManifestText)
+  const statePath = join(repo, '.cap/STATE.md')
+  writeFileSync(statePath, readFileSync(statePath, 'utf8').replace(/^context-manifest-sha256:.*$/m, `context-manifest-sha256: ${createHash('sha256').update(currentManifestText).digest('hex')}`))
+
+  const blocked = await inspectSemanticContext(repo, { environment })
+  assert.equal(blocked.reason, 'context_manifest_invalid', JSON.stringify(blocked))
+})
+
+test('prepare accepts a newly added optional spec source when the successor covers it', async t => {
+  const { repo, checkpoint, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  writeFileSync(join(repo, '.cap/spec.md'), '## Acceptance criteria\n- Preserve the documented behavior\n')
+  const requirements = await captureCoverageRequirements(repo, { environment })
+  const successor = structuredClone(checkpoint)
+  const covered = new Set(successor.coverage.map(item => item.id))
+  for (const [index, requirement] of requirements.entries()) {
+    if (covered.has(requirement.id)) continue
+    const atomId = `new-spec-${index}`
+    successor.atoms.push({ id: atomId, type: requirement.types[0], assertion: `Cover ${requirement.label}`, protection: requirement.minProtection, priority: 90, scope: successor.identity, sourceRefs: [requirement.sourceRef], trust: 'repository-observed', status: 'active', certainty: 'confirmed', recoverability: 'source-backed', invalidation: [], supersedes: [] })
+    successor.coverage.push({ id: requirement.id, atomIds: [atomId] })
+  }
+  const successorPath = '.cap/context/checkpoint-new-spec.json'
+  writeFileSync(join(repo, successorPath), JSON.stringify(successor))
+
+  const result = await prepareContext(repo, { checkpointPath: successorPath, budgetTokens: 20000, environment })
+
+  assert.equal(result.valid, true, JSON.stringify(result))
+  assert.equal((await inspectSemanticContext(repo, { environment })).passed, true)
 })
 
 test('a versioned manifest cannot downgrade to legacy when the STATE manifest SHA is removed', async t => {
