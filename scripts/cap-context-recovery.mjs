@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { writeFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { captureContextBinding, loadContextManifest, readContained, validatePublishedSnapshotIntegrity } from './cap-context-gate.mjs'
-import { contextReplay } from './cap-context-checkpoint.mjs'
+import { captureContextBindingDetails, loadContextManifest, readContained, validatePublishedSnapshotIntegrity } from './cap-context-gate.mjs'
+import { contextReplay, TASK_CONTEXT_PROJECTION } from './cap-context-checkpoint.mjs'
 
 const field = (text, key) => text.match(new RegExp(`^(?:- )?${key}:[ \\t]*([^\\r\\n]*)`, 'm'))?.[1]?.trim() || ''
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -15,7 +15,7 @@ export async function observeContextResume(repo, { event = `visible-resume:${ran
   const { inspectBoundary } = await import('./cap-runtime.mjs')
   repo = (await inspectBoundary(repo, { environment })).repo
   const state = await readContained(repo, '.cap/STATE.md')
-  const binding = await captureContextBinding(repo, { environment })
+  const { binding, legacySemanticsHash } = await captureContextBindingDetails(repo, { environment })
   let snapshot, errors = []
   try {
     const manifestPath = field(state, 'context-manifest')
@@ -25,7 +25,8 @@ export async function observeContextResume(repo, { event = `visible-resume:${ran
     errors = [...integrity.errors]
     for (const key of ['taskId', 'repo', 'branch', 'commit', 'stage']) if (snapshot.manifest.identity[key] !== binding[key]) errors.push({ code: 'context_identity_changed', path: key })
     if (snapshot.manifest.entry?.sessionId !== binding.sessionId) errors.push({ code: 'context_identity_changed', path: 'sessionId' })
-    if (snapshot.manifest.entry?.sourceFingerprint !== binding.sourceFingerprint || snapshot.manifest.entry?.semanticsHash !== binding.semanticsHash) errors.push({ code: 'context_sources_changed', path: 'entry' })
+    const expectedSemanticsHash = snapshot.manifest.entry?.semanticsProjection === TASK_CONTEXT_PROJECTION ? binding.semanticsHash : legacySemanticsHash
+    if (snapshot.manifest.entry?.sourceFingerprint !== binding.sourceFingerprint || snapshot.manifest.entry?.semanticsHash !== expectedSemanticsHash) errors.push({ code: 'context_sources_changed', path: 'entry' })
     if (field(state, 'provider-compaction') === 'succeeded' && (field(state, 'provider-compaction-event') !== event || snapshot.manifest.provider.eventRef !== event)) errors.push({ code: 'context_provider_event_mismatch', path: 'provider.eventRef' })
     if (['requested', 'running', 'failed'].includes(field(state, 'provider-compaction')) || ['requested', 'running', 'failed'].includes(snapshot.manifest.provider.status)) errors.push({ code: 'context_provider_pending', path: 'provider' })
   } catch { errors.push({ code: 'context_manifest_invalid', path: 'context-manifest' }) }

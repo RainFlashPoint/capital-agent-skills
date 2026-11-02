@@ -233,9 +233,14 @@ export async function capturePublishedPredecessor(repo, options = {}) {
 }
 
 export async function captureContextBinding(repo, options = {}) {
-  const { binding } = await inputs(repo, options)
+  const { binding } = await captureContextBindingDetails(repo, options)
   if (!binding.taskId || !binding.stage) throw new Error('context_task_binding_missing')
   return binding
+}
+
+export async function captureContextBindingDetails(repo, options = {}) {
+  const { binding, legacySemanticsHash } = await inputs(repo, options)
+  return { binding, legacySemanticsHash }
 }
 
 export async function captureContextPressure(repo, options = {}) {
