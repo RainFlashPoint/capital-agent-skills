@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto'
 import { writeFile, readFile, rename, rm, open } from 'node:fs/promises'
 import { join, posix } from 'node:path'
-import { captureContextBinding, captureContextPressure, captureCoverageRequirements, capturePublishedPredecessor, inspectSemanticContext, loadContextManifest, readContained, validateRecoveryReceipt } from './cap-context-gate.mjs'
+import { captureContextBinding, captureContextPressure, captureCoverageRequirements, capturePublishedPredecessor, inspectSemanticContext, manifestContentSha256, readContained, validateRecoveryReceipt } from './cap-context-gate.mjs'
 import { checkpointDigest, createManifest, fileSource, validateCheckpointTransition, validateManifest, planContext, contextReplay, manifestSourceHash } from './cap-context-checkpoint.mjs'
 import { validateSemanticCoverage, semanticProtectionAdvisories } from './cap-context-coverage.mjs'
 import { resolveExecutionStage } from '../runtime/execution/local-support.mjs'
@@ -11,25 +11,6 @@ const setField = (text, key, value) => new RegExp(`^(?:- )?${key}:.*$`, 'm').tes
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const problem = (code, path = '$') => ({ code, path })
 const failed = errors => ({ valid: false, errors })
-
-async function publishedSnapshotIntegrity(repo, snapshot, binding) {
-  const checked = validateManifest(snapshot.manifest, { checkpoint: snapshot.checkpoint, previous: snapshot.previous, atomLogContent: snapshot.atomLogContent, sourceContents: snapshot.sourceContents })
-  const structuralErrors = checked.errors.filter(error => error.code !== 'manifest_source_hash_mismatch')
-  if (structuralErrors.length) return false
-  const entry = snapshot.manifest.entry
-  if (!entry || entry.schemaVersion !== 1) return false
-  for (const key of ['taskId', 'repo', 'branch', 'commit', 'stage']) if (entry[key] !== snapshot.checkpoint.identity?.[key]) return false
-  if (entry.sessionId !== binding.sessionId) return false
-  if (entry.runtimeSessionId && entry.runtimeSessionId !== 'none' && entry.runtimeSessionId !== binding.runtimeSessionId) return false
-  if (entry.recoveryEvent && entry.recoveryEvent !== 'none') {
-    try {
-      if (!entry.recoveryReceipt?.startsWith('.cap/context/')) return false
-      const receipt = JSON.parse(await readContained(repo, entry.recoveryReceipt))
-      if (!validateRecoveryReceipt(receipt, snapshot.manifest, snapshot.checkpoint, entry)) return false
-    } catch { return false }
-  }
-  return true
-}
 
 function refreshablePublishedSnapshot(reason, snapshot, binding, { event, successor = false } = {}) {
   const sourceDrift = (snapshot.manifest.sources || []).some(source => typeof snapshot.sourceContents[source.path] === 'string' && source.sha256 !== manifestSourceHash(source, snapshot.sourceContents[source.path]))
@@ -123,11 +104,8 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   if (provider.status === 'succeeded' && (!binding.recoveryEvent || binding.recoveryEvent === 'none' || provider.eventRef !== binding.recoveryEvent)) errors.push(problem('context_provider_event_mismatch'))
   if (errors.length) return failed(errors)
   const existing = await inspectSemanticContext(repo, { environment })
-  let snapshot = null
+  const snapshot = predecessor?.snapshot || null
   if (predecessor) {
-    try { snapshot = await loadContextManifest(repo, predecessor.manifestPath) }
-    catch { return failed([problem('context_published_predecessor_invalid')]) }
-    if (!await publishedSnapshotIntegrity(repo, snapshot, binding)) return failed([problem('context_published_predecessor_invalid')])
     if (!existing.passed && !refreshablePublishedSnapshot(existing.reason, snapshot, binding, { event, successor: !same })) return failed([problem('context_published_predecessor_invalid'), problem(existing.reason, 'publishedManifest')])
   }
   if (same) {
@@ -156,7 +134,7 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
       trigger: binding.recoveryEvent !== 'none' ? 'visible-resume' : 'stage-entry',
       pressure, provider, sourceContents: sources,
     })
-    manifest.entry = { ...currentBinding, previousManifest: predecessor?.manifestPath || 'none', previousDigest: predecessor?.digest || null }
+    manifest.entry = { ...currentBinding, previousManifest: predecessor?.manifestPath || 'none', previousDigest: predecessor?.digest || null, previousManifestSha256: predecessor?.manifestSha256 || null }
     return manifest
   }
   let manifest = makeManifest(binding)
@@ -185,6 +163,8 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   manifest = makeManifest(currentBinding)
   checked = validateManifest(manifest, { checkpoint, previous: predecessor && !same ? predecessor.checkpoint : null, atomLogContent: log, sourceContents: sources })
   if (!checked.valid) return failed(checked.errors)
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`
+  const manifestSha256 = manifestContentSha256(manifestText)
   let atomCreated = false
   let manifestCreated = false
   let published = false
@@ -196,10 +176,10 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
       if (cause.code !== 'EEXIST') throw cause
       if (await readFile(join(repo, logPath), 'utf8') !== log) throw new Error('context_atom_hash_collision')
     }
-    await writeFile(join(repo, manifestPath), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
+    await writeFile(join(repo, manifestPath), manifestText, { flag: 'wx', mode: 0o600 })
     manifestCreated = true
     let next = state
-    for (const [key, value] of Object.entries({ 'context-checkpoint': checkpointPath, 'context-checkpoint-digest': manifest.digest, 'context-manifest': manifestPath, 'context-previous-manifest': predecessor?.manifestPath || 'none', 'context-previous-digest': predecessor?.digest || 'none' })) next = setField(next, key, value)
+    for (const [key, value] of Object.entries({ 'context-checkpoint': checkpointPath, 'context-checkpoint-digest': manifest.digest, 'context-manifest': manifestPath, 'context-manifest-sha256': manifestSha256, 'context-previous-manifest': predecessor?.manifestPath || 'none', 'context-previous-digest': predecessor?.digest || 'none' })) next = setField(next, key, value)
     await replaceState(repo, state, next)
     published = true
   } finally {

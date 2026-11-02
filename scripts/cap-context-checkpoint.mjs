@@ -483,7 +483,7 @@ export function projectTaskContext(content) {
 // including provider lifecycle and pressure, while ignoring only these cursors.
 export function manifestSourceHash(source, content) {
   if (source.projection === 'state-without-cursors-v1' && source.path === '.cap/STATE.md') {
-    return contentHash(content.split(/\r?\n/).filter(line => line.trim() && !/^(?:- )?(?:context-checkpoint(?:-digest)?|context-manifest|context-previous-(?:manifest|digest)|context-pressure|context-used-tokens|context-window-tokens|updated):/.test(line)).join('\n'))
+    return contentHash(content.split(/\r?\n/).filter(line => line.trim() && !/^(?:- )?(?:context-checkpoint(?:-digest)?|context-manifest(?:-sha256)?|context-previous-(?:manifest|digest)|context-pressure|context-used-tokens|context-window-tokens|updated):/.test(line)).join('\n'))
   }
   if (source.projection === TASK_CONTEXT_PROJECTION && source.path === '.cap/task-context.md') {
     return contentHash(projectTaskContext(content))
@@ -544,10 +544,10 @@ export function createManifest(checkpoint, { checkpointPath, previous = null, pr
   return manifest
 }
 
-export function validateManifest(manifest, { checkpoint, previous = null, atomLogContent, sourceContents = {}, requireRecovery = false } = {}) {
+export function validateManifest(manifest, { checkpoint, previous = null, atomLogContent, sourceContents = {}, requireRecovery = false, allowSourceDrift = false } = {}) {
   const validation = validateCheckpoint(checkpoint)
   const errors = [...validation.errors]
-  if (manifest?.entry) errors.push(...validateSemanticCoverage(checkpoint, semanticCoverageRequirements(sourceContents)))
+  if (manifest?.entry && !allowSourceDrift) errors.push(...validateSemanticCoverage(checkpoint, semanticCoverageRequirements(sourceContents)))
   const fail = (code, path, message) => errors.push(error(code, path, message))
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return { valid: false, errors: [error('manifest_invalid', '$', 'manifest must be an object')] }
   if (manifest.schemaVersion !== 1) fail('manifest_schema_invalid', 'schemaVersion', 'manifest schemaVersion must be 1')
@@ -572,7 +572,7 @@ export function validateManifest(manifest, { checkpoint, previous = null, atomLo
   if (!Array.isArray(manifest.sources)) fail('manifest_sources_invalid', 'sources', 'source hash list is required')
   else for (const source of manifest.sources) {
     if (source?.projection !== undefined && !((source.projection === 'state-without-cursors-v1' && source.path === '.cap/STATE.md') || (source.projection === TASK_CONTEXT_PROJECTION && source.path === '.cap/task-context.md'))) fail('manifest_source_projection_invalid', 'sources', 'source projection is unsupported')
-    if (!isNonEmptyString(source?.path) || typeof sourceContents[source.path] !== 'string' || source.sha256 !== manifestSourceHash(source, sourceContents[source.path])) fail('manifest_source_hash_mismatch', 'sources', 'source hash is missing or differs')
+    if (!isNonEmptyString(source?.path) || !/^[a-f0-9]{64}$/.test(source?.sha256 || '') || typeof sourceContents[source.path] !== 'string' || (!allowSourceDrift && source.sha256 !== manifestSourceHash(source, sourceContents[source.path]))) fail('manifest_source_hash_mismatch', 'sources', 'source hash is missing or differs')
   }
   const indexedSources = new Set((Array.isArray(manifest.sources) ? manifest.sources : []).map(source => source?.path))
   if (manifest.entry) for (const path of ['.cap/task-context.md', '.cap/STATE.md']) if (!indexedSources.has(path)) fail('manifest_coverage_source_missing', 'sources', `bound coverage requires ${path}`)
@@ -726,6 +726,7 @@ export async function main(argv = process.argv.slice(2)) {
       manifest.entry = await captureContextBinding(option('--bind-entry'), { stage: checkpoint.identity.stage })
       manifest.entry.previousManifest = publishedPredecessor?.manifestPath || 'none'
       manifest.entry.previousDigest = publishedPredecessor?.digest || null
+      manifest.entry.previousManifestSha256 = publishedPredecessor?.manifestSha256 || null
       for (const key of ['taskId', 'repo', 'branch', 'commit', 'stage']) {
         if (manifest.entry[key] !== checkpoint.identity[key]) throw new Error('context_entry_identity_mismatch')
       }

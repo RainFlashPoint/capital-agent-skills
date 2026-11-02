@@ -19,6 +19,18 @@ for (const key of ['CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDE_CODE_SESSION_I
 const captureContextBinding = (repo, options = {}) => captureBinding(repo, { environment: env, ...options })
 const inspectSemanticContext = (repo, options = {}) => inspectContext(repo, { environment: env, ...options })
 
+function writeManifest(repo, path, manifest) {
+  const text = JSON.stringify(manifest)
+  writeFileSync(join(repo, path), text)
+  return createHash('sha256').update(text).digest('hex')
+}
+
+function bindManifestSha(state, sha256) {
+  return /^context-manifest-sha256:/m.test(state)
+    ? state.replace(/^context-manifest-sha256:.*$/m, `context-manifest-sha256: ${sha256}`)
+    : `${state.trimEnd()}\ncontext-manifest-sha256: ${sha256}\n`
+}
+
 function writeRuleComparison(repo, assessment = 'unresolved') {
   const path = join(repo, '.cap/task-context.md')
   const original = readFileSync(path, 'utf8').split('## Historical rule check')[0].replace('- candidates: none', '- candidates: knowledge:kn-contract')
@@ -102,11 +114,12 @@ async function publish(repo, stage = 'implement', extra = {}) {
   manifest.entry = binding
   manifest.entry.previousManifest = 'none'
   manifest.entry.previousDigest = null
+  manifest.entry.previousManifestSha256 = null
   writeFileSync(join(repo, '.cap/context/checkpoint.json'), JSON.stringify(checkpoint))
   writeFileSync(join(repo, '.cap/context/atoms.jsonl'), log)
-  writeFileSync(join(repo, '.cap/context/manifest.json'), JSON.stringify(manifest))
-  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
-  writeFileSync(join(repo, '.cap/STATE.md'), `${state}\ncontext-manifest: .cap/context/manifest.json\ncontext-checkpoint: .cap/context/checkpoint.json\ncontext-checkpoint-digest: ${manifest.digest}\ncontext-previous-manifest: none\ncontext-previous-digest: none\n`)
+  const manifestSha256 = writeManifest(repo, '.cap/context/manifest.json', manifest)
+  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8').split('\n').filter(line => !/^context-(?:manifest(?:-sha256)?|checkpoint(?:-digest)?|previous-(?:manifest|digest)):/.test(line)).join('\n').trimEnd()
+  writeFileSync(join(repo, '.cap/STATE.md'), `${state}\ncontext-manifest: .cap/context/manifest.json\ncontext-manifest-sha256: ${manifestSha256}\ncontext-checkpoint: .cap/context/checkpoint.json\ncontext-checkpoint-digest: ${manifest.digest}\ncontext-previous-manifest: none\ncontext-previous-digest: none\n`)
   return manifest
 }
 
@@ -177,7 +190,8 @@ test('legacy task-context source and semantic hashes remain readable', async t =
   }
   source.sha256 = createHash('sha256').update(taskContext).digest('hex')
   manifest.entry.semanticsHash = createHash('sha256').update(JSON.stringify({ taskContext, spec: '', plan: '', authorization: section('External operation authorization'), decisions: section('Decisions log'), gates: section('Gates passed'), nextAction: section('Next action') })).digest('hex')
-  writeFileSync(join(repo, '.cap/context/manifest.json'), JSON.stringify(manifest))
+  const legacySha256 = writeManifest(repo, '.cap/context/manifest.json', manifest)
+  writeFileSync(join(repo, '.cap/STATE.md'), bindManifestSha(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), legacySha256))
   assert.equal((await inspectSemanticContext(repo)).passed, true)
   writeFileSync(taskContextPath, taskContext.replace('inspected-at: 2026-11-02T07:00:00Z', 'inspected-at: 2026-11-02T08:00:00Z'))
   assert.equal((await inspectSemanticContext(repo)).passed, false)
@@ -215,10 +229,11 @@ test('STATE-backed checkpoint survives cursor publication but preserves provider
   manifest.entry = await captureContextBinding(repo)
   manifest.entry.previousManifest = '.cap/context/manifest.json'
   manifest.entry.previousDigest = manifest.digest
+  manifest.entry.previousManifestSha256 = createHash('sha256').update(readFileSync(join(repo, '.cap/context/manifest.json'), 'utf8')).digest('hex')
   writeFileSync(join(repo, '.cap/context/checkpoint.json'), JSON.stringify(checkpoint))
   writeFileSync(join(repo, '.cap/context/atoms.jsonl'), log)
-  writeFileSync(join(repo, '.cap/context/state-manifest.json'), JSON.stringify(manifest))
-  const published = state.replace('context-manifest: .cap/context/manifest.json', 'context-manifest: .cap/context/state-manifest.json').replace(/context-checkpoint-digest: .*/, `context-checkpoint-digest: ${manifest.digest}`).replace('context-previous-manifest: none', 'context-previous-manifest: .cap/context/manifest.json').replace('context-previous-digest: none', `context-previous-digest: ${manifest.digest}`) + '\nupdated: now\n'
+  const stateManifestSha256 = writeManifest(repo, '.cap/context/state-manifest.json', manifest)
+  const published = bindManifestSha(state.replace('context-manifest: .cap/context/manifest.json', 'context-manifest: .cap/context/state-manifest.json').replace(/context-checkpoint-digest: .*/, `context-checkpoint-digest: ${manifest.digest}`).replace('context-previous-manifest: none', 'context-previous-manifest: .cap/context/manifest.json').replace('context-previous-digest: none', `context-previous-digest: ${manifest.digest}`) + '\nupdated: now\n', stateManifestSha256)
   writeFileSync(path, published)
   assert.equal((await inspectSemanticContext(repo)).passed, true)
   for (const [change, reason] of [['provider-compaction: running', 'context_provider_pending'], ['provider-compaction-event: newer', 'context_manifest_invalid'], ['context-pressure: high', 'context_pressure_increased']]) {
@@ -386,12 +401,15 @@ test('manifest CLI binds current inputs and a subsequent source correction inval
   assert.equal(r.status, 0, r.stdout + r.stderr)
   const m = JSON.parse(readFileSync(join(repo, '.cap/context/bound.json'), 'utf8'))
   assert.equal(m.entry.semanticsHash.length, 64)
-  writeFileSync(join(repo, '.cap/STATE.md'), readFileSync(join(repo, '.cap/STATE.md'), 'utf8').replace('context-manifest: .cap/context/manifest.json', 'context-manifest: .cap/context/bound.json').replace('context-previous-manifest: none', 'context-previous-manifest: .cap/context/manifest.json').replace('context-previous-digest: none', `context-previous-digest: ${m.digest}`))
+  const boundSha256 = createHash('sha256').update(readFileSync(join(repo, '.cap/context/bound.json'), 'utf8')).digest('hex')
+  writeFileSync(join(repo, '.cap/STATE.md'), bindManifestSha(readFileSync(join(repo, '.cap/STATE.md'), 'utf8').replace('context-manifest: .cap/context/manifest.json', 'context-manifest: .cap/context/bound.json').replace('context-previous-manifest: none', 'context-previous-manifest: .cap/context/manifest.json').replace('context-previous-digest: none', `context-previous-digest: ${m.digest}`), boundSha256))
   assert.equal((await inspectSemanticContext(repo)).passed, true)
   const detached = JSON.parse(readFileSync(join(repo, '.cap/context/bound.json'), 'utf8'))
   detached.entry.previousManifest = 'none'
   detached.entry.previousDigest = null
-  writeFileSync(join(repo, '.cap/context/bound.json'), JSON.stringify(detached))
+  detached.entry.previousManifestSha256 = null
+  const detachedSha256 = writeManifest(repo, '.cap/context/bound.json', detached)
+  writeFileSync(join(repo, '.cap/STATE.md'), bindManifestSha(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), detachedSha256))
   assert.equal((await inspectSemanticContext(repo)).reason, 'context_predecessor_invalid')
 })
 
@@ -407,18 +425,20 @@ test('bound manifest creation cannot restart an existing P0 checkpoint chain', a
   prior.entry = await captureContextBinding(repo)
   prior.entry.previousManifest = 'none'
   prior.entry.previousDigest = null
+  prior.entry.previousManifestSha256 = null
   writeFileSync(join(repo, '.cap/context/checkpoint-prior.json'), JSON.stringify(existing))
   writeFileSync(join(repo, '.cap/context/atoms-prior.jsonl'), log)
-  writeFileSync(join(repo, '.cap/context/manifest-prior.json'), JSON.stringify(prior))
+  const priorSha256 = writeManifest(repo, '.cap/context/manifest-prior.json', prior)
   const statePath = join(repo, '.cap/STATE.md')
-  writeFileSync(statePath, readFileSync(statePath, 'utf8').replace(/context-manifest: .*/, 'context-manifest: .cap/context/manifest-prior.json').replace(/context-checkpoint: .*/, 'context-checkpoint: .cap/context/checkpoint-prior.json').replace(/context-checkpoint-digest: .*/, `context-checkpoint-digest: ${prior.digest}`))
+  writeFileSync(statePath, bindManifestSha(readFileSync(statePath, 'utf8').replace(/context-manifest: .*/, 'context-manifest: .cap/context/manifest-prior.json').replace(/context-checkpoint: .*/, 'context-checkpoint: .cap/context/checkpoint-prior.json').replace(/context-checkpoint-digest: .*/, `context-checkpoint-digest: ${prior.digest}`), priorSha256))
   const missing = { ...existing, atoms: existing.atoms.filter(atom => atom.id !== 'protected-extra') }
   writeFileSync(join(repo, '.cap/context/checkpoint-next.json'), JSON.stringify(missing))
   writeFileSync(join(repo, '.cap/context/atoms-next.jsonl'), missing.atoms.map(atom => JSON.stringify(atom)).join('\n') + '\n')
   const args = [join(root, 'scripts/cap-context-checkpoint.mjs'), 'create-manifest', '.cap/context/checkpoint-next.json', '--atom-log', '.cap/context/atoms-next.jsonl', '--budget-tokens', '20000', '--trigger', 'stage-entry', '--pressure', 'unknown', '--provider-kind', 'none', '--provider-status', 'unavailable', '--provider-event', 'none', '--bind-entry', repo, '--output', '.cap/context/manifest-next.json']
   const attempt = spawnSync(process.execPath, args, { cwd: repo, env, encoding: 'utf8' })
   assert.equal(attempt.status, 1)
-  assert.ok(JSON.parse(attempt.stdout).errors.some(error => error.code === 'context_predecessor_missing'))
+  assert.equal(JSON.parse(attempt.stdout).valid, false)
+  assert.throws(() => readFileSync(join(repo, '.cap/context/manifest-next.json')), /ENOENT/)
 })
 
 test('action-selected execution stages cannot bypass the target checkpoint gate', async t => {

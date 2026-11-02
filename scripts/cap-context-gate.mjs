@@ -27,6 +27,7 @@ function section(text, heading) {
   return body.split(/^## /m)[0].split('\n').filter(line => !/^(?:context-|provider-compaction(?:-|:)|updated:)/.test(line)).join('\n').trim()
 }
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+export const manifestContentSha256 = content => createHash('sha256').update(content).digest('hex')
 
 // The complete replay payload must match the validated snapshot. Checking only
 // ids permits an edited receipt to silently replace a protected assertion.
@@ -71,7 +72,8 @@ export async function readContained(repo, path, budget = { remaining: 8 * MAX_BY
 export async function loadContextManifest(repo, pointer) {
   if (!pointer?.startsWith('.cap/context/')) throw new Error('context_manifest_path')
   const budget = { remaining: 8 * MAX_BYTES }
-  const manifest = JSON.parse(await readContained(repo, pointer, budget))
+  const manifestText = await readContained(repo, pointer, budget)
+  const manifest = JSON.parse(manifestText)
   const resource = path => {
     if (typeof path !== 'string' || isAbsolute(path) || path.split(/[\\/]/).includes('..')) throw new Error('context_manifest_path')
     return readContained(repo, join(relative(repo, resolve(repo, pointer, '..')), path).split(sep).join('/'), budget)
@@ -81,7 +83,60 @@ export async function loadContextManifest(repo, pointer) {
   const atomLogContent = await resource(manifest.atomLog?.path)
   const sourceContents = {}
   for (const source of manifest.sources || []) sourceContents[source.path] = await readContained(repo, source.path, budget)
-  return { manifest, checkpoint, previous, atomLogContent, sourceContents }
+  return { manifest, manifestText, manifestSha256: manifestContentSha256(manifestText), checkpoint, previous, atomLogContent, sourceContents }
+}
+
+export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding, options = {}) {
+  const {
+    expectedManifestSha256 = '', allowSourceDrift = false, enforceRuntimeSession = true,
+    enforceReceiptPointer = true, manifestPath = '', depth = 0, visited = new Set(),
+  } = options
+  const errors = []
+  const fail = code => errors.push({ code })
+  if (depth > 64) return { valid: false, errors: [{ code: 'published_manifest_chain_too_deep' }] }
+  if (manifestPath) {
+    if (visited.has(manifestPath)) return { valid: false, errors: [{ code: 'published_manifest_chain_cycle' }] }
+    visited.add(manifestPath)
+  }
+  if (expectedManifestSha256 && snapshot.manifestSha256 !== expectedManifestSha256) fail('published_manifest_sha256_mismatch')
+  const checked = validateManifest(snapshot.manifest, { checkpoint: snapshot.checkpoint, previous: snapshot.previous, atomLogContent: snapshot.atomLogContent, sourceContents: snapshot.sourceContents, allowSourceDrift })
+  errors.push(...checked.errors)
+  const entry = snapshot.manifest.entry
+  if (!entry || entry.schemaVersion !== 1) fail('published_manifest_entry_invalid')
+  else {
+    for (const key of ['taskId', 'repo', 'branch', 'commit', 'stage']) if (entry[key] !== snapshot.checkpoint.identity?.[key]) fail(`published_manifest_entry_${key}_mismatch`)
+    if (entry.sessionId !== binding.sessionId) fail('published_manifest_session_mismatch')
+    if (enforceRuntimeSession && entry.runtimeSessionId && entry.runtimeSessionId !== 'none' && entry.runtimeSessionId !== binding.runtimeSessionId) fail('published_manifest_runtime_session_mismatch')
+    if (entry.recoveryEvent && entry.recoveryEvent !== 'none') {
+      try {
+        if (!entry.recoveryReceipt?.startsWith('.cap/context/')) throw new Error('receipt_path_invalid')
+        const receipt = JSON.parse(await readContained(repo, entry.recoveryReceipt))
+        if (!validateRecoveryReceipt(receipt, snapshot.manifest, snapshot.checkpoint, entry)) throw new Error('receipt_invalid')
+      } catch { fail('published_recovery_receipt_invalid') }
+      if (enforceReceiptPointer && binding.recoveryEvent === entry.recoveryEvent && binding.recoveryReceipt !== entry.recoveryReceipt) fail('published_recovery_receipt_pointer_mismatch')
+    }
+    if (entry.previousManifest === 'none') {
+      if (entry.previousDigest !== null || entry.previousManifestSha256) fail('published_manifest_predecessor_invalid')
+    } else if (!entry.previousManifest?.startsWith('.cap/context/') || !entry.previousDigest) fail('published_manifest_predecessor_invalid')
+    else {
+      try {
+        const ancestor = await loadContextManifest(repo, entry.previousManifest)
+        if (ancestor.manifest.digest !== entry.previousDigest || checkpointDigest(ancestor.checkpoint) !== entry.previousDigest) throw new Error('ancestor_digest_invalid')
+        if (expectedManifestSha256 && !entry.previousManifestSha256) throw new Error('ancestor_sha_missing')
+        const ancestorCheck = await validatePublishedSnapshotIntegrity(repo, ancestor, binding, {
+          expectedManifestSha256: entry.previousManifestSha256 || '',
+          allowSourceDrift: Boolean(entry.previousManifestSha256),
+          enforceRuntimeSession: false,
+          enforceReceiptPointer: false,
+          manifestPath: entry.previousManifest,
+          depth: depth + 1,
+          visited,
+        })
+        if (!ancestorCheck.valid) errors.push(...ancestorCheck.errors)
+      } catch { fail('published_manifest_predecessor_invalid') }
+    }
+  }
+  return { valid: errors.length === 0, errors }
 }
 
 async function inputs(candidate, options = {}) {
@@ -140,12 +195,16 @@ export async function capturePublishedPredecessor(repo, options = {}) {
   const pointer = field(state, 'context-manifest')
   if (!pointer || pointer === 'none') return null
   if (!pointer.startsWith('.cap/context/')) throw new Error('context_published_predecessor_invalid')
-  const manifest = JSON.parse(await readContained(repo, pointer))
+  const snapshot = await loadContextManifest(repo, pointer)
+  const { manifest } = snapshot
   const path = join(relative(repo, resolve(repo, pointer, '..')), manifest.checkpoint || '').split(sep).join('/')
   if (!path.startsWith('.cap/context/') || manifest.digest !== field(state, 'context-checkpoint-digest') || path !== field(state, 'context-checkpoint')) throw new Error('context_published_predecessor_invalid')
-  const checkpoint = JSON.parse(await readContained(repo, path))
+  const checkpoint = snapshot.checkpoint
   if (checkpointDigest(checkpoint) !== manifest.digest) throw new Error('context_published_predecessor_invalid')
-  return { path, digest: manifest.digest, manifestPath: pointer, checkpoint }
+  const expectedManifestSha256 = field(state, 'context-manifest-sha256')
+  const integrity = await validatePublishedSnapshotIntegrity(repo, snapshot, input.binding, { expectedManifestSha256, allowSourceDrift: Boolean(expectedManifestSha256), manifestPath: pointer })
+  if (!integrity.valid) throw new Error('context_published_predecessor_invalid')
+  return { path, digest: manifest.digest, manifestPath: pointer, manifestSha256: snapshot.manifestSha256, checkpoint, snapshot }
 }
 
 export async function captureContextBinding(repo, options = {}) {
@@ -179,8 +238,16 @@ export async function inspectSemanticContext(candidate, options = {}) {
   if (!required) return result('context_not_required', { required: false, passed: true })
   if (!pointer || pointer === 'none' || pointer.startsWith('<')) return result('context_checkpoint_missing', { kind: 'create_context_checkpoint' })
   try {
-    const { manifest, checkpoint, previous, atomLogContent, sourceContents } = await loadContextManifest(repo, pointer)
+    const snapshot = await loadContextManifest(repo, pointer)
+    const { manifest, checkpoint, previous, atomLogContent, sourceContents } = snapshot
     const entry = manifest.entry
+    const expectedManifestSha256 = field(state, 'context-manifest-sha256')
+    const integrity = await validatePublishedSnapshotIntegrity(repo, snapshot, binding, { expectedManifestSha256, allowSourceDrift: Boolean(expectedManifestSha256), manifestPath: pointer })
+    if (!integrity.valid) {
+      if (integrity.errors.some(error => error.code === 'published_recovery_receipt_pointer_mismatch' || error.code === 'published_recovery_receipt_invalid')) return result('context_recovery_required', { kind: 'recover_context_checkpoint' })
+      if (integrity.errors.some(error => error.code === 'published_manifest_session_mismatch' || error.code === 'published_manifest_runtime_session_mismatch')) return result('context_identity_changed')
+      return result('context_manifest_invalid', { errors: integrity.errors.map(error => error.code) })
+    }
     if (!entry || entry.schemaVersion !== 1) return result('context_entry_binding_missing')
     const publishedPreviousDigest = field(state, 'context-previous-digest')
     if (entry.previousManifest !== (field(state, 'context-previous-manifest') || 'none') || entry.previousDigest !== (publishedPreviousDigest && publishedPreviousDigest !== 'none' ? publishedPreviousDigest : null)) return result('context_predecessor_invalid')

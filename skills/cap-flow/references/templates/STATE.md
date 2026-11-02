@@ -61,6 +61,7 @@ deferred-only: false   # true 表示核心验收已通过，下面只剩可独�
 follow-up-task-ids: [] # split_deferred_acceptance 返回的关联 Task ID
 context-checkpoint: none | .cap/context/checkpoint.json
 context-manifest: none | <已验证的不可变 manifest 路径>
+context-manifest-sha256: none | <当前 manifest 文件原始字节的 SHA-256；区分 manifest 篡改与来源真实漂移>
 context-checkpoint-digest: none | <checkpoint.json 的 SHA-256 语义摘要>
 context-previous-manifest: none | <当前 manifest 所承接的旧 manifest 路径>
 context-previous-digest: none | <旧 manifest 的 checkpoint 摘要>

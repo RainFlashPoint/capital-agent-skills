@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { captureContextBinding, captureCoverageRequirements, inspectSemanticContext } from './cap-context-gate.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { prepareContext } from './cap-context-preparation.mjs'
+import { main as contextCheckpointMain } from './cap-context-checkpoint.mjs'
 import { inspectTaskContext } from './cap-runtime.mjs'
 import { handleContextHook, recoverContextHook, codexHooksConfig } from './cap-context-hooks.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
@@ -34,6 +35,17 @@ async function fixture(t, stage = 'implement') {
   const path = '.cap/context/checkpoint-one.json'
   writeFileSync(join(repo, path), JSON.stringify(checkpoint))
   return { repo, checkpoint, path }
+}
+
+async function refreshTaskContextFingerprints(repo) {
+  const fingerprints = await inspectContextFingerprint(repo)
+  const taskContextPath = join(repo, '.cap/task-context.md')
+  let taskContext = readFileSync(taskContextPath, 'utf8')
+  taskContext = taskContext
+    .replace(/^- index-fingerprint:.*$/m, `- index-fingerprint: ${fingerprints.index}`)
+    .replace(/^- worktree-fingerprint:.*$/m, `- worktree-fingerprint: ${fingerprints.worktree}`)
+    .replace(/^- untracked-fingerprint:.*$/m, `- untracked-fingerprint: ${fingerprints.untracked}`)
+  writeFileSync(taskContextPath, taskContext)
 }
 
 test('prepare duplicate replay keeps exact coverage and rejects edited alias/source bindings', async t => {
@@ -105,8 +117,8 @@ test('prepare canonicalizes a content-identical checkpoint instead of publishing
 })
 
 for (const [name, mutate, reason] of [
-  ['identity', manifest => { manifest.identity.taskId = 'forged-task' }, 'context_identity_changed'],
-  ['predecessor pointer', manifest => { manifest.entry.previousManifest = '.cap/context/forged.json' }, 'context_predecessor_invalid'],
+  ['identity', manifest => { manifest.identity.taskId = 'forged-task' }, 'context_manifest_invalid'],
+  ['predecessor pointer', manifest => { manifest.entry.previousManifest = '.cap/context/forged.json' }, 'context_manifest_invalid'],
   ['source projection', manifest => { manifest.sources.find(source => source.path === '.cap/task-context.md').projection = 'forged-projection' }, 'context_manifest_invalid'],
 ]) {
   test(`prepare cannot replace a published manifest with tampered ${name}`, async t => {
@@ -171,6 +183,92 @@ for (const damage of ['tampered', 'missing']) {
   })
 }
 
+test('manifest source-hash tampering cannot be hidden by real source drift or a low-level successor', async t => {
+  const { repo, checkpoint, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const manifestPath = join(repo, first.manifest)
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.sources.find(source => source.path === '.cap/task-context.md').sha256 = '0'.repeat(64)
+  writeFileSync(manifestPath, JSON.stringify(manifest))
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  await refreshTaskContextFingerprints(repo)
+
+  const same = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(same.valid, false, JSON.stringify(same))
+  assert.ok(same.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(same))
+
+  const successor = structuredClone(checkpoint)
+  successor.atoms.push({ ...successor.atoms[0], id: 'source-drift-successor', type: 'constraint', protection: 'P2', assertion: 'Real source drift cannot repair manifest tampering' })
+  const successorPath = '.cap/context/checkpoint-source-drift-successor.json'
+  const atomLogPath = '.cap/context/atoms-source-drift-successor.jsonl'
+  writeFileSync(join(repo, successorPath), JSON.stringify(successor))
+  writeFileSync(join(repo, atomLogPath), `${successor.atoms.map(atom => JSON.stringify(atom)).join('\n')}\n`)
+  const next = await prepareContext(repo, { checkpointPath: successorPath, budgetTokens: 20000, environment })
+  assert.equal(next.valid, false, JSON.stringify(next))
+  assert.ok(next.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(next))
+
+  const lowLevel = await contextCheckpointMain([
+    'create-manifest', join(repo, successorPath), '--bind-entry', repo, '--previous', join(repo, path),
+    '--atom-log', join(repo, atomLogPath), '--budget-tokens', '20000', '--trigger', 'stage-entry',
+    '--pressure', 'unknown', '--provider-kind', 'none', '--provider-status', 'unavailable', '--provider-event', 'none',
+    '--output', join(repo, '.cap/context/manifest-low-level-successor.json'),
+  ])
+  assert.equal(lowLevel.valid, false, JSON.stringify(lowLevel))
+  assert.throws(() => readFileSync(join(repo, '.cap/context/manifest-low-level-successor.json')), /ENOENT/)
+})
+
+test('same-event receipt pointer loss plus source drift cannot mint a replacement receipt', async t => {
+  const { repo, checkpoint, path } = await fixture(t)
+  const event = 'visible-resume:pointer-loss'
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const statePath = join(repo, '.cap/STATE.md')
+  writeFileSync(statePath, readFileSync(statePath, 'utf8').replace(/^context-recovery-receipt: .*$/m, 'context-recovery-receipt: none'))
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  await refreshTaskContextFingerprints(repo)
+
+  const same = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event, environment })
+  assert.equal(same.valid, false, JSON.stringify(same))
+  assert.ok(same.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(same))
+
+  const successor = structuredClone(checkpoint)
+  successor.atoms.push({ ...successor.atoms[0], id: 'receipt-pointer-successor', type: 'constraint', protection: 'P2', assertion: 'Source drift cannot replace a same-event receipt pointer' })
+  const successorPath = '.cap/context/checkpoint-receipt-pointer-successor.json'
+  writeFileSync(join(repo, successorPath), JSON.stringify(successor))
+  const next = await prepareContext(repo, { checkpointPath: successorPath, budgetTokens: 20000, event, environment })
+  assert.equal(next.valid, false, JSON.stringify(next))
+  assert.ok(next.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(next))
+})
+
+test('a successor binds the direct predecessor manifest bytes and rejects later ancestor tampering', async t => {
+  const { repo, checkpoint, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const successor = structuredClone(checkpoint)
+  successor.atoms.push({ ...successor.atoms[0], id: 'bound-ancestor', type: 'constraint', protection: 'P2', assertion: 'Bind the direct predecessor manifest bytes' })
+  const successorPath = '.cap/context/checkpoint-bound-ancestor.json'
+  writeFileSync(join(repo, successorPath), JSON.stringify(successor))
+  const second = await prepareContext(repo, { checkpointPath: successorPath, budgetTokens: 20000, environment })
+  assert.equal(second.valid, true, JSON.stringify(second))
+  const secondManifest = JSON.parse(readFileSync(join(repo, second.manifest), 'utf8'))
+  assert.match(secondManifest.entry.previousManifestSha256, /^[a-f0-9]{64}$/)
+
+  const firstManifestPath = join(repo, first.manifest)
+  const firstManifest = JSON.parse(readFileSync(firstManifestPath, 'utf8'))
+  firstManifest.identity.taskId = 'forged-ancestor-task'
+  writeFileSync(firstManifestPath, JSON.stringify(firstManifest))
+  assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_manifest_invalid')
+
+  const third = structuredClone(successor)
+  third.atoms.push({ ...third.atoms[0], id: 'third-snapshot', type: 'constraint', protection: 'P2', assertion: 'A later snapshot cannot wash the ancestor' })
+  const thirdPath = '.cap/context/checkpoint-third.json'
+  writeFileSync(join(repo, thirdPath), JSON.stringify(third))
+  const blocked = await prepareContext(repo, { checkpointPath: thirdPath, budgetTokens: 20000, environment })
+  assert.equal(blocked.valid, false, JSON.stringify(blocked))
+  assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
+})
+
 for (const field of ['sessionId', 'runtimeSessionId']) {
   test(`prepare cannot treat a tampered entry ${field} as a legitimate session handoff`, async t => {
     const { repo, path } = await fixture(t)
@@ -214,14 +312,7 @@ test('prepare reuses content-identical atoms when only the source binding change
   assert.equal(first.valid, true, JSON.stringify(first))
 
   writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
-  const fingerprints = await inspectContextFingerprint(repo)
-  const taskContextPath = join(repo, '.cap/task-context.md')
-  let taskContext = readFileSync(taskContextPath, 'utf8')
-  taskContext = taskContext
-    .replace(/^- index-fingerprint:.*$/m, `- index-fingerprint: ${fingerprints.index}`)
-    .replace(/^- worktree-fingerprint:.*$/m, `- worktree-fingerprint: ${fingerprints.worktree}`)
-    .replace(/^- untracked-fingerprint:.*$/m, `- untracked-fingerprint: ${fingerprints.untracked}`)
-  writeFileSync(taskContextPath, taskContext)
+  await refreshTaskContextFingerprints(repo)
 
   const second = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
   assert.equal(second.valid, true, JSON.stringify(second))
