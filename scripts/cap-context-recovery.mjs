@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { writeFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { captureContextBinding, loadContextManifest, readContained } from './cap-context-gate.mjs'
-import { validateManifest, contextReplay } from './cap-context-checkpoint.mjs'
+import { captureContextBinding, loadContextManifest, readContained, validatePublishedSnapshotIntegrity } from './cap-context-gate.mjs'
+import { contextReplay } from './cap-context-checkpoint.mjs'
 
 const field = (text, key) => text.match(new RegExp(`^(?:- )?${key}:[ \\t]*([^\\r\\n]*)`, 'm'))?.[1]?.trim() || ''
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -18,8 +18,11 @@ export async function observeContextResume(repo, { event = `visible-resume:${ran
   const binding = await captureContextBinding(repo, { environment })
   let snapshot, errors = []
   try {
-    snapshot = await loadContextManifest(repo, field(state, 'context-manifest'))
-    errors = validateManifest(snapshot.manifest, snapshot).errors
+    const manifestPath = field(state, 'context-manifest')
+    snapshot = await loadContextManifest(repo, manifestPath)
+    const expectedManifestSha256 = field(state, 'context-manifest-sha256')
+    const integrity = await validatePublishedSnapshotIntegrity(repo, snapshot, binding, { expectedManifestSha256, allowSourceDrift: Boolean(expectedManifestSha256), manifestPath })
+    errors = [...integrity.errors]
     for (const key of ['taskId', 'repo', 'branch', 'commit', 'stage']) if (snapshot.manifest.identity[key] !== binding[key]) errors.push({ code: 'context_identity_changed', path: key })
     if (snapshot.manifest.entry?.sessionId !== binding.sessionId) errors.push({ code: 'context_identity_changed', path: 'sessionId' })
     if (snapshot.manifest.entry?.sourceFingerprint !== binding.sourceFingerprint || snapshot.manifest.entry?.semanticsHash !== binding.semanticsHash) errors.push({ code: 'context_sources_changed', path: 'entry' })

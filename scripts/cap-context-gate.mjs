@@ -29,14 +29,15 @@ function section(text, heading) {
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export const manifestContentSha256 = content => createHash('sha256').update(content).digest('hex')
 
-function requireContextArtifactPointer(repo, pointer, code) {
-  if (typeof pointer !== 'string' || isAbsolute(pointer) || /\\|\0/.test(pointer)) throw new Error(code)
+export function assertContextArtifactPointer(repo, pointer, code = 'context_artifact_path_invalid') {
+  const reject = () => { const cause = new Error(code); cause.code = code; throw cause }
+  if (typeof pointer !== 'string' || isAbsolute(pointer) || /\\|\0/.test(pointer)) reject()
   const parts = pointer.split('/')
-  if (parts.length !== 3 || parts[0] !== '.cap' || parts[1] !== 'context' || !parts[2] || parts[2] === '.' || parts[2] === '..') throw new Error(code)
+  if (parts.length !== 3 || parts[0] !== '.cap' || parts[1] !== 'context' || !parts[2] || parts[2] === '.' || parts[2] === '..') reject()
   const contextRoot = resolve(repo, '.cap/context')
   const target = resolve(repo, pointer)
   const rel = relative(contextRoot, target)
-  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || rel.includes(sep)) throw new Error(code)
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || rel.includes(sep)) reject()
   return pointer
 }
 
@@ -85,7 +86,7 @@ export async function readContained(repo, path, budget = { remaining: 8 * MAX_BY
 }
 
 export async function loadContextManifest(repo, pointer) {
-  requireContextArtifactPointer(repo, pointer, 'context_manifest_path')
+  assertContextArtifactPointer(repo, pointer, 'context_manifest_path')
   const budget = { remaining: 8 * MAX_BYTES }
   const manifestText = await readContained(repo, pointer, budget)
   const manifest = JSON.parse(manifestText)
@@ -126,7 +127,7 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
     if (enforceRuntimeSession && entry.runtimeSessionId && entry.runtimeSessionId !== 'none' && entry.runtimeSessionId !== binding.runtimeSessionId) fail('published_manifest_runtime_session_mismatch')
     if (entry.recoveryEvent && entry.recoveryEvent !== 'none') {
       try {
-        requireContextArtifactPointer(repo, entry.recoveryReceipt, 'receipt_path_invalid')
+        assertContextArtifactPointer(repo, entry.recoveryReceipt, 'receipt_path_invalid')
         const receipt = JSON.parse(await readContained(repo, entry.recoveryReceipt))
         if (!validateRecoveryReceipt(receipt, snapshot.manifest, snapshot.checkpoint, entry)) throw new Error('receipt_invalid')
       } catch { fail('published_recovery_receipt_invalid') }
@@ -137,7 +138,7 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
     } else if (!entry.previousDigest) fail('published_manifest_predecessor_invalid')
     else {
       try {
-        requireContextArtifactPointer(repo, entry.previousManifest, 'context_manifest_path')
+        assertContextArtifactPointer(repo, entry.previousManifest, 'context_manifest_path')
         const ancestor = await loadContextManifest(repo, entry.previousManifest)
         if (ancestor.manifest.digest !== entry.previousDigest || checkpointDigest(ancestor.checkpoint) !== entry.previousDigest) throw new Error('ancestor_digest_invalid')
         if (integrityVersion === 1 && !/^[a-f0-9]{64}$/.test(entry.previousManifestSha256 || '')) throw new Error('ancestor_sha_missing')
@@ -218,7 +219,7 @@ export async function capturePublishedPredecessor(repo, options = {}) {
   const { state } = input
   const pointer = field(state, 'context-manifest')
   if (!pointer || pointer === 'none') return null
-  requireContextArtifactPointer(repo, pointer, 'context_published_predecessor_invalid')
+  assertContextArtifactPointer(repo, pointer, 'context_published_predecessor_invalid')
   const snapshot = await loadContextManifest(repo, pointer)
   const { manifest } = snapshot
   const path = join(relative(repo, resolve(repo, pointer, '..')), manifest.checkpoint || '').split(sep).join('/')
@@ -296,7 +297,7 @@ export async function inspectSemanticContext(candidate, options = {}) {
     if (coverageErrors.length) return result('context_semantic_coverage_incomplete', { errors: coverageErrors })
     if (binding.recoveryEvent !== 'none') {
       try {
-        requireContextArtifactPointer(repo, binding.recoveryReceipt, 'recovery_receipt_missing')
+        assertContextArtifactPointer(repo, binding.recoveryReceipt, 'recovery_receipt_missing')
         const receipt = JSON.parse(await readContained(repo, binding.recoveryReceipt))
         if (!validateRecoveryReceipt(receipt, manifest, checkpoint, binding) || entry.recoveryReceipt !== binding.recoveryReceipt) throw new Error('recovery_receipt_mismatch')
       } catch { return result('context_recovery_required', { kind: 'recover_context_checkpoint' }) }

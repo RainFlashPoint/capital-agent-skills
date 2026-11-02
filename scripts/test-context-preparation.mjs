@@ -381,6 +381,29 @@ test('recovery receipt pointers cannot traverse outside the context directory', 
   assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_recovery_required')
 })
 
+test('prepare rejects a noncanonical STATE receipt before publishing a successor', async t => {
+  const { repo, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event: 'visible-resume:receipt-original', environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const statePath = join(repo, '.cap/STATE.md')
+  const state = readFileSync(statePath, 'utf8')
+  const receiptPath = state.match(/^context-recovery-receipt: (.+)$/m)[1]
+  mkdirSync(join(repo, '.cap/escaped'), { recursive: true })
+  writeFileSync(join(repo, '.cap/escaped/recovery-valid.json'), readFileSync(join(repo, receiptPath), 'utf8'))
+  const escapedReceipt = '.cap/context/../escaped/recovery-valid.json'
+  writeFileSync(statePath, state
+    .replace(/^context-recovery-event:.*$/m, 'context-recovery-event: visible-resume:receipt-next')
+    .replace(/^context-recovery-receipt:.*$/m, `context-recovery-receipt: ${escapedReceipt}`))
+  const manifestsBefore = readdirSync(join(repo, '.cap/context')).filter(name => name.startsWith('manifest-')).sort()
+
+  const blocked = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event: 'visible-resume:receipt-next', environment })
+
+  assert.equal(blocked.valid, false, JSON.stringify(blocked))
+  assert.ok(blocked.errors.some(error => error.code === 'context_recovery_receipt_path_invalid'), JSON.stringify(blocked))
+  assert.deepEqual(readdirSync(join(repo, '.cap/context')).filter(name => name.startsWith('manifest-')).sort(), manifestsBefore)
+  assert.equal(readFileSync(statePath, 'utf8').match(/^context-manifest: (.+)$/m)[1], first.manifest)
+})
+
 test('prepare accepts a newly added optional spec source when the successor covers it', async t => {
   const { repo, checkpoint, path } = await fixture(t)
   const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })

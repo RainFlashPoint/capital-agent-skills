@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto'
 import { writeFile, readFile, rename, rm, open } from 'node:fs/promises'
 import { join, posix } from 'node:path'
-import { captureContextBinding, captureContextPressure, captureCoverageRequirements, capturePublishedPredecessor, inspectSemanticContext, manifestContentSha256, readContained, validateRecoveryReceipt } from './cap-context-gate.mjs'
+import { assertContextArtifactPointer, captureContextBinding, captureContextPressure, captureCoverageRequirements, capturePublishedPredecessor, inspectSemanticContext, manifestContentSha256, readContained, validateRecoveryReceipt } from './cap-context-gate.mjs'
 import { checkpointDigest, createManifest, fileSource, validateCheckpointTransition, validateManifest, planContext, contextReplay, manifestSourceHash } from './cap-context-checkpoint.mjs'
 import { validateSemanticCoverage, semanticProtectionAdvisories } from './cap-context-coverage.mjs'
 import { resolveExecutionStage } from '../runtime/execution/local-support.mjs'
@@ -144,10 +144,14 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   let recovery = null
   if (binding.recoveryEvent !== 'none') {
     const path = binding.recoveryReceipt
-    try {
-      const old = JSON.parse(await readContained(repo, path))
-      if (validateRecoveryReceipt(old, manifest, checkpoint, binding)) recovery = old
-    } catch { /* An absent/stale receipt requires exact replay of this candidate. */ }
+    if (path !== 'none') {
+      try { assertContextArtifactPointer(repo, path, 'context_recovery_receipt_path_invalid') }
+      catch (cause) { return failed([problem(cause.code || 'context_recovery_receipt_path_invalid')]) }
+      try {
+        const old = JSON.parse(await readContained(repo, path))
+        if (validateRecoveryReceipt(old, manifest, checkpoint, binding)) recovery = old
+      } catch { /* An absent/stale receipt requires exact replay of this candidate. */ }
+    }
     if (!recovery) {
       recovery = { schemaVersion: 1, event: binding.recoveryEvent, ...Object.fromEntries(['taskId', 'sessionId', 'repo', 'branch', 'commit'].map(key => [key, binding[key]])), digest: manifest.digest, planDigest: hash(manifest.plan), ...contextReplay(checkpoint, manifest.plan) }
       const path = `.cap/context/recovery-${id}.json`

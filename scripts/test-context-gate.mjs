@@ -309,6 +309,66 @@ test('observed recovery event requires an explicit recovered binding; request is
   assert.equal((await inspectSemanticContext(repo)).reason, 'context_provider_pending')
 })
 
+test('visible resume rejects a mismatched current manifest SHA before replay', async t => {
+  const { repo } = await fixture(t)
+  await publish(repo)
+  const statePath = join(repo, '.cap/STATE.md')
+  writeFileSync(statePath, readFileSync(statePath, 'utf8').replace(/^context-manifest-sha256:.*$/m, `context-manifest-sha256: ${'0'.repeat(64)}`))
+
+  const result = await observeContextResume(repo, { event: 'visible-resume:bad-current-sha', environment: env })
+
+  assert.equal(result.valid, false)
+  assert.equal(result.recovery, null)
+  assert.ok(result.errors.some(error => error.code === 'published_manifest_sha256_mismatch'), JSON.stringify(result))
+})
+
+test('visible resume rejects recursive ancestor tampering before replay', async t => {
+  const { repo } = await fixture(t)
+  await publish(repo)
+  const checkpoint = JSON.parse(readFileSync(join(repo, '.cap/context/checkpoint.json'), 'utf8'))
+  const log = checkpoint.atoms.map(atom => JSON.stringify(atom)).join('\n') + '\n'
+  const statePath = join(repo, '.cap/STATE.md')
+  const state = readFileSync(statePath, 'utf8')
+  const manifest = createManifest(checkpoint, { checkpointPath: 'checkpoint.json', atomLogPath: 'atoms.jsonl', atomLogContent: log, sourceContents: { '.cap/STATE.md': state, '.cap/task-context.md': readFileSync(join(repo, '.cap/task-context.md'), 'utf8') }, budgetTokens: 20000, trigger: 'stage-entry', pressure: 'unknown' })
+  manifest.entry = await captureContextBinding(repo)
+  manifest.entry.previousManifest = '.cap/context/manifest.json'
+  manifest.entry.previousDigest = manifest.digest
+  manifest.entry.previousManifestSha256 = createHash('sha256').update(readFileSync(join(repo, '.cap/context/manifest.json'), 'utf8')).digest('hex')
+  const currentSha = writeManifest(repo, '.cap/context/resume-current.json', manifest)
+  writeFileSync(statePath, bindManifestSha(state
+    .replace('context-manifest: .cap/context/manifest.json', 'context-manifest: .cap/context/resume-current.json')
+    .replace('context-previous-manifest: none', 'context-previous-manifest: .cap/context/manifest.json')
+    .replace('context-previous-digest: none', `context-previous-digest: ${manifest.digest}`), currentSha))
+  const ancestor = JSON.parse(readFileSync(join(repo, '.cap/context/manifest.json'), 'utf8'))
+  ancestor.identity.taskId = 'tampered-ancestor'
+  writeFileSync(join(repo, '.cap/context/manifest.json'), JSON.stringify(ancestor))
+
+  const result = await observeContextResume(repo, { event: 'visible-resume:bad-ancestor', environment: env })
+
+  assert.equal(result.valid, false)
+  assert.equal(result.recovery, null)
+  assert.ok(result.errors.some(error => error.code === 'published_manifest_sha256_mismatch'), JSON.stringify(result))
+})
+
+test('visible resume rejects a damaged entry receipt before replay', async t => {
+  const { repo } = await fixture(t)
+  await publish(repo)
+  const first = await observeContextResume(repo, { event: 'visible-resume:receipt-a', environment: env })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  await publish(repo)
+  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const receiptPath = state.match(/^context-recovery-receipt: (.+)$/m)[1]
+  const receipt = JSON.parse(readFileSync(join(repo, receiptPath), 'utf8'))
+  receipt.digest = 'tampered'
+  writeFileSync(join(repo, receiptPath), JSON.stringify(receipt))
+
+  const result = await observeContextResume(repo, { event: 'visible-resume:receipt-b', environment: env })
+
+  assert.equal(result.valid, false)
+  assert.equal(result.recovery, null)
+  assert.ok(result.errors.some(error => error.code === 'published_recovery_receipt_invalid'), JSON.stringify(result))
+})
+
 test('STATE provider lifecycle cannot reuse an unavailable manifest or a different success event', async t => {
   const { repo } = await fixture(t)
   const path = join(repo, '.cap/STATE.md')
