@@ -159,13 +159,14 @@ export async function inspectCandidateSourceEvidence(repoRoot, commitSha = '') {
   if (!rawState) return { ok: false, reason: 'candidate_execution_evidence_missing' }
   let state
   try { state = await inspectTestState(repoRoot) } catch { return { ok: false, reason: 'candidate_execution_evidence_invalid' } }
+  const fullAttempt = state.environmentRetry?.attempt || state.fullAttempt
   if (!state.valid || state.phase !== 'full_passed' || state.identity?.commit !== text(commitSha).toLowerCase()
-    || !HASH.test(state.sourceFingerprint || '') || state.fullAttempt?.status !== 'passed'
+    || !HASH.test(state.sourceFingerprint || '') || fullAttempt?.status !== 'passed'
     || ['index', 'worktree', 'untracked'].some(key => state.snapshot?.[key] !== EMPTY_FINGERPRINT)) {
     return { ok: false, reason: 'candidate_execution_evidence_mismatch' }
   }
   const execution = await inspectLocalExecution(repoRoot, { stage: 'test' })
-  if (!execution.passed || execution.gate?.envelopeId !== state.fullAttempt.actionId) {
+  if (!execution.passed || execution.gate?.envelopeId !== fullAttempt.actionId) {
     return { ok: false, reason: 'candidate_execution_evidence_invalid' }
   }
   let evidence
@@ -175,8 +176,8 @@ export async function inspectCandidateSourceEvidence(repoRoot, commitSha = '') {
   if (evidence?.schemaVersion !== 3 || evidence.status !== 'terminal'
     || evidence.envelopeHash !== digest(envelope) || evidence.receiptHash !== digest(receipt)
     || evidence.diagnosticHash !== digest(evidence.diagnostic)
-    || envelope?.id !== state.fullAttempt.actionId || envelope.commandHash !== state.plan.fullCommandHash
-    || evidence.envelopeHash !== state.fullAttempt.requestHash || evidence.receiptHash !== state.fullAttempt.receiptHash
+    || envelope?.id !== fullAttempt.actionId || envelope.commandHash !== state.plan.fullCommandHash
+    || evidence.envelopeHash !== fullAttempt.requestHash || evidence.receiptHash !== fullAttempt.receiptHash
     || receipt?.envelopeId !== envelope.id || receipt.envelopeHash !== evidence.envelopeHash
     || receipt.status !== 'passed' || receipt.exitCode !== 0 || receipt.signal
     || !Number.isFinite(Date.parse(receipt.finishedAt))) {

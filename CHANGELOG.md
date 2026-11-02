@@ -2,7 +2,32 @@
 
 ## Unreleased
 
+## 0.14.4
+
 - 收敛语义检查点重复准备：内容完全相同但文件名不同的候选自动归一到已发布 checkpoint 并返回 compact reuse，不再因临时 `Date.now()` 文件名制造 duplicate 修复循环；`task-context` 的 `inspected-at` 仅作为侦察时间元数据，不再单独改变语义或来源绑定，真实意图、HEAD、源码指纹、授权、范围和阶段变化仍按原门禁失效。重复候选只能刷新可证明的来源/压力/会话变化或显式恢复事件，已发布 manifest 的身份、前驱、source projection 或 recovery receipt 损坏继续失败关闭，不能借重发“洗白”。流程同时明确同一轮先收敛 STATE/task-context/spec/plan/源码，再统一 prepare；真实恢复热内容的分段协议留待独立兼容改动。
+
+## 0.14.3
+
+- 修复 CI 测试的跨平台契约：无可用 OS 沙箱时明确跳过依赖沙箱的 Provider 集成，独立验证 missing/unusable 的 remote-only 降级；macOS CI 必须通过预检并执行真实沙箱集成，Linux 门禁移除宿主拒绝 uid map 时必然失败的强制准备步骤。文档检查统一 LF，路径检查采用本机路径和真实目标，compact CLI 使用隔离 fixture，避免宿主 Task 状态污染。
+- 为 `cap-test` 增加旧 recorder 失败回执的受控兼容检查：只有归档实现能证明旧 recorder 在原执行时产出可信 anchor，
+  才可能通过显式 `--migrate-recorder` 恢复一次既有环境重试资格；迁移必须命中原执行时独占写入、绑定 recorder 与
+  full request/receipt/diagnostic hashes、终态及完整 targeted 证据根的共享 reservation/terminal anchor，缺失或不一致
+  一律失败关闭。授权侧车已写但活动状态尚未更新的崩溃窗口会在完整重验后幂等恢复；当前 recorder 的 terminal gate
+  已完成但 anchor 尚未落盘时，也会在中断协调中补齐相同证据根后再允许环境授权，不再永久吞掉唯一额度或留下半成品。
+  历史 recorder hash 由归档 Commit 的真实实现推导，但该实现尚未生成 terminal anchor，因此当前只可诊断、不可迁移；
+  即使一致性重写 gate/state/reservation/terminal 也不能事后制造资格。环境分类同时拒绝无 `Error:` 前缀的业务失败与
+  bwrap、网络等环境特征混合出现，历史 Node 缺包诊断也不允许迁移。第二次环境重试的终态投影现在会在完成、状态读取
+  与最终 Gate 阶段重新核对 canonical terminal evidence，失败重试不能再通过单独篡改 `test-state.json` 伪装成 PASS。
+
+## 0.14.2
+
+- 修复正式发布与 Linux Node 回归环境：GitHub Ubuntu Job 在执行 Provider 测试前安装并实际探测 bubblewrap，确保缺失或不可用的 OS 沙箱在准备阶段明确失败，而不是让整组 Provider 用例静默降级为 `remote-only`。Provider 的隔离、领取与证据契约不变；已公开的 `v0.14.1` 标签保持不可变。
+
+## 0.14.1
+
+- `cap-test` 为首次 full 的确定性环境准备失败增加一次显式恢复额度：原始失败 action、request/receipt/diagnostic hashes 保持不可覆盖；授权与第二次 attempt 以 git-common-dir 共享的独占记录保存，删除活动状态、Task/Session/branch/worktree 轮换、A→B→A 或空提交不能恢复额度。第二次无论 PASS、失败、超时或中断都关闭该快照，候选 Delivery 只绑定真实 PASS 的 action。
+- 环境分类保持失败关闭：允许执行器未能启动、依赖解析/制品仓库/DNS/网络/证书、沙箱/共享内存，以及 manifest 已声明但安装树中不存在的 Node 外部依赖；相对模块、未声明包、已安装包缺失子路径、语法/类型/编译/AssertionError、业务、混合或未知错误均要求源码变化。分类从 canonical hashed evidence 与 manifest 重算，手工改状态或授权记录不能自签。
+- `runLocalAction`、compact、status 与 nextActions 统一投影环境恢复状态，不再对同一次 full 失败同时建议“直接重跑”和“必须改源码”；新增 `cap-test-state retry-environment` 显式授权入口，不自动安装依赖。
 
 ## 0.14.0
 

@@ -62,6 +62,8 @@ export function executionNextActions(reason='', { stage='', action='', testPhase
  if(code==='test_impact_ready') return [make('run_targeted_tests','执行影响分析中登记的定向测试')]
  if(code==='test_targeted_passed') return [make('freeze_test_candidate','冻结已通过定向测试的候选快照')]
  if(code==='test_candidate_frozen') return [make('run_full_test_once','对冻结候选执行唯一一次最终全量测试')]
+ if(code==='test_environment_retry_available') return [make('authorize_environment_retry','确认环境故障分类并授权同一候选的一次恢复重试', {requiresSourceChange:false})]
+ if(code==='test_environment_retry_ready') return [make('run_environment_retry','修复外部环境后以原命令完成唯一一次恢复重试', {requiresSourceChange:false})]
  if(code==='test_full_failed'||code==='test_full_already_attempted') return [make('change_source_then_refresh_test_impact','修复源码形成新快照后重新登记影响分析', {requiresSourceChange:true})]
  if(code==='test_full_command_overlaps_targeted') return [make('refresh_test_impact','将最终全量命令从定向命令集合中移除后重新登记影响分析')]
  if(code==='test_targeted_evidence_invalid') return ['targeted_passed','candidate_frozen','full_passed','full_failed'].includes(testPhase)
@@ -76,6 +78,7 @@ async function missingTestEvidence(repo,pointer,{stage,action,artifactDir}) {
  if(!state)return null
  let reason=''
  if(Object.values(state.targetedResults||{}).some(result=>result?.actionId===pointer.id))reason='test_targeted_evidence_invalid'
+ else if(state.environmentRetry?.attempt?.actionId===pointer.id)reason=state.environmentRetry.attempt.status==='running'?'test_full_attempt_incomplete':'test_full_evidence_invalid'
  else if(state.fullAttempt?.actionId===pointer.id)reason=state.fullAttempt.status==='running'?'test_full_attempt_incomplete':'test_full_evidence_invalid'
  if(!reason)return null
  const recoveryContext={stage,action,testPhase:state.phase||''}
@@ -169,12 +172,21 @@ export async function runLocalAction(repoPath='.',options={}) {
   try{after=await facts(repo)}catch{after={snapshot:null,identity:null}}
   const identityChanged=!same(initial.identity,after.identity)
   const receipt={schemaVersion:2,authority:'local-observed',...initial.identity,envelopeId:envelope.id,envelopeHash:digest(envelope),finishedAt:new Date().toISOString(),exitCode:result.exitCode,signal:result.signal,status:result.status,stdoutHash:digest(result.stdout),stderrHash:digest(result.stderr),afterSnapshot:identityChanged?null:after.snapshot,runtime:{node:process.version,platform:process.platform,arch:process.arch}}
-  const gate=gateFor(envelope,receipt)
+  let gate=gateFor(envelope,receipt)
   const diagnostic={...executionDiagnostic(result.stdout,result.stderr),status:result.status}
   const evidence={schemaVersion:3,status:'terminal',envelope,receipt,diagnostic,envelopeHash:digest(envelope),receiptHash:digest(receipt),diagnosticHash:digest(diagnostic),gate}
   // The embedded gate is only a human-facing derivative; readers recompute it from the hashed evidence.
   await atomicJson(join(artifactDir,'gate.json'),evidence)
-  if(testReservation)await completeTestRun(repo,{scope:options.testScope,commandHash:testReservation.commandHash,actionId:envelope.id,passed:gate.passed,resultStatus:receipt.status,requestHash:digest(envelope),receiptHash:digest(receipt)})
+  if(testReservation) {
+   await completeTestRun(repo,{scope:options.testScope,commandHash:testReservation.commandHash,actionId:envelope.id,passed:gate.passed,resultStatus:receipt.status,requestHash:digest(envelope),receiptHash:digest(receipt)})
+   if(options.testScope==='full') {
+    const sequence=await testExecutionGate(repo,envelope)
+    if(!sequence.passed) {
+     const reason=sequence.reason,recoveryContext={stage,action:contract.action,testPhase:sequence.state?.phase||''}
+     gate={...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,recoveryContext),remediation:'按 canonical test 状态处理失败；只有确定性环境阻塞可显式授权一次恢复重试'}
+    }
+   }
+  }
   return {envelope,receipt,gate,artifactDir,stdout:result.stdout,stderr:result.stderr,diagnostic}
  }finally {await rm(lock,{recursive:true,force:true})}
 }
@@ -213,7 +225,7 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
    const gate=verifyCanonicalEvidence(evidence,pointer,{...f,stage})
    if(stage==='test') {
     const sequence=await testExecutionGate(repo,request)
-    const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid'].includes(sequence.reason)
+    const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid','test_environment_retry_available','test_environment_retry_ready'].includes(sequence.reason)
     if(!sequence.passed&&sequenceOwnsRecovery){const reason=sequence.reason,recoveryContext={stage,action,testPhase:sequence.state?.phase||''};return {required:true,stage,action,passed:false,reason,artifactDir:dir,gate:{...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,recoveryContext),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'},nextActions:executionNextActions(reason,recoveryContext),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'} }
    }
    const reason=gate.blockers[0]||'verified_local_evidence'
@@ -231,7 +243,7 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
   const gate=verifyBundle(bundle,request,{...f,stage})
   if(stage==='test') {
    const sequence=await testExecutionGate(repo,request)
-   const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid'].includes(sequence.reason)
+   const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid','test_environment_retry_available','test_environment_retry_ready'].includes(sequence.reason)
    if(!sequence.passed&&sequenceOwnsRecovery){const reason=sequence.reason,recoveryContext={stage,action,testPhase:sequence.state?.phase||''};return {required:true,stage,action,passed:false,reason,artifactDir:dir,gate:{...gate,gate:'BLOCKED',passed:false,blockers:[...new Set([...gate.blockers,reason])],nextActions:executionNextActions(reason,recoveryContext),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'},nextActions:executionNextActions(reason,recoveryContext),remediation:'按 test 状态机完成影响分析、定向测试、候选冻结和最终全量'} }
   }
   const reason=gate.blockers[0]||'verified_local_evidence'

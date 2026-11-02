@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTestImpact, freezeTestCandidate, inspectTestState } from '../runtime/execution/test-state.mjs'
+import { authorizeEnvironmentRetry, createTestImpact, freezeTestCandidate, inspectTestState } from '../runtime/execution/test-state.mjs'
 import { runLocalAction } from '../runtime/execution/local-flow.mjs'
 import { buildCandidateDelivery, buildCommitDelivery, buildPushAuthorizationFingerprint, flushPendingDeliveries, queueCommitDelivery, readHarnessMode } from './client-delivery.mjs'
 import { activateLocalFallback, isLocalFallbackActive } from './local-fallback.mjs'
@@ -96,6 +96,46 @@ test('candidate delivery is bound to exact task repo branch HEAD and passed loca
   const stale = await buildCandidateDelivery(repo, { authorizedFingerprint: 'stale', verification: { passed: true, status: 'PASS' } })
   assert.equal(stale.reason, 'push_authorization_required')
   await assert.rejects(queueCommitDelivery(repo, candidate.item), /candidate_delivery_requires_live_authorization/)
+})
+
+test('candidate delivery binds the successful environment retry while retaining the first failure', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'cap-candidate-retry-'))
+  const remote = await mkdtemp(join(tmpdir(), 'cap-candidate-retry-remote-'))
+  git(remote, ['init', '--bare'])
+  git(repo, ['init', '-b', 'feature/retry']); git(repo, ['config', 'user.name', 'test']); git(repo, ['config', 'user.email', 'test@example.com'])
+  await mkdir(join(repo, '.cap')); await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: server\n')
+  await writeFile(join(repo, '.gitignore'), '.cap/\nnode_modules/\n'); await writeFile(join(repo, 'a.txt'), 'base\n')
+  git(repo, ['add', '.gitignore', 'a.txt']); git(repo, ['commit', '-m', 'base'])
+  const baseCommit = git(repo, ['rev-parse', 'HEAD'])
+  await captureTaskBaseline(repo, 'task_candidate_retry')
+  await writeFile(join(repo, 'a.txt'), 'candidate\n')
+  await writeFile(join(repo, 'package.json'), JSON.stringify({ dependencies: { react: '1.0.0' } }))
+  await writeFile(join(repo, 'verify.cjs'), "require('react')\n")
+  git(repo, ['add', 'a.txt', 'package.json', 'verify.cjs']); git(repo, ['commit', '-m', 'retry candidate'])
+  await writeFile(join(repo, '.cap/STATE.md'), [
+    'stage: test', 'status: in-progress', 'execution-required: true', 'task-id: task_candidate_retry', 'session-id: skill_candidate_retry',
+    'branch: feature/retry', `base-commit: ${baseCommit}`, `worktree: ${repo}`, '',
+  ].join('\n'))
+  const targeted = [process.execPath, '-e', 'process.exit(0)']
+  const full = [process.execPath, 'verify.cjs']
+  await createTestImpact(repo, { changedFiles: ['a.txt', 'package.json', 'verify.cjs'], activeChecks: ['logic'], targetedCommands: [targeted], fullCommand: full })
+  await runLocalAction(repo, { environment: {}, testScope: 'targeted', command: targeted })
+  await freezeTestCandidate(repo)
+  await runLocalAction(repo, { environment: {}, testScope: 'full', command: full })
+  await authorizeEnvironmentRetry(repo)
+  await mkdir(join(repo, 'node_modules/react'), { recursive: true })
+  await writeFile(join(repo, 'node_modules/react/index.js'), 'module.exports = {}\n')
+  const retry = await runLocalAction(repo, { environment: {}, testScope: 'full', command: full })
+  git(repo, ['remote', 'add', 'origin', remote]); git(repo, ['push', '-u', 'origin', 'feature/retry'])
+  const head = git(repo, ['rev-parse', 'HEAD'])
+  const state = await inspectTestState(repo)
+  assert.equal(state.fullAttempt.status, 'failed')
+  assert.equal(state.environmentRetry.attempt.actionId, retry.envelope.id)
+  const fingerprint = buildPushAuthorizationFingerprint({ repoUrl: remote, taskId: 'task_candidate_retry', branch: 'feature/retry', commitSha: head })
+  const candidate = await buildCandidateDelivery(repo, { authorizedFingerprint: fingerprint, verification: { passed: true, status: 'PASS', outcome: 'PASS', sourceCommit: head, commands: [{ command: 'node verify.cjs', exitCode: 0 }] } })
+  assert.equal(candidate.ok, true)
+  const retryEvidence = JSON.parse(await readFile(join(repo, '.cap/execution', retry.envelope.id, 'gate.json'), 'utf8'))
+  assert.equal(candidate.item.payload.verification.executedAt, retryEvidence.receipt.finishedAt)
 })
 
 test('local-only maintenance repository cannot become a Server Harness candidate', async () => {

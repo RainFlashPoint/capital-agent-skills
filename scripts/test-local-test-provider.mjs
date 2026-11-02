@@ -11,7 +11,9 @@ import { inspectSandboxCapability, runLocalTestProviderRuntime, sandboxInvocatio
 const runtime = resolve('runtime/local-test-provider.mjs')
 const git = (repo, args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
 
-const macSandbox = process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec')
+const sandbox = inspectSandboxCapability()
+const sandboxRequired = { skip: sandbox.available ? false : `${sandbox.code}: OS sandbox unavailable; remote-only behavior is tested separately` }
+const macSandbox = process.platform === 'darwin' && sandbox.available
 const shellQuote = value => "'" + String(value).replaceAll("'", "'\\''") + "'"
 
 test('runtime sandbox preflight detects an installed but unusable bubblewrap', () => {
@@ -25,7 +27,7 @@ test('runtime sandbox preflight detects an installed but unusable bubblewrap', (
   assert.equal(isEnvironmentFailure(capability.detail), true)
 })
 
-test('runtime degrades to remote-only before reading config or contacting the Server', async t => {
+for (const available of [false, true]) test(`runtime degrades to remote-only for ${available ? 'unusable' : 'missing'} sandbox before reading config or contacting the Server`, async t => {
   const root = await mkdtemp(join(tmpdir(), 'cap-provider-preflight-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const repo = join(root, 'repo')
@@ -35,7 +37,7 @@ test('runtime degrades to remote-only before reading config or contacting the Se
     repo,
     actionId: 'action_fixture',
     platform: 'linux',
-    pathExists: () => true,
+    pathExists: () => available,
     runCommand: () => ({ status: 1, stderr: 'bwrap: Creating new namespace failed: Operation not permitted' }),
     environment: {},
     output: value => { output += value },
@@ -43,7 +45,7 @@ test('runtime degrades to remote-only before reading config or contacting the Se
   assert.equal(result.ok, true)
   assert.equal(result.skipped, true)
   assert.equal(result.mode, 'remote-only')
-  assert.equal(result.code, 'sandbox_unusable')
+  assert.equal(result.code, available ? 'sandbox_unusable' : 'sandbox_unavailable')
   assert.match(output, /未查询或领取 Action/)
 })
 
@@ -167,7 +169,7 @@ test('explicit local mode refuses to claim a provider action', async () => {
   assert.match(result.stderr, /显式本地模式禁止连接平台/)
 })
 
-test('identity failures stop before heartbeat, claim or execution', async t => {
+test('identity failures stop before heartbeat, claim or execution', sandboxRequired, async t => {
   const cases = [
     { name: 'missing existing client identity', noClientIdentity: true, requests: 0 },
     { name: 'client bound to another Server', clientServer: 'https://other.example.test', requests: 0 },
@@ -204,7 +206,7 @@ test('identity failures stop before heartbeat, claim or execution', async t => {
   })
 })
 
-test('changed or denied claim cannot start a test', async t => {
+test('changed or denied claim cannot start a test', sandboxRequired, async t => {
   const cases = [
     { name: 'Action ID', changeClaim: a => { a.id = 'action_other' } },
     { name: 'Action type', changeClaim: a => { a.actionType = 'patch' } },
@@ -227,7 +229,7 @@ test('changed or denied claim cannot start a test', async t => {
   })
 })
 
-test('a lost claim response is never reported as an unclaimed remote-only fallback', async t => {
+test('a lost claim response is never reported as an unclaimed remote-only fallback', sandboxRequired, async t => {
   const { received, result } = await identityFixture(t, { claimResponseLost: true })
   assert.equal(result.status, 1, result.stdout)
   assert.deepEqual(received.map(req => req.url), [
@@ -241,13 +243,13 @@ test('a lost claim response is never reported as an unclaimed remote-only fallba
   assert.match(result.stderr, /"code"\s*:\s*"local_provider_failed"/)
 })
 
-test('configured Server trailing slash does not change runner routes', async t => {
+test('configured Server trailing slash does not change runner routes', sandboxRequired, async t => {
   const { received, result } = await identityFixture(t, { trailingSlash: true, claimStatus: 409 })
   assert.equal(result.status, 1)
   assert.deepEqual(received.map(req => req.url), ['/api/harness/actions/action_fixture', '/api/execution/runner/heartbeat', '/api/execution/runner/harness/actions/claim'])
 })
 
-test('redirects never forward platform or runner credentials', async t => {
+test('redirects never forward platform or runner credentials', sandboxRequired, async t => {
   for (const options of [{ lookupRedirect: true }, { runnerRedirect: '/api/execution/runner/heartbeat' }, { runnerRedirect: '/api/execution/runner/harness/actions/claim' }]) {
     await t.test(options.runnerRedirect || 'canonical lookup', async childTest => {
       const { received, result } = await identityFixture(childTest, options)
@@ -258,7 +260,7 @@ test('redirects never forward platform or runner credentials', async t => {
   }
 })
 
-test('HTTPS, SSH and sanitized origins map to the same exact repository', async t => {
+test('HTTPS, SSH and sanitized origins map to the same exact repository', sandboxRequired, async t => {
   for (const origin of ['git@example.test:org/repo.git', 'example.test:org/repo.git', 'oauth_secret@example.test:org/repo.git', 'ssh://git@example.test/org/repo.git', 'https://example.test/org/repo.git/', 'https://user:fixture-url-secret@example.test/org/repo.git?token=fixture-query-secret#fixture-fragment-secret']) {
     await t.test(origin.split(':')[0], async childTest => {
       const { received, result } = await identityFixture(childTest, { origin, claimStatus: 409 })
@@ -269,7 +271,7 @@ test('HTTPS, SSH and sanitized origins map to the same exact repository', async 
   }
 })
 
-test('installed provider executes one exact test action in an isolated worktree', async t => {
+test('installed provider executes one exact test action in an isolated worktree', sandboxRequired, async t => {
   const home = await mkdtemp(join(tmpdir(),'cap-local-provider-'))
   const repo = join(home,'repo')
   await mkdir(repo,{recursive:true})
@@ -406,10 +408,10 @@ async function leaseLossFixture(t, { descendant = false } = {}) {
   await assert.rejects(stat(join(home, '.capital-agent', 'runner', 'worktrees', 'action_fixture')), error => error.code === 'ENOENT')
 }
 
-test('lease loss kills a TERM-ignoring check, skips later checks and uploads no evidence', async t => {
+test('lease loss kills a TERM-ignoring check, skips later checks and uploads no evidence', sandboxRequired, async t => {
   await leaseLossFixture(t)
 })
 
-test('lease loss kills redirected descendants when their command leader exits on TERM', async t => {
+test('lease loss kills redirected descendants when their command leader exits on TERM', sandboxRequired, async t => {
   await leaseLossFixture(t, { descendant: true })
 })
