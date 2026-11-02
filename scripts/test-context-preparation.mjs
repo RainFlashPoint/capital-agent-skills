@@ -326,6 +326,61 @@ test('recursive integrity rejects a split checkpoint and manifest predecessor ch
   assert.equal(blocked.reason, 'context_manifest_invalid', JSON.stringify(blocked))
 })
 
+test('recursive integrity rejects lexical traversal in an ancestor manifest pointer', async t => {
+  const { repo, checkpoint, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const middle = structuredClone(checkpoint)
+  middle.atoms.push({ ...middle.atoms[0], id: 'ancestor-traversal-middle', type: 'constraint', protection: 'P2', assertion: 'Middle snapshot' })
+  const middlePath = '.cap/context/checkpoint-ancestor-traversal-middle.json'
+  writeFileSync(join(repo, middlePath), JSON.stringify(middle))
+  const second = await prepareContext(repo, { checkpointPath: middlePath, budgetTokens: 20000, environment })
+  assert.equal(second.valid, true, JSON.stringify(second))
+  const current = structuredClone(middle)
+  current.atoms.push({ ...current.atoms[0], id: 'ancestor-traversal-current', type: 'constraint', protection: 'P2', assertion: 'Current snapshot' })
+  const currentPath = '.cap/context/checkpoint-ancestor-traversal-current.json'
+  writeFileSync(join(repo, currentPath), JSON.stringify(current))
+  const third = await prepareContext(repo, { checkpointPath: currentPath, budgetTokens: 20000, environment })
+  assert.equal(third.valid, true, JSON.stringify(third))
+
+  const middleManifestPath = join(repo, second.manifest)
+  const middleManifest = JSON.parse(readFileSync(middleManifestPath, 'utf8'))
+  middleManifest.entry.previousManifest = middleManifest.entry.previousManifest.replace('.cap/context/', '.cap/context/unused/../')
+  const middleManifestText = JSON.stringify(middleManifest)
+  writeFileSync(middleManifestPath, middleManifestText)
+  const currentManifestPath = join(repo, third.manifest)
+  const currentManifest = JSON.parse(readFileSync(currentManifestPath, 'utf8'))
+  currentManifest.entry.previousManifestSha256 = createHash('sha256').update(middleManifestText).digest('hex')
+  const currentManifestText = JSON.stringify(currentManifest)
+  writeFileSync(currentManifestPath, currentManifestText)
+  const statePath = join(repo, '.cap/STATE.md')
+  writeFileSync(statePath, readFileSync(statePath, 'utf8').replace(/^context-manifest-sha256:.*$/m, `context-manifest-sha256: ${createHash('sha256').update(currentManifestText).digest('hex')}`))
+
+  assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_manifest_invalid')
+})
+
+test('recovery receipt pointers cannot traverse outside the context directory', async t => {
+  const { repo, path } = await fixture(t)
+  const result = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event: 'visible-resume:receipt-traversal', environment })
+  assert.equal(result.valid, true, JSON.stringify(result))
+  const statePath = join(repo, '.cap/STATE.md')
+  const state = readFileSync(statePath, 'utf8')
+  const receiptPath = state.match(/^context-recovery-receipt: (.+)$/m)[1]
+  mkdirSync(join(repo, '.cap/escaped'), { recursive: true })
+  const escapedReceipt = '.cap/context/../escaped/recovery.json'
+  writeFileSync(join(repo, '.cap/escaped/recovery.json'), readFileSync(join(repo, receiptPath), 'utf8'))
+  const manifestPath = join(repo, result.manifest)
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.entry.recoveryReceipt = escapedReceipt
+  const manifestText = JSON.stringify(manifest)
+  writeFileSync(manifestPath, manifestText)
+  writeFileSync(statePath, state
+    .replace(/^context-recovery-receipt:.*$/m, `context-recovery-receipt: ${escapedReceipt}`)
+    .replace(/^context-manifest-sha256:.*$/m, `context-manifest-sha256: ${createHash('sha256').update(manifestText).digest('hex')}`))
+
+  assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_recovery_required')
+})
+
 test('prepare accepts a newly added optional spec source when the successor covers it', async t => {
   const { repo, checkpoint, path } = await fixture(t)
   const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })

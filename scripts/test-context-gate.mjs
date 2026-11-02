@@ -283,6 +283,19 @@ test('tampered log and escaped or symlinked manifest cannot unlock a stage', asy
   assert.equal((await inspectSemanticContext(repo)).passed, false)
 })
 
+test('a STATE manifest pointer cannot traverse outside the context directory', async t => {
+  const { repo } = await fixture(t)
+  await publish(repo)
+  mkdirSync(join(repo, '.cap/escaped'), { recursive: true })
+  for (const name of ['manifest.json', 'checkpoint.json', 'atoms.jsonl']) writeFileSync(join(repo, '.cap/escaped', name), readFileSync(join(repo, '.cap/context', name), 'utf8'))
+  const statePath = join(repo, '.cap/STATE.md')
+  writeFileSync(statePath, readFileSync(statePath, 'utf8')
+    .replace('context-manifest: .cap/context/manifest.json', 'context-manifest: .cap/context/../escaped/manifest.json')
+    .replace('context-checkpoint: .cap/context/checkpoint.json', 'context-checkpoint: .cap/escaped/checkpoint.json'))
+
+  assert.equal((await inspectSemanticContext(repo)).reason, 'context_manifest_invalid')
+})
+
 test('observed recovery event requires an explicit recovered binding; request is not success', async t => {
   const { repo } = await fixture(t)
   await publish(repo)
