@@ -98,7 +98,9 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
     if (visited.has(manifestPath)) return { valid: false, errors: [{ code: 'published_manifest_chain_cycle' }] }
     visited.add(manifestPath)
   }
-  if (expectedManifestSha256 && snapshot.manifestSha256 !== expectedManifestSha256) fail('published_manifest_sha256_mismatch')
+  const integrityVersion = snapshot.manifest.integrityVersion
+  if (integrityVersion === 1 && !/^[a-f0-9]{64}$/.test(expectedManifestSha256)) fail('published_manifest_sha256_missing')
+  if (expectedManifestSha256 && (!/^[a-f0-9]{64}$/.test(expectedManifestSha256) || snapshot.manifestSha256 !== expectedManifestSha256)) fail('published_manifest_sha256_mismatch')
   const checked = validateManifest(snapshot.manifest, { checkpoint: snapshot.checkpoint, previous: snapshot.previous, atomLogContent: snapshot.atomLogContent, sourceContents: snapshot.sourceContents, allowSourceDrift })
   errors.push(...checked.errors)
   const entry = snapshot.manifest.entry
@@ -122,7 +124,7 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
       try {
         const ancestor = await loadContextManifest(repo, entry.previousManifest)
         if (ancestor.manifest.digest !== entry.previousDigest || checkpointDigest(ancestor.checkpoint) !== entry.previousDigest) throw new Error('ancestor_digest_invalid')
-        if (expectedManifestSha256 && !entry.previousManifestSha256) throw new Error('ancestor_sha_missing')
+        if (integrityVersion === 1 && !/^[a-f0-9]{64}$/.test(entry.previousManifestSha256 || '')) throw new Error('ancestor_sha_missing')
         const ancestorCheck = await validatePublishedSnapshotIntegrity(repo, ancestor, binding, {
           expectedManifestSha256: entry.previousManifestSha256 || '',
           allowSourceDrift: Boolean(entry.previousManifestSha256),

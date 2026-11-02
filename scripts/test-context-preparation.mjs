@@ -269,6 +269,28 @@ test('a successor binds the direct predecessor manifest bytes and rejects later 
   assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
 })
 
+test('a versioned manifest cannot downgrade to legacy when the STATE manifest SHA is removed', async t => {
+  const { repo, checkpoint, path } = await fixture(t)
+  const first = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const manifestPath = join(repo, first.manifest)
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  assert.equal(manifest.integrityVersion, 1)
+  const statePath = join(repo, '.cap/STATE.md')
+  writeFileSync(statePath, readFileSync(statePath, 'utf8').replace(/^context-manifest-sha256:.*\n?/m, ''))
+  assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_manifest_invalid')
+
+  writeFileSync(manifestPath, JSON.stringify(manifest))
+  assert.equal((await inspectSemanticContext(repo, { environment })).reason, 'context_manifest_invalid')
+  const successor = structuredClone(checkpoint)
+  successor.atoms.push({ ...successor.atoms[0], id: 'no-integrity-downgrade', type: 'constraint', protection: 'P2', assertion: 'Missing STATE SHA cannot downgrade a versioned manifest' })
+  const successorPath = '.cap/context/checkpoint-no-integrity-downgrade.json'
+  writeFileSync(join(repo, successorPath), JSON.stringify(successor))
+  const blocked = await prepareContext(repo, { checkpointPath: successorPath, budgetTokens: 20000, environment })
+  assert.equal(blocked.valid, false, JSON.stringify(blocked))
+  assert.ok(blocked.errors.some(error => error.code === 'context_published_predecessor_invalid'), JSON.stringify(blocked))
+})
+
 for (const field of ['sessionId', 'runtimeSessionId']) {
   test(`prepare cannot treat a tampered entry ${field} as a legitimate session handoff`, async t => {
     const { repo, path } = await fixture(t)

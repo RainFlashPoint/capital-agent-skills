@@ -179,6 +179,7 @@ test('legacy task-context source and semantic hashes remain readable', async t =
   const taskContextPath = join(repo, '.cap/task-context.md')
   writeFileSync(taskContextPath, readFileSync(taskContextPath, 'utf8').replace('- profile-used-as: index-only', '- inspected-at: 2026-11-02T07:00:00Z\n- profile-used-as: index-only'))
   const manifest = await publish(repo)
+  delete manifest.integrityVersion
   delete manifest.entry.semanticsProjection
   const source = manifest.sources.find(item => item.path === '.cap/task-context.md')
   delete source.projection
@@ -191,7 +192,7 @@ test('legacy task-context source and semantic hashes remain readable', async t =
   source.sha256 = createHash('sha256').update(taskContext).digest('hex')
   manifest.entry.semanticsHash = createHash('sha256').update(JSON.stringify({ taskContext, spec: '', plan: '', authorization: section('External operation authorization'), decisions: section('Decisions log'), gates: section('Gates passed'), nextAction: section('Next action') })).digest('hex')
   const legacySha256 = writeManifest(repo, '.cap/context/manifest.json', manifest)
-  writeFileSync(join(repo, '.cap/STATE.md'), bindManifestSha(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), legacySha256))
+  writeFileSync(join(repo, '.cap/STATE.md'), bindManifestSha(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), legacySha256).replace(/^context-manifest-sha256:.*\n?/m, ''))
   assert.equal((await inspectSemanticContext(repo)).passed, true)
   writeFileSync(taskContextPath, taskContext.replace('inspected-at: 2026-11-02T07:00:00Z', 'inspected-at: 2026-11-02T08:00:00Z'))
   assert.equal((await inspectSemanticContext(repo)).passed, false)
