@@ -553,6 +553,7 @@ export function validateManifest(manifest, { checkpoint, previous = null, atomLo
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return { valid: false, errors: [error('manifest_invalid', '$', 'manifest must be an object')] }
   if (manifest.schemaVersion !== 1) fail('manifest_schema_invalid', 'schemaVersion', 'manifest schemaVersion must be 1')
   if (manifest.integrityVersion !== undefined && manifest.integrityVersion !== 1) fail('manifest_integrity_version_invalid', 'integrityVersion', 'manifest integrityVersion is unsupported')
+  if (manifest.entry?.semanticsProjection !== undefined && manifest.entry.semanticsProjection !== TASK_CONTEXT_PROJECTION) fail('manifest_entry_projection_invalid', 'entry.semanticsProjection', 'entry semantics projection is unsupported')
   if (!isNonEmptyString(manifest.checkpoint)) fail('manifest_checkpoint_missing', 'checkpoint', 'checkpoint path is required')
   if (manifest.digest !== validation.digest) fail('manifest_digest_mismatch', 'digest', 'manifest digest does not match checkpoint')
   if (JSON.stringify(stableValue(manifest.identity)) !== JSON.stringify(stableValue(checkpoint?.identity))) fail('manifest_identity_mismatch', 'identity', 'manifest identity must match checkpoint')

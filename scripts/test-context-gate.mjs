@@ -203,6 +203,25 @@ test('legacy task-context source and semantic hashes remain readable', async t =
   assert.equal((await inspectSemanticContext(repo)).passed, false)
 })
 
+test('unknown entry semantic projections are rejected by gate and resume', async t => {
+  const { repo } = await fixture(t)
+  await publish(repo)
+  const manifestPath = join(repo, '.cap/context/manifest.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.entry.semanticsProjection = 'unknown-projection'
+  const manifestSha = writeManifest(repo, '.cap/context/manifest.json', manifest)
+  writeFileSync(join(repo, '.cap/STATE.md'), bindManifestSha(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), manifestSha))
+
+  const gate = await inspectSemanticContext(repo)
+  assert.equal(gate.passed, false)
+  assert.equal(gate.reason, 'context_manifest_invalid')
+
+  const resumed = await observeContextResume(repo, { event: 'visible-resume:unknown-projection', environment: env })
+  assert.equal(resumed.valid, false)
+  assert.equal(resumed.recovery, null)
+  assert.ok(resumed.errors.some(error => error.code === 'manifest_entry_projection_invalid'), JSON.stringify(resumed))
+})
+
 test('authorization and decision corrections invalidate same-Commit checkpoints', async t => {
   const { repo } = await fixture(t)
   await publish(repo)

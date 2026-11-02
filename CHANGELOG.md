@@ -4,6 +4,7 @@
 
 ## 0.14.4
 
+- 统一普通检查、前驱校验与可见恢复的摘要格式边界：未知 `entry.semanticsProjection` 在共享 manifest 校验层失败关闭，不得按 legacy 格式重放；未声明该字段的真实旧格式仍按既有兼容规则读取。
 - 收敛语义检查点重复准备：内容完全相同但文件名不同的候选自动归一到已发布 checkpoint 并返回 compact reuse，不再因临时 `Date.now()` 文件名制造 duplicate 修复循环；`task-context` 的 `inspected-at` 仅作为侦察时间元数据，不再单独改变语义或来源绑定，真实意图、HEAD、源码指纹、授权、范围和阶段变化仍按原门禁失效。任何复用、低层 `create-manifest --bind-entry`、可见 resume 或 successor 发布前都走共享的已发布快照验证；新 manifest 声明 `integrityVersion: 1`，原始字节 SHA-256 写入 STATE，successor 同时绑定直接前驱 manifest SHA，从而区分真实来源漂移与 manifest 内 source hash 被修改。带版本标记的 manifest 不得通过删除 STATE SHA 降级为 legacy，当前或前驱 SHA 缺失/非法均失败关闭；只有真正没有版本标记的旧 manifest 走 legacy 兼容，resume 与普通 gate 使用同一 projected/legacy 语义 hash 规则，并在重放前严格验证全部绑定 source hash，不能把 refresh 用的 source drift 容忍带进旧 evidence replay。递归祖先验证同时强制 checkpoint transition 链与 entry manifest 链在每一层指向同一前驱，不能用自洽但分叉的中间链绕过受保护原子；manifest、祖先 manifest 与 recovery receipt 指针必须是 `.cap/context/` 的规范直接子项，路径穿越或等价别名在读取前失败关闭，prepare 不得先发布非法 receipt 指针再依赖末尾 gate 回滚；旧快照未索引的可选 `spec.md` / `plan.md` 首次出现时，只要 successor 完整覆盖新语义即可作为可验证来源扩展刷新。身份、Session/runtime Session、前驱链、source projection 或 recovery receipt 损坏继续失败关闭，不能借相同或不同候选“洗白”。同一恢复事件下 STATE receipt 指针必须继续等于已发布 entry 且内容有效；只有相对已发布绑定真正更新的可见事件才能重建 receipt。合法 legacy unbound runtime 仍通过既有门禁完成首次绑定。流程同时明确同一轮先收敛 STATE/task-context/spec/plan/源码，再统一 prepare；真实恢复热内容的分段协议留待独立兼容改动。
 
 ## 0.14.3
