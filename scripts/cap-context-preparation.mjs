@@ -1,3 +1,4 @@
+import { auditLegacyPredecessor, validateLineageAnchor } from './cap-context-migration.mjs'
 import { randomUUID, createHash } from 'node:crypto'
 import { writeFile, readFile, rename, rm, open } from 'node:fs/promises'
 import { join, posix } from 'node:path'
@@ -54,7 +55,7 @@ export async function prepareContext(candidate, options = {}) {
   }
 }
 
-async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferRecovery = false, environment = process.env } = {}) {
+async function prepareLocked(repo, { checkpointPath, budgetTokens, event, migrationReview, deferRecovery = false, environment = process.env } = {}) {
   const { inspectTaskContext } = await import('./cap-runtime.mjs')
   let state = await readContained(repo, '.cap/STATE.md')
   const hostEvent = environment.CAPITAL_AGENT_CONTEXT_RESUME_EVENT
@@ -81,12 +82,16 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   let checkpoint, predecessor, requirements
   try { checkpoint = JSON.parse(await readContained(repo, checkpointPath)) }
   catch { return failed([...errors, problem('context_checkpoint_invalid')]) }
-  try { predecessor = await capturePublishedPredecessor(repo, { environment }) }
-  catch { errors.push(problem('context_published_predecessor_invalid')) }
+  try { predecessor = migrationReview
+    ? await auditLegacyPredecessor(repo, { reviewPath: migrationReview, binding: await captureContextBinding(repo, { environment }) })
+    : await capturePublishedPredecessor(repo, { environment }) }
+  catch (cause) { errors.push(problem(migrationReview ? cause.message : 'context_published_predecessor_invalid')) }
   try { requirements = await captureCoverageRequirements(repo, { environment }) }
   catch { return failed([...errors, problem('context_inputs_invalid')]) }
   const candidateDigest = checkpointDigest(checkpoint)
-  const sameContent = predecessor?.digest === candidateDigest
+  const migration = Boolean(predecessor?.lineageAnchor)
+  if (migration && !event) errors.push(problem('context_migration_event_required'))
+  const sameContent = !migration && predecessor?.digest === candidateDigest
   const ignoredCheckpoint = sameContent && predecessor?.path !== checkpointPath ? checkpointPath : null
   if (sameContent) checkpointPath = predecessor.path
   const same = Boolean(predecessor && sameContent)
@@ -115,7 +120,7 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   }
   const existing = await inspectSemanticContext(repo, { environment })
   const snapshot = predecessor?.snapshot || null
-  if (predecessor) {
+  if (predecessor && !migration) {
     if (!existing.passed && !refreshablePublishedSnapshot(existing.reason, snapshot, binding, { event, successor: !same, currentSources: sources })) return failed([problem('context_published_predecessor_invalid'), problem(existing.reason, 'publishedManifest')])
   }
   if (same) {
@@ -129,17 +134,18 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   const makeManifest = currentBinding => {
     const manifest = createManifest(checkpoint, {
       checkpointPath: posix.basename(checkpointPath),
-      previous: predecessor && !same ? predecessor.checkpoint : null,
-      previousPath: predecessor && !same ? posix.basename(predecessor.path) : null,
+      previous: predecessor && !same && !migration ? predecessor.checkpoint : null,
+      previousPath: predecessor && !same && !migration ? posix.basename(predecessor.path) : null,
       atomLogPath: posix.basename(logPath), atomLogContent: log, budgetTokens,
       trigger: binding.recoveryEvent !== 'none' ? 'visible-resume' : 'stage-entry',
       pressure, provider, sourceContents: sources,
     })
-    manifest.entry = { ...currentBinding, previousManifest: predecessor?.manifestPath || 'none', previousDigest: predecessor?.digest || null, previousManifestSha256: predecessor?.manifestSha256 || null }
+    manifest.entry = { ...currentBinding, previousManifest: migration ? 'none' : predecessor?.manifestPath || 'none', previousDigest: migration ? null : predecessor?.digest || null, previousManifestSha256: migration ? null : predecessor?.manifestSha256 || null }
+    if (migration) manifest.lineageAnchor = predecessor.lineageAnchor
     return manifest
   }
   let manifest = makeManifest(binding)
-  let checked = validateManifest(manifest, { checkpoint, previous: predecessor && !same ? predecessor.checkpoint : null, atomLogContent: log, sourceContents: sources })
+  let checked = validateManifest(manifest, { checkpoint, previous: predecessor && !same && !migration ? predecessor.checkpoint : null, atomLogContent: log, sourceContents: sources })
   if (!checked.valid) return failed(checked.errors)
   let recovery = null
   if (binding.recoveryEvent !== 'none') {
@@ -166,7 +172,7 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   for (const key of ['taskId', 'sessionId', 'runtimeSessionId', 'repo', 'branch', 'commit', 'stage', 'sourceFingerprint', 'semanticsHash', 'recoveryEvent']) if (currentBinding[key] !== binding[key]) return failed([problem('context_inputs_changed', key)])
   if (checkpointDigest(JSON.parse(await readContained(repo, checkpointPath))) !== checkpointDigest(checkpoint)) return failed([problem('context_checkpoint_changed')])
   manifest = makeManifest(currentBinding)
-  checked = validateManifest(manifest, { checkpoint, previous: predecessor && !same ? predecessor.checkpoint : null, atomLogContent: log, sourceContents: sources })
+  checked = validateManifest(manifest, { checkpoint, previous: predecessor && !same && !migration ? predecessor.checkpoint : null, atomLogContent: log, sourceContents: sources })
   if (!checked.valid) return failed(checked.errors)
   const manifestText = `${JSON.stringify(manifest, null, 2)}\n`
   const manifestSha256 = manifestContentSha256(manifestText)
@@ -183,8 +189,9 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
     }
     await writeFile(join(repo, manifestPath), manifestText, { flag: 'wx', mode: 0o600 })
     manifestCreated = true
+    if (migration && !await validateLineageAnchor(repo, predecessor.lineageAnchor, checkpoint, currentBinding)) return failed([problem('context_migration_inputs_changed')])
     let next = state
-    for (const [key, value] of Object.entries({ 'context-checkpoint': checkpointPath, 'context-checkpoint-digest': manifest.digest, 'context-manifest': manifestPath, 'context-manifest-sha256': manifestSha256, 'context-previous-manifest': predecessor?.manifestPath || 'none', 'context-previous-digest': predecessor?.digest || 'none' })) next = setField(next, key, value)
+    for (const [key, value] of Object.entries({ 'context-checkpoint': checkpointPath, 'context-checkpoint-digest': manifest.digest, 'context-manifest': manifestPath, 'context-manifest-sha256': manifestSha256, 'context-previous-manifest': migration ? 'none' : predecessor?.manifestPath || 'none', 'context-previous-digest': migration ? 'none' : predecessor?.digest || 'none' })) next = setField(next, key, value)
     await replaceState(repo, state, next)
     published = true
   } finally {

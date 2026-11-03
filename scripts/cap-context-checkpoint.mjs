@@ -627,10 +627,10 @@ function usageError(message) {
 
 export async function main(argv = process.argv.slice(2)) {
   const [operation, source, ...rest] = argv
-  if (operation === 'prepare') {
+  if (operation === 'prepare' || operation === 'migrate-legacy') {
     const { prepareContext } = await import('./cap-context-preparation.mjs')
     const option = name => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : undefined }
-    return prepareContext(source || '.', { checkpointPath: option('--checkpoint'), budgetTokens: Number(option('--budget-tokens')), event: option('--event') })
+    return prepareContext(source || '.', { checkpointPath: option('--checkpoint'), budgetTokens: Number(option('--budget-tokens')), event: option('--event'), ...(operation === 'migrate-legacy' ? { migrationReview: option('--review') || 'missing' } : {}) })
   }
   if (operation === 'resume') {
     const { observeContextResume } = await import('./cap-context-recovery.mjs')
