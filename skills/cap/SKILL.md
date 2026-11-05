@@ -43,7 +43,7 @@ L1/L2 无风险时只加载必要 reference 和当前阶段 Skill。L3/L4、安�
 
 不安装全局压缩或工具 Hook；仅在 cap 流程内按可见压缩事件恢复。
 
-可见压缩/恢复后，**恢复必须先于继续读取业务代码或执行研发动作**：同源运行 `scripts/cap-context-checkpoint.mjs resume <repo> --event <unique-visible-event>`，读 hot 和所需 warm。没有可信压缩回调时不能承诺每次自动监听；摘要不证明恢复成功。审阅来源后用 `scripts/cap-context-checkpoint.mjs prepare`，参数见 reference，沿用授权。
+可见压缩/恢复后，**恢复必须先于继续读取业务代码或执行研发动作**：同源运行 `scripts/cap-context-checkpoint.mjs resume <repo> --event <unique-visible-event>`。若返回 `recovery-paged`，按 `context-compaction.md` 的分段协议完整读取并校验 hot 与所需 warm；同一事件的 compact 复用不等于当前模型已读取内容。没有可信压缩回调时不能承诺每次自动监听；摘要不证明恢复成功。审阅来源后用 `scripts/cap-context-checkpoint.mjs prepare`，参数见 reference，沿用授权。
 
 ## 3. 状态分流
 

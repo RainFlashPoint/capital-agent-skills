@@ -2,7 +2,7 @@
 
 把 Coding Agent 的需求、实现、测试、评审、发布和经验复用变成一条可恢复、可验证、可移植的研发主线。
 
-<!-- release-version: 0.14.4 -->
+<!-- release-version: 0.14.6 -->
 
 [![CI](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml)
 [![Release Check](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml)
@@ -10,7 +10,7 @@
 
 ## 公开状态与证据
 
-当前候选版本：`v0.14.4`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
+当前候选版本：`v0.14.6`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
 
 公开证据按入口区分：
 
@@ -23,7 +23,7 @@
 | GitHub Actions | 提交到 GitHub 后，各公开 runner 的真实结果 | 私有 Server/Harness 的状态 |
 | Tag + GitHub Release | 某个公开 Commit 已按发布 workflow 建立版本关系 | 尚未创建的候选版本已发布 |
 
-截至 2026-11-02，`v0.14.3` 已收紧旧 recorder 的证据迁移与混合失败分类；`v0.14.4` 候选进一步减少无语义变化的检查点重复准备，并保持身份、前驱、来源投影和恢复回执损坏时失败关闭。新版本只有在本地门禁、目标 Commit 推送、Tag、GitHub Actions 与 Release API 回读全部完成后才算正式发布，不能用本地绿色结果替代。
+`v0.14.6` 候选把长会话恢复改为短摘要与可校验的分页读取，完整回执仍保留在本地；同一事件重复恢复复用已验证回执。正式发布仍以目标 Commit、Tag、GitHub Actions 与 Release API 回读为准。
 
 普通维护按影响面选择定向测试，例：修改版本契约时执行对应 Node 测试；修改 Python 工具时选择对应 unittest。测试文件需按实际改动替换，未涉及的语言无需运行：
 
@@ -199,6 +199,8 @@ cap（唯一公开入口）
 - [本地效率升级说明](docs/local-efficiency-upgrade.md)
 
 ## 当前版本摘要
+
+`v0.14.6` 候选减少长会话恢复时的重复输出，保留完整回执、来源绑定与逐页校验。
 
 `v0.14.2` 为运行完整 Node 与发布回归的 GitHub Ubuntu Job 安装并实际探测 bubblewrap，使 Linux CI 与本地 macOS `sandbox-exec` 使用同一“真实沙箱可用后才执行 Provider 回归”的门禁，不把沙箱缺失误报成业务回归失败，也不放宽 Provider 隔离要求。
 

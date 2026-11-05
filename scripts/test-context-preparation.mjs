@@ -9,12 +9,22 @@ import { fileURLToPath } from 'node:url'
 import { captureContextBinding, captureCoverageRequirements, inspectSemanticContext } from './cap-context-gate.mjs'
 import { inspectContextFingerprint } from './cap-context-fingerprint.mjs'
 import { prepareContext } from './cap-context-preparation.mjs'
+import { recoveryPages } from './cap-context-recovery-pages.mjs'
 import { inspectTaskContext } from './cap-runtime.mjs'
 import { handleContextHook, recoverContextHook, codexHooksConfig } from './cap-context-hooks.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 
 const packageRoot = fileURLToPath(new URL('..', import.meta.url))
 const environment = { CAPITAL_AGENT_MODE: 'local', PATH: process.env.PATH, HOME: process.env.HOME }
+
+test('large Unicode receipts split into complete bounded UTF-8 pages', () => {
+  const content = '授权来源：用户确认。'.repeat(4000)
+  const pages = recoveryPages(content)
+  assert.ok(pages.length > 1)
+  assert.ok(pages.every(page => Buffer.byteLength(page) <= 4096))
+  assert.equal(pages.join(''), content)
+})
+
 async function fixture(t, stage = 'implement') {
   const repo = mkdtempSync(join(tmpdir(), 'cap-prepare-'))
   t.after(() => rmSync(repo, { recursive: true, force: true }))
@@ -518,6 +528,63 @@ test('one prepare call replays a visible resume and binds its exact receipt', as
   receipt.hot[0].assertion = 'tampered replay'
   writeFileSync(join(repo, receiptPath), JSON.stringify(receipt))
   assert.equal((await inspectSemanticContext(repo, { environment })).passed, false)
+})
+
+test('CLI recovery is bounded and every page reconstructs the exact verified receipt', async t => {
+  const { repo, path } = await fixture(t)
+  const event = 'visible-resume:paged-cli'
+  const prepared = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event, environment })
+  assert.equal(prepared.valid, true)
+  const run = (...args) => spawnSync(process.execPath, [join(packageRoot, 'scripts/cap-context-checkpoint.mjs'), ...args], { cwd: repo, env: environment, encoding: 'utf8' })
+  const summaryResult = run('prepare', repo, '--checkpoint', path, '--budget-tokens', '20000', '--event', event)
+  assert.equal(summaryResult.status, 0, summaryResult.stdout + summaryResult.stderr)
+  const summary = JSON.parse(summaryResult.stdout)
+  assert.equal(summary.outputMode, 'compact')
+  const resumed = run('resume', repo, '--event', 'visible-resume:paged-cli-next')
+  assert.equal(resumed.status, 0, resumed.stdout + resumed.stderr)
+  const projected = JSON.parse(resumed.stdout)
+  assert.equal(projected.outputMode, 'recovery-paged')
+  assert.equal(projected.recovery.hotCount, prepared.recovery.hot.length)
+  assert.equal(projected.recovery.hot, undefined)
+  assert.ok(Buffer.byteLength(resumed.stdout) < 3000)
+  const pages = []
+  for (let page = 1; page <= projected.recovery.pageCount; page++) {
+    const read = run('read-recovery', repo, '--event', projected.event, '--digest', projected.recovery.digest, '--page', String(page))
+    assert.equal(read.status, 0, read.stdout + read.stderr)
+    const chunk = JSON.parse(read.stdout)
+    assert.equal(chunk.page, page)
+    assert.equal(chunk.pageCount, projected.recovery.pageCount)
+    assert.equal(createHash('sha256').update(chunk.content).digest('hex'), chunk.pageSha256)
+    pages.push(chunk.content)
+  }
+  assert.equal(createHash('sha256').update(pages.join('')).digest('hex'), projected.recovery.sha256)
+  assert.deepEqual(JSON.parse(pages.join('')), JSON.parse(readFileSync(join(repo, projected.recovery.path), 'utf8')))
+  const reboundResult = run('prepare', repo, '--checkpoint', path, '--budget-tokens', '20000', '--event', projected.event)
+  assert.equal(reboundResult.status, 0, reboundResult.stdout + reboundResult.stderr)
+  const rebound = JSON.parse(reboundResult.stdout)
+  assert.equal(rebound.valid, true)
+  assert.equal(rebound.outputMode, 'compact')
+  assert.equal(rebound.recovery, null)
+  assert.equal(rebound.recoveryPages.sha256, projected.recovery.sha256)
+  const afterBind = run('read-recovery', repo, '--event', projected.event, '--digest', projected.recovery.digest, '--page', '1')
+  assert.equal(afterBind.status, 0, afterBind.stdout + afterBind.stderr)
+  const wrong = run('read-recovery', repo, '--event', projected.event, '--digest', 'bad', '--page', '1')
+  assert.equal(wrong.status, 1)
+  assert.match(wrong.stdout, /recovery_digest_mismatch/)
+  const missing = run('read-recovery', repo, '--event', projected.event, '--digest', projected.recovery.digest, '--page', String(projected.recovery.pageCount + 1))
+  assert.equal(missing.status, 1)
+  assert.match(missing.stdout, /recovery_page_invalid/)
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  const drifted = run('read-recovery', repo, '--event', projected.event, '--digest', projected.recovery.digest, '--page', '1')
+  assert.equal(drifted.status, 1)
+  assert.match(drifted.stdout, /recovery_sources_changed/)
+  writeFileSync(join(repo, 'source.js'), 'export const value = 1\n')
+  const receipt = JSON.parse(readFileSync(join(repo, projected.recovery.path), 'utf8'))
+  receipt.hot[0].assertion = 'tampered'
+  writeFileSync(join(repo, projected.recovery.path), JSON.stringify(receipt))
+  const damaged = run('read-recovery', repo, '--event', projected.event, '--digest', projected.recovery.digest, '--page', '1')
+  assert.equal(damaged.status, 1)
+  assert.match(damaged.stdout, /recovery_receipt_invalid|recovery_snapshot_invalid/)
 })
 
 for (const stage of ['understand', 'define']) {

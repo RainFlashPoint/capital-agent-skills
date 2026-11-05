@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, realpathSync, readdirSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -523,6 +523,38 @@ test('visible resume records a unique receipt and requires rebinding before exec
   assert.equal(second.valid, true)
   assert.notEqual(first.recovery.event, second.recovery.event)
   assert.equal((await inspectSemanticContext(repo)).reason, 'context_recovery_required')
+})
+
+test('repeating the same visible resume reuses its verified receipt without writing another', async t => {
+  const { repo } = await fixture(t)
+  await publish(repo)
+  const event = 'host-event:repeat'
+  const first = await observeContextResume(repo, { event, environment: env })
+  assert.equal(first.valid, true)
+  const state = readFileSync(join(repo, '.cap/STATE.md'), 'utf8')
+  const receiptFiles = () => readdirSync(join(repo, '.cap/context')).filter(name => name.startsWith('recovery-'))
+  const before = receiptFiles()
+  const second = await observeContextResume(repo, { event, environment: env })
+  assert.equal(second.valid, true, JSON.stringify(second))
+  assert.equal(second.reused, true)
+  assert.equal(second.recovery, null)
+  assert.equal(second.recoveryPages.path, state.match(/^context-recovery-receipt: (.+)$/m)[1])
+  assert.ok(second.recoveryPages.pageCount >= 1)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), state)
+  assert.deepEqual(receiptFiles(), before)
+  const path = state.match(/^context-recovery-receipt: (.+)$/m)[1]
+  const receipt = JSON.parse(readFileSync(join(repo, path), 'utf8'))
+  receipt.hot[0].assertion = 'tampered'
+  writeFileSync(join(repo, path), JSON.stringify(receipt))
+  const damaged = await observeContextResume(repo, { event, environment: env })
+  assert.equal(damaged.valid, false)
+  assert.ok(damaged.errors.some(item => item.code === 'context_recovery_receipt_invalid'))
+  assert.deepEqual(receiptFiles(), before)
+  writeFileSync(join(repo, path), JSON.stringify(first.recovery, null, 2) + '\n')
+  writeFileSync(join(repo, 'source.js'), 'export const value = 2\n')
+  const drifted = await observeContextResume(repo, { event, environment: env })
+  assert.equal(drifted.valid, false)
+  assert.deepEqual(receiptFiles(), before)
 })
 
 test('manifest CLI binds current inputs and a subsequent source correction invalidates it', async t => {

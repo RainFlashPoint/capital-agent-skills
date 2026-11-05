@@ -142,6 +142,7 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
   let checked = validateManifest(manifest, { checkpoint, previous: predecessor && !same ? predecessor.checkpoint : null, atomLogContent: log, sourceContents: sources })
   if (!checked.valid) return failed(checked.errors)
   let recovery = null
+  let recoveryReused = false
   if (binding.recoveryEvent !== 'none') {
     const path = binding.recoveryReceipt
     if (path !== 'none') {
@@ -149,7 +150,7 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
       catch (cause) { return failed([problem(cause.code || 'context_recovery_receipt_path_invalid')]) }
       try {
         const old = JSON.parse(await readContained(repo, path))
-        if (validateRecoveryReceipt(old, manifest, checkpoint, binding)) recovery = old
+        if (validateRecoveryReceipt(old, manifest, checkpoint, binding)) { recovery = old; recoveryReused = true }
       } catch { /* An absent/stale receipt requires exact replay of this candidate. */ }
     }
     if (!recovery) {
@@ -194,5 +195,5 @@ async function prepareLocked(repo, { checkpointPath, budgetTokens, event, deferR
     }
   }
   const gate = await inspectSemanticContext(repo, { environment })
-  return { valid: gate.passed, reused: false, outputMode: recovery ? 'recovery-full' : 'compact', checkpoint: checkpointPath, ...(ignoredCheckpoint ? { ignoredCheckpoint } : {}), manifest: manifestPath, digest: manifest.digest, recovery, warnings: semanticProtectionAdvisories(checkpoint, requirements), errors: gate.passed ? [] : [problem(gate.reason)], contextGate: gate, nextAction: gate.passed ? recovery ? 'Read replayed hot atoms and resolve needed warm references before continuing; rerun the full stage guard.' : 'No recovery replay is required; rerun the full stage guard.' : gate.remediation }
+  return { valid: gate.passed, reused: false, recoveryReused, outputMode: recovery ? 'recovery-full' : 'compact', checkpoint: checkpointPath, ...(ignoredCheckpoint ? { ignoredCheckpoint } : {}), manifest: manifestPath, digest: manifest.digest, recovery, warnings: semanticProtectionAdvisories(checkpoint, requirements), errors: gate.passed ? [] : [problem(gate.reason)], contextGate: gate, nextAction: gate.passed ? recovery ? 'Read replayed hot atoms and resolve needed warm references before continuing; rerun the full stage guard.' : 'No recovery replay is required; rerun the full stage guard.' : gate.remediation }
 }
