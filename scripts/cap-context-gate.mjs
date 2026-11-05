@@ -85,31 +85,49 @@ export async function readContained(repo, path, budget = { remaining: 8 * MAX_BY
   } finally { await h.close() }
 }
 
-export async function loadContextManifest(repo, pointer) {
+export async function loadContextManifest(repo, pointer, options = {}) {
   assertContextArtifactPointer(repo, pointer, 'context_manifest_path')
   const budget = { remaining: 8 * MAX_BYTES }
-  const manifestText = await readContained(repo, pointer, budget)
+  const read = options.read || (path => readContained(repo, path, budget))
+  const manifestText = await read(pointer)
   const manifest = JSON.parse(manifestText)
   const resource = path => {
     if (typeof path !== 'string' || isAbsolute(path) || path.split(/[\\/]/).includes('..')) throw new Error('context_manifest_path')
-    return readContained(repo, join(relative(repo, resolve(repo, pointer, '..')), path).split(sep).join('/'), budget)
+    return read(join(relative(repo, resolve(repo, pointer, '..')), path).split(sep).join('/'))
   }
   const checkpoint = JSON.parse(await resource(manifest.checkpoint))
   const previous = manifest.previousCheckpoint ? JSON.parse(await resource(manifest.previousCheckpoint)) : null
   const atomLogContent = await resource(manifest.atomLog?.path)
   const sourceContents = {}
-  for (const source of manifest.sources || []) sourceContents[source.path] = await readContained(repo, source.path, budget)
+  for (const source of manifest.sources || []) sourceContents[source.path] = await read(source.path)
   return { manifest, manifestText, manifestSha256: manifestContentSha256(manifestText), checkpoint, previous, atomLogContent, sourceContents }
 }
 
 export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding, options = {}) {
+  const pending = [{ snapshot, options }], visited = new Set(), errors = []
+  const budget = { remaining: 64 * MAX_BYTES }, cache = new Map()
+  const read = async path => {
+    if (!cache.has(path)) cache.set(path, await readContained(repo, path, budget))
+    return cache.get(path)
+  }
+  // Iteration avoids a lifecycle-length recursion limit. A bounded unique-byte
+  // budget and node count still reject hostile or cyclic input.
+  while (pending.length) {
+    if (visited.size >= 4096) return { valid: false, errors: [...errors, { code: 'published_manifest_chain_budget' }] }
+    const item = pending.pop()
+    const checked = await validatePublishedNode(repo, item.snapshot, binding, { ...item.options, visited, pending, read })
+    errors.push(...checked.errors)
+  }
+  return { valid: errors.length === 0, errors }
+}
+
+async function validatePublishedNode(repo, snapshot, binding, options = {}) {
   const {
     expectedManifestSha256 = '', allowSourceDrift = false, enforceRuntimeSession = true,
-    enforceReceiptPointer = true, manifestPath = '', depth = 0, visited = new Set(),
+    enforceReceiptPointer = true, manifestPath = '', visited, pending, read,
   } = options
   const errors = []
   const fail = code => errors.push({ code })
-  if (depth > 64) return { valid: false, errors: [{ code: 'published_manifest_chain_too_deep' }] }
   if (manifestPath) {
     if (visited.has(manifestPath)) return { valid: false, errors: [{ code: 'published_manifest_chain_cycle' }] }
     visited.add(manifestPath)
@@ -117,6 +135,10 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
   const integrityVersion = snapshot.manifest.integrityVersion
   if (integrityVersion === 1 && !/^[a-f0-9]{64}$/.test(expectedManifestSha256)) fail('published_manifest_sha256_missing')
   if (expectedManifestSha256 && (!/^[a-f0-9]{64}$/.test(expectedManifestSha256) || snapshot.manifestSha256 !== expectedManifestSha256)) fail('published_manifest_sha256_mismatch')
+  if (snapshot.manifest.lineageAnchor) {
+    const { validateLineageAnchor } = await import('./cap-context-migration.mjs')
+    if (snapshot.manifest.entry?.previousManifest !== 'none' || !await validateLineageAnchor(repo, snapshot.manifest.lineageAnchor, snapshot.checkpoint, { ...snapshot.manifest.entry, sessionId: binding.sessionId })) fail('published_lineage_anchor_invalid')
+  }
   const checked = validateManifest(snapshot.manifest, { checkpoint: snapshot.checkpoint, previous: snapshot.previous, atomLogContent: snapshot.atomLogContent, sourceContents: snapshot.sourceContents, allowSourceDrift })
   errors.push(...checked.errors)
   const entry = snapshot.manifest.entry
@@ -128,7 +150,7 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
     if (entry.recoveryEvent && entry.recoveryEvent !== 'none') {
       try {
         assertContextArtifactPointer(repo, entry.recoveryReceipt, 'receipt_path_invalid')
-        const receipt = JSON.parse(await readContained(repo, entry.recoveryReceipt))
+        const receipt = JSON.parse(await read(entry.recoveryReceipt))
         if (!validateRecoveryReceipt(receipt, snapshot.manifest, snapshot.checkpoint, entry)) throw new Error('receipt_invalid')
       } catch { fail('published_recovery_receipt_invalid') }
       if (enforceReceiptPointer && binding.recoveryEvent === entry.recoveryEvent && binding.recoveryReceipt !== entry.recoveryReceipt) fail('published_recovery_receipt_pointer_mismatch')
@@ -139,7 +161,7 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
     else {
       try {
         assertContextArtifactPointer(repo, entry.previousManifest, 'context_manifest_path')
-        const ancestor = await loadContextManifest(repo, entry.previousManifest)
+        const ancestor = await loadContextManifest(repo, entry.previousManifest, { read })
         if (ancestor.manifest.digest !== entry.previousDigest || checkpointDigest(ancestor.checkpoint) !== entry.previousDigest) throw new Error('ancestor_digest_invalid')
         if (integrityVersion === 1 && !/^[a-f0-9]{64}$/.test(entry.previousManifestSha256 || '')) throw new Error('ancestor_sha_missing')
         const currentCheckpointPath = manifestCheckpointPath(repo, manifestPath, snapshot.manifest.checkpoint)
@@ -148,16 +170,13 @@ export async function validatePublishedSnapshotIntegrity(repo, snapshot, binding
         if (snapshot.manifest.previousDigest !== null) {
           if (snapshot.manifest.previousDigest !== entry.previousDigest || snapshot.manifest.previousCheckpoint !== expectedPreviousCheckpoint) throw new Error('ancestor_chain_split')
         } else if (entry.previousDigest !== snapshot.manifest.digest || ancestorCheckpointPath !== currentCheckpointPath) throw new Error('ancestor_lifecycle_split')
-        const ancestorCheck = await validatePublishedSnapshotIntegrity(repo, ancestor, binding, {
+        pending.push({ snapshot: ancestor, options: {
           expectedManifestSha256: entry.previousManifestSha256 || '',
           allowSourceDrift: Boolean(entry.previousManifestSha256),
           enforceRuntimeSession: false,
           enforceReceiptPointer: false,
           manifestPath: entry.previousManifest,
-          depth: depth + 1,
-          visited,
-        })
-        if (!ancestorCheck.valid) errors.push(...ancestorCheck.errors)
+        } })
       } catch { fail('published_manifest_predecessor_invalid') }
     }
   }

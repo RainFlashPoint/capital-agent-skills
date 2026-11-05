@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
+import { watch, mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -740,4 +740,122 @@ test('retired private native records cannot block explicit checkpoint recovery g
   writeFileSync(join(repo, `.cap/context/codex-pending-${suffix}.json`), '{broken retired marker')
   writeFileSync(join(repo, `.cap/context/codex-hook-${suffix}.json`), JSON.stringify({ phase: 'blocked', failureCode: 'session_root_uninitialized' }))
   assert.equal((await inspectSemanticContext(repo, { environment: env })).passed, true)
+})
+
+async function legacyChain(t, count = 91) {
+  const value = await fixture(t)
+  const { checkpointDigest, createManifest } = await import('./cap-context-checkpoint.mjs')
+  const first = await prepareContext(value.repo, { checkpointPath: value.path, budgetTokens: 20000, environment })
+  assert.equal(first.valid, true, JSON.stringify(first))
+  const template = JSON.parse(readFileSync(join(value.repo, first.manifest), 'utf8'))
+  const old = structuredClone(value.checkpoint)
+  delete old.coverage
+  const oldPath = '.cap/context/legacy-checkpoint.json'
+  writeFileSync(join(value.repo, oldPath), JSON.stringify(old))
+  let previous = 'none'
+  for (let i = 0; i < count; i++) {
+    const manifest = structuredClone(template)
+    delete manifest.integrityVersion
+    manifest.checkpoint = 'legacy-checkpoint.json'
+    manifest.digest = checkpointDigest(old)
+    manifest.plan.digest = createManifest(old, { budgetTokens: 20000 }).plan.digest
+    manifest.entry.previousManifest = previous
+    manifest.entry.previousDigest = previous === 'none' ? null : manifest.digest
+    delete manifest.entry.previousManifestSha256
+    manifest.entry.recoveryEvent = 'legacy-event'
+    manifest.entry.recoveryReceipt = '.cap/context/legacy-receipt.json'
+    previous = `.cap/context/legacy-manifest-${i}.json`
+    writeFileSync(join(value.repo, previous), JSON.stringify(manifest))
+  }
+  writeFileSync(join(value.repo, '.cap/context/legacy-receipt.json'), JSON.stringify({ schemaVersion: 1, event: 'legacy-event' }))
+  let state = readFileSync(join(value.repo, '.cap/STATE.md'), 'utf8')
+  for (const [key, val] of Object.entries({ 'context-checkpoint': oldPath, 'context-checkpoint-digest': checkpointDigest(old), 'context-manifest': previous, 'context-manifest-sha256': 'none', 'context-previous-manifest': count === 1 ? 'none' : `.cap/context/legacy-manifest-${count - 2}.json`, 'context-previous-digest': count === 1 ? 'none' : checkpointDigest(old) })) state = state.replace(new RegExp(`^${key}:.*$`, 'm'), `${key}: ${val}`)
+  writeFileSync(join(value.repo, '.cap/STATE.md'), state)
+  writeFileSync(join(value.repo, '.cap/task-context.md'), readFileSync(join(value.repo, '.cap/task-context.md'), 'utf8').replace('source to consumer', 'source to current consumer'))
+  const review = '.cap/context/migration-review.md'
+  writeFileSync(join(value.repo, review), 'Reviewed current sources and protected atoms; legacy receipts and historical source bytes are unverified. Rebuild current exact replay without granting historical PASS.\n')
+  return { ...value, review, legacyManifest: previous, oldPath }
+}
+
+test('explicit migration recovers a 91-node legacy chain with source drift and stale receipts', async t => {
+  const { repo, path, review, oldPath } = await legacyChain(t)
+  const options = { checkpointPath: path, budgetTokens: 20000, event: 'visible:migration', environment }
+  const blocked = await prepareContext(repo, options)
+  assert.equal(blocked.valid, false)
+  const result = await prepareContext(repo, { ...options, migrationReview: review })
+  assert.equal(result.valid, true, JSON.stringify(result))
+  assert.ok(result.recovery.hot.length)
+  const manifest = JSON.parse(readFileSync(join(repo, result.manifest), 'utf8'))
+  assert.equal(manifest.entry.previousManifest, 'none')
+  assert.ok(manifest.lineageAnchor)
+  const audit = JSON.parse(readFileSync(join(repo, manifest.lineageAnchor.path), 'utf8'))
+  assert.equal(audit.nodeCount, 91)
+  assert.equal(audit.historicalEvidence, 'unverified')
+  assert.ok(audit.issues.some(item => item.code === 'published_recovery_receipt_invalid'))
+  assert.equal((await inspectSemanticContext(repo, { environment })).passed, true)
+  const reused = await prepareContext(repo, options)
+  assert.equal(reused.valid, true, JSON.stringify(reused))
+  writeFileSync(join(repo, oldPath), '{}')
+  assert.equal((await inspectSemanticContext(repo, { environment })).passed, false)
+})
+
+for (const [name, mutate] of [
+  ['cycle', ({ repo, legacyManifest }) => { const p = join(repo, legacyManifest); const m = JSON.parse(readFileSync(p)); m.entry.previousManifest = legacyManifest; writeFileSync(p, JSON.stringify(m)) }],
+  ['escape', ({ repo, legacyManifest }) => { const p = join(repo, legacyManifest); const m = JSON.parse(readFileSync(p)); m.entry.previousManifest = '.cap/context/../../outside.json'; writeFileSync(p, JSON.stringify(m)) }],
+  ['modern corruption', ({ repo, legacyManifest }) => { const p = join(repo, legacyManifest); const m = JSON.parse(readFileSync(p)); m.integrityVersion = 1; writeFileSync(p, JSON.stringify(m)) }],
+  ['digest corruption', ({ repo, oldPath }) => writeFileSync(join(repo, oldPath), '{}')],
+  ['missing coverage', ({ repo, path }) => { const p = join(repo, path); const c = JSON.parse(readFileSync(p)); c.coverage = []; writeFileSync(p, JSON.stringify(c)) }],
+  ['protected atom removal', ({ repo, path }) => { const p = join(repo, path); const c = JSON.parse(readFileSync(p)); c.atoms = c.atoms.filter(a => a.id !== 'acceptance'); writeFileSync(p, JSON.stringify(c)) }],
+]) test(`migration rejects ${name} without publishing a new root`, async t => {
+  const value = await legacyChain(t, 2)
+  mutate(value)
+  const before = readFileSync(join(value.repo, '.cap/STATE.md'), 'utf8').match(/^context-manifest: (.+)$/m)[1]
+  const result = await prepareContext(value.repo, { checkpointPath: value.path, budgetTokens: 20000, event: 'visible:migration', migrationReview: value.review, environment })
+  assert.equal(result.valid, false, JSON.stringify(result))
+  assert.equal(readFileSync(join(value.repo, '.cap/STATE.md'), 'utf8').match(/^context-manifest: (.+)$/m)[1], before)
+})
+
+test('ordinary integrity validation accepts 91 modern nodes without relaxing hashes', async t => {
+  const { repo: candidate, legacyManifest } = await legacyChain(t)
+  const repo = realpathSync(candidate)
+  const { loadContextManifest, validatePublishedSnapshotIntegrity, manifestContentSha256 } = await import('./cap-context-gate.mjs')
+  let sha = null
+  for (let i = 0; i < 91; i++) {
+    const p = join(repo, `.cap/context/legacy-manifest-${i}.json`)
+    const m = JSON.parse(readFileSync(p))
+    m.integrityVersion = 1
+    m.entry.previousManifestSha256 = sha
+    m.entry.recoveryEvent = 'none'
+    m.entry.recoveryReceipt = 'none'
+    const text = JSON.stringify(m)
+    sha = manifestContentSha256(text)
+    writeFileSync(p, text)
+  }
+  const snapshot = await loadContextManifest(repo, legacyManifest)
+  const binding = await captureContextBinding(repo, { environment })
+  const checked = await validatePublishedSnapshotIntegrity(repo, snapshot, binding, { expectedManifestSha256: sha, allowSourceDrift: true, manifestPath: legacyManifest })
+  assert.equal(checked.valid, true, JSON.stringify(checked))
+  const p = join(repo, '.cap/context/legacy-manifest-0.json')
+  writeFileSync(p, readFileSync(p, 'utf8') + ' ')
+  const tampered = await validatePublishedSnapshotIntegrity(repo, snapshot, binding, { expectedManifestSha256: sha, allowSourceDrift: true, manifestPath: legacyManifest })
+  assert.equal(tampered.valid, false)
+  assert.ok(tampered.errors.some(e => e.code === 'published_manifest_sha256_mismatch'))
+})
+
+
+test('migration rechecks sealed history before publishing STATE', async t => {
+  const value = await legacyChain(t, 2)
+  const { repo, path, review, legacyManifest } = value
+  let mutated = false
+  const watcher = watch(join(repo, '.cap/context'), (event, filename) => {
+    if (!mutated && String(filename).startsWith('lineage-')) {
+      mutated = true
+      writeFileSync(join(repo, review), 'Changed after audit was sealed; this note has not been reviewed.\n')
+    }
+  })
+  t.after(() => watcher.close())
+  const result = await prepareContext(repo, { checkpointPath: path, budgetTokens: 20000, event: 'visible:migration-race', migrationReview: review, environment })
+  assert.equal(mutated, true)
+  assert.equal(result.valid, false)
+  assert.equal(readFileSync(join(repo, '.cap/STATE.md'), 'utf8').match(/^context-manifest: (.+)$/m)[1], legacyManifest)
 })
