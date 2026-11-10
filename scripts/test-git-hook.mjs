@@ -103,9 +103,8 @@ test('ignored active state requires a committed, exact team handoff before devel
   run(repo, 'git', ['add', '.gitignore', 'sample.txt', 'task-reconnaissance.md'])
   run(repo, 'git', ['commit', '-m', 'code change'])
   const source = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
-  const branch = 'feature/team-handoff'
   const push = () => spawnSync('sh', [join(root, 'skills/cap-flow/references/templates/hooks/pre-push')], {
-    cwd: repo, input: `refs/heads/${branch} ${run(repo, 'git', ['rev-parse', 'HEAD']).trim()} refs/heads/feature/test 0000000000000000000000000000000000000000\n`,
+    cwd: repo, input: `HEAD ${run(repo, 'git', ['rev-parse', 'HEAD']).trim()} refs/heads/feature/test 0000000000000000000000000000000000000000\n`,
     encoding: 'utf8', env: { ...portableEnv(), CAPITAL_AGENT_PACKAGE_ROOT: root },
   })
   assert.equal(push().status, 1)

@@ -30,6 +30,8 @@ PROTECTED_TARGET=""
 while read local_ref local_sha remote_ref remote_sha; do
   case "$local_sha" in 0000000000000000000000000000000000000000) continue ;; esac
   branch=${remote_ref#refs/heads/}
+  local_branch=${local_ref#refs/heads/}
+  if [ "$local_branch" = "$local_ref" ]; then local_branch=$(git symbolic-ref -q --short HEAD 2>/dev/null || true); fi
   CODE_DELIVERY=""
   if [ "$branch" != "$remote_ref" ] && ! is_protected_branch "$branch" && ! git cat-file -e "${local_sha}:.cap/STATE.md" 2>/dev/null; then
     BASE_REF=""
@@ -61,7 +63,7 @@ while read local_ref local_sha remote_ref remote_sha; do
       echo "✗ cap: 缺少团队交接验证器；请用当前 cap 包重新安装 Git governance。" >&2
       exit 1
     fi
-    if ! node "$PACKAGE_ROOT/scripts/cap-team-handoff.mjs" verify . --ref "$local_sha" --branch "${local_ref#refs/heads/}"; then
+    if [ -z "$local_branch" ] || ! node "$PACKAGE_ROOT/scripts/cap-team-handoff.mjs" verify . --ref "$local_sha" --branch "$local_branch"; then
       echo "✗ cap: 开发分支必须先提交已审阅的 .cap/HANDOFF.md；摘要须绑定精确代码 Commit 与 Git tree。" >&2
       exit 1
     fi
