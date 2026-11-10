@@ -66,7 +66,9 @@ updated: 2026-08-06
 ## 3. 提交信息
 
 - Conventional Commits:`<type>(<scope>): <subject>`;中文 subject 允许。
-- **研发产物与代码同交付**：提交包含业务代码时，当前特性的 `.cap/STATE.md`、spec、plan、verify、review 等新增或修改产物必须一并暂存提交；不得用 `.git/info/exclude` 或仓库 `.gitignore` 隐藏 `.cap/`。本地 runtime、日志、缓存和密钥继续按 `.cap/.gitignore` 排除。
+- **团队交接与运行态分离**：推荐把 `.cap/STATE.md`、task-context、spec、plan、verify、review 和 context 检查点留在本地并忽略；不得以忽略规则隐藏团队交接摘要 `.cap/HANDOFF.md`。代码 Commit 后，审阅脱敏摘要，再单独提交它；摘要须绑定该代码 Commit、Git tree、基线 Commit 与精确改动路径。推送前验证待推送 Commit 中的摘要，不能把本机尚未提交的文件当成交接。已有项目显式跟踪原始活动态时可继续其既有策略，提交 Hook 仍阻断遗漏的已跟踪活动态，不强制静默迁移。
+- `.cap/HANDOFF.md` 仅是待核验线索，不传递 Task、Session、授权、测试/Review PASS、Delivery 或 Server Gate。新克隆必须重新侦察、创建自己的 Task/Session 并复核来源；历史索引中的 `artifactRoot` 若指向未跟踪快照，不代表原始证据可从 Git 获取。
+- 推送前用当前包的 `scripts/cap-team-handoff.mjs` 校验；`create` 只从已提交代码生成来源字段，文字说明先在本地 draft 中审阅。摘要失效或代码又变动后重新生成并提交；不能改 JSON 字段绕过绑定。具体顺序见 [`team-git-handoff.md`](team-git-handoff.md)。
 - Capital Agent Hook 自动从 `.cap/STATE.md` 追加 `Task:` / `Session:` trailer。提交完成后以 `git show -s --format='%B' HEAD` 为准确认，不能只在聊天里声称已关联。
 - 本地 commit 只代表本机完成；只有 push 后 GitLab Webhook/轮询才能触发平台 Review/Test/钉钉闭环。交接必须明确区分“已提交未推送”和“已推送平台可见”。
 - 有外部消费者的制品用 SemVer(版本/制品规范见 `deployment-patterns`)。
@@ -75,7 +77,7 @@ updated: 2026-08-06
 
 准备暂存或提交前，必须基于 `git status`、本任务开始时的脏区快照、plan 预测面和实际 diff 生成一次 **Commit scope manifest**，按三类展示：
 
-- **必须提交**：本任务实现、回归测试、迁移、对外契约文档、必要的共享配置，以及本任务应交付的 `.cap` 产物。
+- **必须提交**：本任务实现、回归测试、迁移、对外契约文档、必要的共享配置，以及采用本地活动态策略时单独提交的 `.cap/HANDOFF.md`；既有跟踪策略下按项目契约处理 `.cap` 活动态。
 - **需要确认**：`docs/`、仓库级测试 / lint / build 配置、lockfile、生成物、超出 plan 的文件，以及无法证明属于本任务的既有改动。不能按目录名一刀切；与行为或契约相关就应提交，本机临时调整则应排除。
 - **明确排除**：密钥、`.env` 本机值、缓存、日志、临时调试文件、本地 IDE / 工具配置，以及确认属于其他任务的改动。
 

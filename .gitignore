@@ -7,6 +7,7 @@
 !.cap/history/index/*.json
 !.cap/EVOLUTION.md
 !.cap/PROFILE.md
+!.cap/HANDOFF.md
 .DS_Store
 .idea/
 __pycache__/
