@@ -99,7 +99,8 @@ test('ignored active state requires a committed, exact team handoff before devel
   await mkdir(join(repo, '.cap'), { recursive: true })
   await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo\n')
   await writeFile(join(repo, 'sample.txt'), 'changed\n')
-  run(repo, 'git', ['add', '.gitignore', 'sample.txt'])
+  await writeFile(join(repo, 'task-reconnaissance.md'), 'a normal source path\n')
+  run(repo, 'git', ['add', '.gitignore', 'sample.txt', 'task-reconnaissance.md'])
   run(repo, 'git', ['commit', '-m', 'code change'])
   const source = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
   const branch = 'feature/team-handoff'
@@ -120,7 +121,7 @@ test('ignored active state requires a committed, exact team handoff before devel
   assert.equal(push().status, 0)
   const handoff = JSON.parse(await readFile(join(repo, '.cap/HANDOFF.md'), 'utf8'))
   assert.equal(handoff.sourceCommit, source)
-  assert.deepEqual(handoff.changedFiles, ['.gitignore', 'sample.txt'])
+  assert.deepEqual(handoff.changedFiles, ['.gitignore', 'sample.txt', 'task-reconnaissance.md'])
   const originalHandoff = JSON.stringify(handoff)
   handoff.sourceTree = '0'.repeat(40)
   const { summarySha256: ignoredHash, ...body } = handoff

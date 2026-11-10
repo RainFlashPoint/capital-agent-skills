@@ -17,6 +17,8 @@ const exactKeys = (data, keys) => data && typeof data === 'object' && !Array.isA
   && Object.keys(data).length === keys.length && keys.every(key => Object.hasOwn(data, key))
 const plain = value => typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= 2000
   && !/[\r\n\0]/.test(value) && !SENSITIVE.some(pattern => pattern.test(value))
+const safePath = value => typeof value === 'string' && value.length > 0 && value.length <= 2000
+  && !/[\r\n\0\\]/.test(value) && !value.startsWith('/') && !value.split('/').some(part => !part || part === '.' || part === '..')
 const readJson = text => { try { return JSON.parse(text) } catch { fail('invalid_json') } }
 const codePaths = (repo, base, source) => execFileSync('git', ['-C', repo, 'diff', '--name-only', '-z', '--no-renames', base, source, '--', '.', ':(exclude).cap'],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).split('\0').filter(Boolean).sort()
@@ -42,7 +44,7 @@ function validate(repo, data, ref, branch) {
   try { sourceParent = git(repo, 'rev-parse', `${data.sourceCommit}^`) } catch { fail('source_commit_has_no_parent') }
   if (!codePaths(repo, sourceParent, data.sourceCommit).length) fail('source_commit_has_no_code_changes')
   if (git(repo, 'merge-base', data.sourceCommit, ref) !== data.sourceCommit) fail('source_not_ancestor')
-  if (!Array.isArray(data.changedFiles) || !data.changedFiles.length || data.changedFiles.some(path => !plain(path) || path.startsWith('.cap/'))
+  if (!Array.isArray(data.changedFiles) || !data.changedFiles.length || data.changedFiles.some(path => !safePath(path) || path.startsWith('.cap/'))
       || JSON.stringify(data.changedFiles) !== JSON.stringify(codePaths(repo, data.baseCommit, data.sourceCommit))) fail('changed_files_mismatch')
   for (const field of DRAFT_FIELDS) if (!plain(data[field])) fail(`invalid_${field}`)
   if (changedCodeAfter(repo, data.sourceCommit, ref)) fail('code_changed_after_handoff')
