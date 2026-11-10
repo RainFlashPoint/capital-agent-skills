@@ -640,7 +640,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (operation === 'read-recovery') {
     const { readRecoveryPage } = await import('./cap-context-recovery-pages.mjs')
     const option = name => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : undefined }
-    try { return await readRecoveryPage(source || '.', { event: option('--event'), digest: option('--digest'), page: Number(option('--page')) }) }
+    try { return await readRecoveryPage(source || '.', { event: option('--event'), digest: option('--digest'), page: Number(option('--page')), sha256: option('--sha256') }) }
     catch (cause) { return { valid: false, errors: [error(cause.message || 'recovery_read_invalid', '$', 'Recovery page could not be verified')] } }
   }
   if (operation === 'coverage') return { valid: true, requirements: await captureCoverageRequirements(source || '.') }

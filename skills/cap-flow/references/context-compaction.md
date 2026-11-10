@@ -96,7 +96,7 @@ New manifests declare `plan.replayVersion: 1`. Only exact semantic duplicates ar
 
 ## CLI recovery pages
 
-The CLI returns `recovery-paged` metadata instead of printing the complete receipt. Read every page in order with `read-recovery <repo> --event <event> --digest <digest> --page <1-based index>`. Verify each returned `pageSha256`, concatenate every `content` value without separators, verify the complete `sha256`, then parse the JSON and read all hot atoms and needed warm references. A missing page, failed read, mismatched hash, or truncated output leaves recovery incomplete. Retry the failed page rather than inferring missing content. The complete receipt stays on disk and remains bound to the manifest.
+The CLI returns `recovery-paged` metadata instead of printing the complete receipt. Read every page in order with `read-recovery <repo> --event <event> --digest <digest> --sha256 <recovery.sha256> --page <1-based index>`. The CLI validates the complete receipt SHA-256 against this expected value on each read and returns one bounded page with its `pageSha256`. Read each page in a separate tool response, verify its page hash, and review all hot atoms and needed warm references across the pages. Do not print the concatenated receipt, a full hot-atom JSON dump, or several pages in one tool response: that recreates the truncated output this protocol prevents. A missing page, failed read, mismatched hash, or truncated output leaves recovery incomplete. Retry the failed page rather than inferring missing content. The complete receipt stays on disk and remains bound to the manifest.
 
 A repeated `resume` for the same verified event returns compact reuse metadata without another STATE write or receipt. A newly compacted model context must still read the saved pages. `prepare` returns compact reuse for an unchanged binding; when it creates a new recovery receipt, use the same page protocol.
 
@@ -149,6 +149,26 @@ The checkpoint identity stage is the stage being entered; publish the same stage
 ### Preferred recovery and publication entry
 
 After reviewing original sources and preparing an immutable checkpoint, use package `scripts/cap-context-checkpoint.mjs prepare <repo> --checkpoint <repo-relative-checkpoint> --budget-tokens <hot-budget> [--event <unique-visible-event>]`. Finish the current batch of STATE, task-context, spec, plan and source updates before this call; after it passes, do not mutate those inputs before the guarded action, otherwise refresh once from the settled sources. The single writer uses one preflight to collect reconnaissance defects, fully validates the currently published predecessor before either reuse or successor publication, checks coverage floors, generates the frozen atom log, replays the exact candidate hot set when needed, binds its receipt and atomically publishes STATE cursors. New publications declare `integrityVersion: 1`, bind the raw manifest bytes as `context-manifest-sha256`, and bind each direct predecessor manifest SHA in the successor entry; this separates an unchanged manifest observing real source drift from edits to the manifest's own source hashes. A versioned manifest cannot downgrade to legacy by deleting STATE cursors: missing or malformed current/previous manifest SHA fails closed. Only manifests genuinely lacking the integrity-version marker use the legacy compatibility path. Manifest, predecessor-manifest and recovery-receipt cursors are canonical direct children of `.cap/context/`; lexical traversal, empty segments, nested aliases and normalization changes fail before reading. Output gives a receipt path and page count: read and verify every page to recover hot atoms and warm references, then fetch required sources before continuing. An unchanged valid snapshot is reused without extra files. A content-identical candidate under a new filename is canonicalized to the published checkpoint and returns compact reuse metadata instead of creating a duplicate manifest. Identity, Session/runtime Session, predecessor, manifest projection or recovery-receipt integrity failures are not refresh signals and cannot be replaced by a duplicate or different successor. Source/semantic refresh requires observable source drift against a manifest whose own SHA is still bound; receipt reconstruction requires a genuinely newer visible recovery event, while a missing, redirected or damaged receipt for the already-bound event fails closed. Failed preparation leaves the stage blocked and retains a visible event even if other preflight checks fail. Failed/crashed preparation may leave unselected immutable artifacts; these are not published evidence. A busy writer lock requires inspecting the writer before retry, never concurrent STATE edits.
+
+### Unselected artifact cleanup
+
+`prepare` may leave an unselected immutable artifact after a crash or failed
+publication. It is not evidence, but it must not be deleted by guessing. Use
+`scripts/cap-context-gc.mjs <repo> --json` to build a dry-run plan. The current
+STATE-selected manifest chain is the active root; every other recognizable
+manifest, including a same-Task branch or a legacy-named manifest, is a
+historical root. An unselected manifest alone does not prove that its history
+is disposable. Only files referenced by neither set are candidates. Missing
+references or a changed source inventory block cleanup. The plan reports
+current, historical and candidate files separately, including exact hashes,
+sizes and potential duplicate bytes. `--apply` rechecks the plan under an
+exclusive writer lock, moves candidates to
+`.cap/local-state/garbage/context/<run>/`, and stores identical candidates as
+hard links within that quarantine batch. This reduces physical duplicate data
+while preserving each filename and its bytes for recovery. It does not change
+STATE or touch any manifest chain. Run it before a task boundary/Retire, after
+reviewing the dry-run. Historical chains that contain distinct evidence remain
+intact; their size needs a separate audited archive/retention policy, not GC.
 
 ### Explicit legacy-chain recovery
 

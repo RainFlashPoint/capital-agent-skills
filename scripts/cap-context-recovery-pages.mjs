@@ -33,10 +33,11 @@ export async function projectRecoveryOutput(repo, result) {
   const content = await readContained(repo, path)
   if (content !== `${JSON.stringify(result.recovery, null, 2)}\n`) throw new Error('recovery_receipt_changed')
   if (result.recoveryReused) return { ...result, outputMode: 'compact', recovery: null, recoveryPages: recoverySummary(result.recovery, path), nextAction: 'Previously replayed receipt reused; read saved pages only if this runtime has not consumed them, then rerun the stage guard.' }
-  return { ...result, outputMode: 'recovery-paged', recovery: recoverySummary(result.recovery, path), nextAction: 'Read every recovery page and verify page and complete SHA-256 before using hot atoms; then bind the reviewed manifest and rerun the stage guard.' }
+  return { ...result, outputMode: 'recovery-paged', recovery: recoverySummary(result.recovery, path), nextAction: 'Read every recovery page separately with --sha256 set to recovery.sha256; do not print the reassembled receipt. Review all hot atoms and needed warm references, then bind the manifest and rerun the stage guard.' }
 }
 
-export async function readRecoveryPage(repo, { event, digest, page, environment = process.env }) {
+export async function readRecoveryPage(repo, { event, digest, page, sha256: expectedSha256, environment = process.env }) {
+  if (typeof expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(expectedSha256)) throw new Error('recovery_sha256_required')
   const { inspectBoundary } = await import('./cap-runtime.mjs')
   repo = (await inspectBoundary(repo, { environment })).repo
   const state = await readContained(repo, '.cap/STATE.md')
@@ -64,6 +65,7 @@ export async function readRecoveryPage(repo, { event, digest, page, environment 
   if (event !== receipt.event) throw new Error('recovery_event_mismatch')
   if (digest !== receipt.digest) throw new Error('recovery_digest_mismatch')
   const replay = JSON.stringify(receipt)
+  if (expectedSha256 !== sha256(replay)) throw new Error('recovery_sha256_mismatch')
   const pages = recoveryPages(replay)
   if (!Number.isSafeInteger(page) || page < 1 || page > pages.length) throw new Error('recovery_page_invalid')
   return { valid: true, event, digest, path, page, pageCount: pages.length, pageSha256: sha256(pages[page - 1]), sha256: sha256(replay), content: pages[page - 1] }

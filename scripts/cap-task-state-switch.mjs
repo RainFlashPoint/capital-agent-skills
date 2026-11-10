@@ -11,7 +11,9 @@ import { archiveHistoricalOutboxEvents } from './cap-outbox.mjs'
 import { inspectSessionRoot } from './cap-session-root.mjs'
 import { captureTaskBaseline, removeTaskBaseline } from './cap-worktree-baseline.mjs'
 
-const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'experience.md', 'verify', 'review', 'release', 'execution']
+// Context checkpoints are task-scoped runtime state. Move them with the old
+// task at a boundary so a new task cannot inherit stale manifests or receipts.
+const ACTIVE_PATHS = ['STATE.md', 'task-context.md', 'spec.md', 'plan.md', 'experience.md', 'verify', 'review', 'release', 'execution', 'context']
 const RECOVERY_FILE_MAX_BYTES = 8 * 1024 * 1024
 
 function git(repo, args) {

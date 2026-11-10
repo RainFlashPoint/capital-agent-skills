@@ -252,7 +252,7 @@ export async function prepareNext(capCandidate = '.cap') {
 }
 
 function parseOptions(argv) {
-  const result = { target: argv[1] || '.', stage: '', intent: '', json: argv.includes('--json') }
+  const result = { target: argv[1] || '.', stage: '', intent: '', json: argv.includes('--json'), apply: argv.includes('--apply') }
   for (let index = 2; index < argv.length; index += 1) {
     if (argv[index] === '--stage') result.stage = argv[++index] || ''
     else if (argv[index] === '--intent') result.intent = argv[++index] || ''
@@ -278,7 +278,16 @@ async function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${JSON.stringify(prepared.result)}\n`)
     return prepared.exitCode
   }
-  fail('cap-runtime', 'unknown_command', '用法：node scripts/cap-runtime.mjs <guard|context|prepare-next> <path> [--stage ...] [--intent ...]')
+  if (command === 'cleanup') {
+    const boundary = await inspectBoundary(options.target)
+    const { applyContextGarbage, planContextGarbage } = await import('./cap-context-gc.mjs')
+    const result = options.apply
+      ? await applyContextGarbage(boundary.repo)
+      : await planContextGarbage(boundary.repo)
+    process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`)
+    return 0
+  }
+  fail('cap-runtime', 'unknown_command', '用法：node scripts/cap-runtime.mjs <guard|context|prepare-next|cleanup> <path> [--stage ...] [--intent ...] [--apply]')
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
