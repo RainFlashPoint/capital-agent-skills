@@ -3,8 +3,8 @@
   "repository": "remote:github.com/RainFlashPoint/capital-agent-skills",
   "branch": "codex/cap-test-state-machine",
   "baseCommit": "88c8ea35f073b52ab9e63e638e415dfe85837720",
-  "sourceCommit": "3ea3622b69e335b82df708f30d2b880a9626b94d",
-  "sourceTree": "43042bb45757f40e184a610b6bffe36c9d83ee4f",
+  "sourceCommit": "8902af30df46334622efeb299d955a797678c843",
+  "sourceTree": "a10882fe9e647c7ad81bdc1e04fd6883265117ed",
   "changedFiles": [
     ".gitignore",
     "CHANGELOG.md",
@@ -26,9 +26,9 @@
   "intent": "Make team Git handoff available when raw Capital Agent task state stays local",
   "decisions": "Keep active STATE, task context and checkpoints local; share one reviewed redacted summary; check exact code Commit, Git tree and changed paths before a development push",
   "nextActions": "Fresh clones verify this summary, inspect the referenced code, rebuild their own Task and Session, and rerun checks for the current source",
-  "verification": "Local targeted Git Hook tests, ontology checks and the final complete release-check passed for source Commit 3ea3622b69e335b82df708f30d2b880a9626b94d; receiving developers must verify current evidence independently",
+  "verification": "Complete local release-check passed on prior code Commit 3ea3622b69e335b82df708f30d2b880a9626b94d; targeted Git Hook tests passed after the HEAD-ref fix at source Commit 8902af30df46334622efeb299d955a797678c843; current-Commit remote CI and receiver verification remain pending",
   "invalidatesOn": "Source Commit, Git tree, branch, base, changed paths, runtime policy or user authorization changes",
   "verificationStatus": "pending-verification",
   "nonTransferable": "Task / Session / authorization / Gate / Delivery / Outbox / PASS",
-  "summarySha256": "eeb71f8d3553a5db0c994bbe92c7ada2c3026758f0b8d0a5c9784c6a66f315bc"
+  "summarySha256": "08a6a3765c83f0f4e7a43d613ad52b4e77c38a0f360529ab1970de7859056338"
 }
