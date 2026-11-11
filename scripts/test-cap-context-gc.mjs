@@ -126,6 +126,54 @@ test('prune refuses a changed quarantine inventory and a symlinked parent', asyn
   await assert.rejects(planQuarantinePrune(repo), /context_gc_unsupported_directory/)
 })
 
+test('an old Task chain moved into quarantine is reported for restoration, never pruned', async t => {
+  const repo = fixture(t)
+  const moved = await applyContextGarbage(repo)
+  const batch = join(repo, moved.quarantineRoot)
+  const checkpoint = 'checkpoint-stale.json'
+  const atoms = 'atoms-stale.jsonl'
+  const recovery = 'recovery-stale.json'
+  const manifest = 'manifest-stale.json'
+  writeFileSync(join(batch, checkpoint), '{}\n')
+  writeFileSync(join(batch, atoms), '{}\n')
+  writeFileSync(join(batch, recovery), '{}\n')
+  const manifestText = JSON.stringify({ checkpoint, atomLog: atoms, entry: { previousManifest: 'none', recoveryReceipt: recovery } }) + '\n'
+  writeFileSync(join(batch, manifest), manifestText)
+  const snapshot = join(repo, '.cap/local-state/stale/old-task/snapshot')
+  mkdirSync(snapshot, { recursive: true })
+  writeFileSync(join(snapshot, 'STATE.md'), `task-id: old-task\ncontext-manifest: .cap/context/${manifest}\ncontext-manifest-sha256: ${createHash('sha256').update(manifestText).digest('hex')}\n`)
+
+  const plan = await planQuarantinePrune(repo)
+  assert.equal(plan.fileCount, 6)
+  assert.equal(plan.restoreCount, 4)
+  assert.equal(plan.pruneCount, 2)
+  assert.equal(plan.safeToPrune, false)
+  await assert.rejects(applyQuarantinePrune(repo, plan.planSha256), /context_gc_restore_referenced_quarantine_first/)
+  assert.equal(existsSync(join(batch, manifest)), true)
+  assert.equal(existsSync(join(batch, 'checkpoint-duplicate.json')), true)
+
+  writeFileSync(join(snapshot, 'STATE.md'), `task-id: old-task\ncontext-manifest: .cap/context/${manifest}\ncontext-manifest-sha256: ${'0'.repeat(64)}\n`)
+  await assert.rejects(planQuarantinePrune(repo), /context_gc_stale_manifest_hash_mismatch/)
+})
+
+test('a live referenced artifact duplicated in quarantine blocks prune planning', async t => {
+  const repo = fixture(t)
+  const moved = await applyContextGarbage(repo)
+  writeFileSync(join(repo, moved.quarantineRoot, 'checkpoint-current.json'), '{}\n')
+  await assert.rejects(planQuarantinePrune(repo), /context_gc_quarantined_live_reference/)
+})
+
+test('fresh GC retains a stale Task chain while it is still in context', async t => {
+  const repo = fixture(t)
+  const snapshot = join(repo, '.cap/local-state/stale/old-task/snapshot')
+  mkdirSync(snapshot, { recursive: true })
+  const path = join(repo, '.cap/context/manifest-old.json')
+  writeFileSync(join(snapshot, 'STATE.md'), `task-id: old-task\ncontext-manifest: .cap/context/manifest-old.json\ncontext-manifest-sha256: ${createHash('sha256').update(readFileSync(path)).digest('hex')}\n`)
+  const plan = await planContextGarbage(repo)
+  assert.ok(plan.retainedFiles.includes('.cap/context/manifest-old.json'))
+  assert.equal(plan.candidates.some(item => item.path.endsWith('/manifest-old.json')), false)
+})
+
 test('a competing cleanup lock is never removed by a failed apply', async t => {
   const repo = fixture(t)
   const lock = join(repo, '.cap/.context-gc.lock')

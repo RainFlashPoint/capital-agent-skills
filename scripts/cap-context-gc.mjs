@@ -11,6 +11,7 @@ const MAX_TOTAL_BYTES = 64 * 1024 * 1024
 const CONTEXT_DIR = '.cap/context'
 const QUARANTINE_DIR = '.cap/local-state/garbage/context'
 const PRUNE_LOG = '.cap/local-state/garbage/context-pruned.jsonl'
+const STALE_DIR = '.cap/local-state/stale'
 
 function gitRoot(candidate = '.') {
   return execFileSync('git', ['-C', resolve(candidate), 'rev-parse', '--show-toplevel'], {
@@ -148,6 +149,10 @@ export async function planContextGarbage(candidate = '.') {
     else if (/^manifest-[A-Za-z0-9._-]+\.json$/.test(name)) throw new Error(`context_gc_invalid_manifest:${pointer}`)
   }
   const present = new Set(files.map(file => basename(file)))
+  const liveFiles = new Map()
+  for (const file of files) liveFiles.set(basename(file), { path: relative(repo, file).split('/').join('/'), sha256: hashBytes(await readFile(file)) })
+  const staleLiveNames = await staleContextReferences(repo, liveFiles, { onlyDirectMatches: true })
+  for (const name of staleLiveNames) retained.add(name)
   for (const name of retained) if (!present.has(name)) throw new Error(`context_gc_referenced_file_missing:${name}`)
   const expectedManifestSha = stateField(state, 'context-manifest-sha256')
   if (manifestPointer && expectedManifestSha && expectedManifestSha !== 'none') {
@@ -249,14 +254,135 @@ export async function planQuarantinePrune(candidate = '.') {
     batches.push({ name: batch.name, files: files.sort((a, b) => a.path.localeCompare(b.path)) })
   }
   batches.sort((a, b) => a.name.localeCompare(b.name))
-  const inventory = { stateSha256: context.stateSha256, inventorySha256: context.inventorySha256, retainedFiles: context.retainedFiles, reviewForGitFiles: context.reviewForGitFiles, batches }
+  const quarantined = new Map()
+  for (const batch of batches) for (const file of batch.files) {
+    const name = basename(file.path)
+    if (quarantined.has(name)) throw new Error(`context_gc_ambiguous_quarantine_name:${name}`)
+    quarantined.set(name, file)
+  }
+  for (const path of context.retainedFiles) {
+    const file = quarantined.get(basename(path))
+    if (file) throw new Error(`context_gc_quarantined_live_reference:${file.path}`)
+  }
+  const protectedNames = await staleContextReferences(repo, quarantined)
+  const restoreFiles = [...protectedNames].sort().map(name => quarantined.get(name))
+  const pruneBatches = batches.map(batch => ({ name: batch.name, files: batch.files.filter(file => !protectedNames.has(basename(file.path))) }))
+    .filter(batch => batch.files.length)
+  const inventory = { stateSha256: context.stateSha256, inventorySha256: context.inventorySha256, retainedFiles: context.retainedFiles, reviewForGitFiles: context.reviewForGitFiles, batches, restoreFiles, pruneBatches }
   return {
     schemaVersion: 1, repo, taskId: context.taskId,
     planSha256: hashBytes(Buffer.from(JSON.stringify(inventory))),
     batchCount: batches.length, fileCount: totalFiles, bytes: totalBytes, batches,
+    restoreFiles, restoreCount: restoreFiles.length,
+    pruneBatches, pruneCount: pruneBatches.reduce((n, batch) => n + batch.files.length, 0),
+    safeToPrune: restoreFiles.length === 0,
     reviewForGit: context.reviewForGit, reviewForGitFiles: context.reviewForGitFiles,
     applyMode: 'exact-plan-prune',
   }
+}
+
+/** A stale Task can still own a chain that an older GC incorrectly quarantined. */
+async function staleContextReferences(repo, quarantined, { onlyDirectMatches = false } = {}) {
+  if (!quarantined.size) return new Set()
+  const staleRoot = join(repo, STALE_DIR)
+  const rootInfo = await lstat(staleRoot).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error))
+  if (!rootInfo) return new Set()
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('context_gc_invalid_stale_root')
+  const protectedNames = new Set()
+  const visited = new Set()
+  const visiting = new Set()
+  const artifact = async (name, snapshot) => {
+    const file = quarantined.get(name)
+    if (file) protectedNames.add(name)
+    const local = join(snapshot, 'context', name)
+    const live = join(repo, CONTEXT_DIR, name)
+    for (const path of [local, live, ...(file ? [join(repo, file.path)] : [])]) {
+      const info = await lstat(path).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error))
+      if (info) {
+        if (!info.isFile() || info.isSymbolicLink()) throw new Error(`context_gc_invalid_stale_artifact:${name}`)
+        const bytes = await readFile(path)
+        if (file && hashBytes(bytes) !== file.sha256) throw new Error(`context_gc_stale_artifact_conflict:${name}`)
+        return { path, bytes }
+      }
+    }
+    throw new Error(`context_gc_stale_reference_missing:${name}`)
+  }
+  const followManifest = async (pointer, snapshot, expectedHash = '') => {
+    if (!pointer) return
+    const name = basename(pointer)
+    const item = await artifact(name, snapshot)
+    if (expectedHash && hashBytes(item.bytes) !== expectedHash) throw new Error(`context_gc_stale_manifest_hash_mismatch:${name}`)
+    if (visiting.has(item.path)) throw new Error(`context_gc_stale_manifest_cycle:${name}`)
+    if (visited.has(item.path)) return
+    visiting.add(item.path)
+    visited.add(item.path)
+    if (visited.size > MAX_FILES) throw new Error('context_gc_stale_reference_budget')
+    let manifest
+    try { manifest = JSON.parse(item.bytes.toString('utf8')) } catch { throw new Error(`context_gc_invalid_stale_manifest:${name}`) }
+    if (!manifest || typeof manifest !== 'object' || typeof manifest.checkpoint !== 'string' || !manifest.atomLog || !manifest.entry) throw new Error(`context_gc_invalid_stale_manifest:${name}`)
+    for (const [value, field] of [[manifest.checkpoint, 'checkpoint'], [manifest.previousCheckpoint, 'previousCheckpoint'], [manifest.atomLog, 'atomLog'], [manifest.entry.recoveryReceipt, 'recoveryReceipt']]) {
+      const ref = pointerFromValue(value, `${name}.${field}`, true)
+      if (ref) {
+        const target = await artifact(basename(ref), snapshot)
+        if (value && typeof value === 'object' && value.sha256 && hashBytes(target.bytes) !== value.sha256) {
+          throw new Error(`context_gc_stale_artifact_hash_mismatch:${basename(ref)}`)
+        }
+      }
+    }
+    const predecessor = pointerFromValue(manifest.entry.previousManifest || manifest.previousManifest, `${name}.previousManifest`, true)
+    if (predecessor) {
+      const sha = manifest.entry.previousManifestSha256 || ''
+      if (manifest.integrityVersion === 1 && !/^[a-f0-9]{64}$/.test(sha)) throw new Error(`context_gc_stale_predecessor_hash_missing:${name}`)
+      await followManifest(predecessor, snapshot, sha)
+    }
+    const anchor = pointerFromValue(manifest.lineageAnchor?.path, `${name}.lineageAnchor`)
+    if (anchor) {
+      const audit = await artifact(basename(anchor), snapshot)
+      if (hashBytes(audit.bytes) !== manifest.lineageAnchor.sha256) throw new Error(`context_gc_stale_lineage_hash_mismatch:${name}`)
+      let data
+      try { data = JSON.parse(audit.bytes.toString('utf8')) } catch { throw new Error(`context_gc_invalid_stale_lineage:${name}`) }
+      if (!Array.isArray(data.artifacts)) throw new Error(`context_gc_invalid_stale_lineage:${name}`)
+      for (const value of data.artifacts) {
+        const ref = pointerFromValue(value, `${name}.lineageArtifact`, true)
+        if (ref) {
+          const target = await artifact(basename(ref), snapshot)
+          if (value.sha256 && hashBytes(target.bytes) !== value.sha256) throw new Error(`context_gc_stale_artifact_hash_mismatch:${basename(ref)}`)
+        }
+      }
+    }
+    visiting.delete(item.path)
+  }
+  const tasks = await readdir(staleRoot, { withFileTypes: true })
+  if (tasks.length > MAX_FILES) throw new Error('context_gc_stale_reference_budget')
+  for (const task of tasks) {
+    if (!task.isDirectory() || task.isSymbolicLink()) throw new Error(`context_gc_invalid_stale_task:${task.name}`)
+    const taskRoot = join(staleRoot, task.name)
+    const snapshots = await readdir(taskRoot, { withFileTypes: true })
+    if (snapshots.length > MAX_FILES) throw new Error('context_gc_stale_reference_budget')
+    for (const entry of snapshots) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error(`context_gc_invalid_stale_snapshot:${task.name}/${entry.name}`)
+      const snapshot = join(taskRoot, entry.name)
+      const statePath = join(snapshot, 'STATE.md')
+      const info = await lstat(statePath).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error))
+      if (!info) continue
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error(`context_gc_invalid_stale_state:${task.name}/${entry.name}`)
+      const state = await readFile(statePath, 'utf8')
+      const manifest = contextPointer(stateField(state, 'context-manifest'), 'stale.STATE.context-manifest')
+      if (onlyDirectMatches) {
+        const direct = [manifest, ...['context-checkpoint', 'context-recovery-receipt', 'context-previous-manifest']
+          .map(field => contextPointer(stateField(state, field), `stale.STATE.${field}`))].filter(Boolean)
+        if (!direct.some(ref => quarantined.has(basename(ref)))) continue
+      }
+      for (const field of ['context-checkpoint', 'context-recovery-receipt', 'context-previous-manifest']) {
+        const ref = contextPointer(stateField(state, field), `stale.STATE.${field}`)
+        if (ref) await artifact(basename(ref), snapshot)
+      }
+      if (manifest) await followManifest(manifest, snapshot, stateField(state, 'context-manifest-sha256'))
+      const previous = contextPointer(stateField(state, 'context-previous-manifest'), 'stale.STATE.context-previous-manifest')
+      if (previous) await followManifest(previous, snapshot)
+    }
+  }
+  return protectedNames
 }
 
 /** Prune only a reviewed plan, after checking all current and historical roots again. */
@@ -271,11 +397,12 @@ export async function applyQuarantinePrune(candidate = '.', planSha256 = '') {
     prepareLock = await open(prepareLockPath, 'wx', 0o600)
     const plan = await planQuarantinePrune(repo)
     if (plan.planSha256 !== planSha256) throw new Error('context_gc_prune_plan_changed')
+    if (!plan.safeToPrune) throw new Error('context_gc_restore_referenced_quarantine_first')
     const logPath = join(repo, PRUNE_LOG)
     const logInfo = await lstat(logPath).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error))
     if (logInfo && (!logInfo.isFile() || logInfo.isSymbolicLink())) throw new Error('context_gc_prune_log_invalid')
     let removed = 0
-    for (const batch of plan.batches) {
+    for (const batch of plan.pruneBatches) {
       for (const file of batch.files) {
         const absolute = join(repo, file.path)
         const info = await lstat(absolute)

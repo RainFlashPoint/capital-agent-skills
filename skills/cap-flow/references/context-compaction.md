@@ -170,18 +170,24 @@ STATE or touch any manifest chain. Run it before a task boundary/Retire, after
 reviewing the dry-run. Historical chains that contain distinct evidence remain
 intact; their size needs a separate audited archive/retention policy, not GC.
 
-Quarantine is recoverable working storage, not a permanent archive. After
-reviewing the isolation result, run `scripts/cap-context-gc.mjs <repo> --prune --json`
-to obtain the exact `planSha256`, file hashes and `reviewForGit` /
-`reviewForGitFiles` lists. The latter list reachable context artifacts and present task documents with exact hashes for
-human review; it is not permission to publish secrets or inherit a Gate. A
-deliberate `--prune --apply --plan-sha256 <reviewed digest>` rechecks the
-current and historical roots, isolated file bytes and writer lock before
-removing quarantine files. It writes a local prune log. Changed plans,
-missing references and unsafe paths fail closed. Retain distinct historical
-manifest chains until they receive a separate audited disposition. Count
-files after review and choose the project's Git tracking policy for the
-retained set; a numeric file target is never a deletion criterion.
+Quarantine is recoverable working storage, not a permanent archive. An older
+isolation result is not proof that the files were disposable: stale Task STATE
+may still point to a manifest chain in quarantine. After reviewing the
+isolation result, run `scripts/cap-context-gc.mjs <repo> --prune --json`.
+The plan reports the complete quarantine inventory, `restoreFiles` referenced
+by stale Tasks, and `pruneBatches` containing only remaining candidates.
+`reviewForGit` / `reviewForGitFiles` list current reachable artifacts and task
+documents for separate privacy and ownership review. If `safeToPrune` is false,
+restore the referenced files to their original context locations under a
+reviewed recovery procedure before generating a new plan; the script refuses
+prune even when some other files look unreferenced. A deliberate
+`--prune --apply --plan-sha256 <reviewed digest>` rechecks the current and
+historical roots, isolated file bytes and writer lock before removing only the
+reviewed candidates, and writes a local prune log. Changed plans, missing
+references and unsafe paths fail closed. Retain distinct historical manifest
+chains until they receive a separate audited disposition. Count files after
+review and choose the project's Git tracking policy for the retained set; a
+numeric file target is never a deletion criterion.
 
 ### Explicit legacy-chain recovery
 
