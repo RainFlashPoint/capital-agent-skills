@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { writeFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { captureContextBindingDetails, loadContextManifest, readContained, validatePublishedSnapshotIntegrity } from './cap-context-gate.mjs'
+import { assertContextArtifactPointer, captureContextBindingDetails, loadContextManifest, readContained, validatePublishedSnapshotIntegrity, validateRecoveryReceipt } from './cap-context-gate.mjs'
 import { contextReplay, TASK_CONTEXT_PROJECTION } from './cap-context-checkpoint.mjs'
 
 const field = (text, key) => text.match(new RegExp(`^(?:- )?${key}:[ \\t]*([^\\r\\n]*)`, 'm'))?.[1]?.trim() || ''
@@ -16,6 +16,26 @@ export async function observeContextResume(repo, { event = `visible-resume:${ran
   repo = (await inspectBoundary(repo, { environment })).repo
   const state = await readContained(repo, '.cap/STATE.md')
   const { binding, legacySemanticsHash } = await captureContextBindingDetails(repo, { environment })
+  if (field(state, 'context-recovery-event') === event && field(state, 'context-recovery-receipt') !== 'none') {
+    try {
+      const path = field(state, 'context-recovery-receipt')
+      assertContextArtifactPointer(repo, path, 'context_recovery_receipt_path_invalid')
+      const manifestPath = field(state, 'context-manifest')
+      const snapshot = await loadContextManifest(repo, manifestPath)
+      const integrity = await validatePublishedSnapshotIntegrity(repo, snapshot, binding, { expectedManifestSha256: field(state, 'context-manifest-sha256'), allowSourceDrift: true, manifestPath })
+      if (!integrity.valid) throw new Error(integrity.errors.map(item => item.code).join(','))
+      const provider = field(state, 'provider-compaction')
+      if (['requested', 'running', 'failed'].includes(provider)) throw new Error('context_provider_pending')
+      if (provider === 'succeeded' && (field(state, 'provider-compaction-event') !== event || snapshot.manifest.provider.eventRef !== event)) throw new Error('context_provider_event_mismatch')
+      const expectedSemanticsHash = snapshot.manifest.entry?.semanticsProjection === TASK_CONTEXT_PROJECTION ? binding.semanticsHash : legacySemanticsHash
+      if (snapshot.manifest.entry?.sourceFingerprint !== binding.sourceFingerprint || snapshot.manifest.entry?.semanticsHash !== expectedSemanticsHash) throw new Error('context_sources_changed')
+      const receipt = JSON.parse(await readContained(repo, path))
+      const receiptBinding = { ...binding, recoveryEvent: event }
+      if (!validateRecoveryReceipt(receipt, snapshot.manifest, snapshot.checkpoint, receiptBinding)) throw new Error('receipt_mismatch')
+      const { recoverySummary } = await import('./cap-context-recovery-pages.mjs')
+      return { valid: true, reused: true, outputMode: 'compact', event, errors: [], recovery: null, recoveryPages: recoverySummary(receipt, path), nextAction: 'Previously verified recovery event; read saved pages if this runtime has not consumed them, then bind and guard.' }
+    } catch { return { valid: false, event, errors: [{ code: 'context_recovery_receipt_invalid', path: 'context-recovery-receipt' }], recovery: null } }
+  }
   let snapshot, errors = []
   try {
     const manifestPath = field(state, 'context-manifest')

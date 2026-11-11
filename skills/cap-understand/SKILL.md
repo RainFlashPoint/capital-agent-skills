@@ -167,20 +167,18 @@ Phase A 采证(纯 bash) → Phase B 类型+入口识别 → Phase C 自建 surf
      就写"未检测到部署配置"。
 3. 清理临时笔记(`.cap/map-notes/` 若用过)。
 4. 编号文本把 surface-map 草案给用户确认,改完再定稿。
-5. **脚手架自检 — 先补任务关联 Hook,再询问三个硬门 Hook**。
+5. **脚手架自检 — 先补任务关联与交接 Hook,再询问其余两个硬门 Hook**。
    - 对所有 Git 仓静默运行 package 根 `scripts/install-git-governance.mjs`。它幂等安装
-     `prepare-commit-msg`,保留并先执行项目原 Hook,只负责把 `.cap/STATE.md` 的有效 `Task:` / `Session:`
-     trailer 自动追加到 Commit;失败时明确提示但不阻断 map。
-   - 然后询问三个可选硬门 Hook(纯 shell,不跑 AI、无密钥;由 **git 执行,模型绕不过**)。检测
-   `<repo>/.git/hooks/{pre-commit,pre-push,post-checkout}` 是否已是本流程的。缺则用编号文本问:
+     `prepare-commit-msg` 与 `pre-push`，保留并先执行项目原 Hook。前者追加有效 `Task:` / `Session:` trailer；后者对未跟踪原始 STATE 的代码交付验证已提交的团队摘要，并保留受保护分支门禁。失败时明确提示，不能宣称交接检查已安装。
+   - 然后询问两个可选硬门 Hook(纯 shell,不跑 AI、无密钥;由 Git 执行)。检测
+   `<repo>/.git/hooks/{pre-commit,post-checkout}` 是否已是本流程的。缺则用编号文本问:
    ```
-   要装这三个硬门吗?(git 自动跑,模型绕不过)
+   要装这两个附加硬门吗?(git 自动跑)
      · pre-commit:边界守卫 —— commit 前查 STATE 与当前 branch/worktree 是否串台
-     · pre-push:分层流程检查 —— 开发/测试分支允许 CODE_DELIVERED；受保护分支核对 verify + review 已过
      · post-checkout:叶状态 flush —— 切分支时把在飞特性源叶 status 固化落盘(无需求树则空跑)
-     1) 都装(推荐)  2) 只装 pre-commit  3) 只装 pre-push  4) 只装 post-checkout  5) 跳过
+     1) 都装(推荐)  2) 只装 pre-commit  3) 只装 post-checkout  4) 跳过
    ```
-   硬门选装 → 把 `cap-flow/references/templates/hooks/{pre-commit,pre-push,post-checkout}` 拷到 `<repo>/.git/hooks/`
+   附加硬门选装 → 把 `cap-flow/references/templates/hooks/{pre-commit,post-checkout}` 拷到 `<repo>/.git/hooks/`
    并 `chmod +x`;**仅 git 仓装**。pre-commit 调 `cap-guard`(脚本在 `cap-flow/scripts/cap-guard`);为让 hook 在
    任何安装方式下都能找到,把它拷 / 软链到 `<repo>/.cap/bin/cap-guard`(hook 优先找这里)，并把 package 根 `scripts/cap-session-root.mjs` 放到同目录供会话根复核。post-checkout 调
    `intake.py set-status` 做 flush。装完一句话说明各自管什么。
@@ -193,11 +191,12 @@ Phase A 采证(纯 bash) → Phase B 类型+入口识别 → Phase C 自建 surf
 |---|---|---|
 | `<repo>/.cap/PROFILE.md` | **写(主交付物)** | 据模板填实测结果 |
 | `cap-flow/references/templates/PROFILE.md` | 读 | PROFILE 模板 |
-| `cap-flow/references/templates/hooks/{pre-commit,pre-push,post-checkout}` | 读 | 三个硬门模板,用户同意后拷贝 |
+| `cap-flow/references/templates/hooks/{pre-commit,post-checkout}` | 读 | 两个可选硬门模板，用户同意后拷贝 |
 | `cap-flow/references/role-routing.md` | 读 | 规则表 + 取值字典 |
-| package 根 `scripts/install-git-governance.mjs` | **执行(git 仓)** | 幂等安装 `prepare-commit-msg`,自动追加 Task/Session trailer，并防止代码提交遗漏 `.cap` 研发产物 |
+| package 根 `scripts/install-git-governance.mjs` | **执行(git 仓)** | 幂等安装任务 trailer 与团队交接 pre-push 门；保留原项目 Hook |
 | `<repo>/.git/hooks/prepare-commit-msg` | **写(git 仓)** | 任务关联 Hook;保留并先执行项目原 Hook |
-| `<repo>/.git/hooks/{pre-commit,pre-push,post-checkout}` | **写(仅用户同意 + git 仓)** | 纯 shell 硬门;装完即与流程解耦 |
+| `<repo>/.git/hooks/pre-push` | **写(git 仓)** | 团队交接与受保护分支门禁；读取当前安装包验证器 |
+| `<repo>/.git/hooks/{pre-commit,post-checkout}` | **写(仅用户同意 + git 仓)** | 两个可选 shell 硬门 |
 | `<repo>/.cap/map-notes/<focus>.md` | 临时写 / 读(可选) | 并行采证的中转笔记,聚合后删除 |
 | `<repo>/.cap/STATE.md` | **不碰** | STATE 是特性级,由 cap-flow 单写 |
 

@@ -4,8 +4,7 @@
 # 团队模式的可信 Gate 来自 Server Action，STATE 只是可编辑游标，不能自签放行受保护分支。
 # 绕过(明知故犯)：git push --no-verify
 #
-# 安装：由 cap-understand 的"脚手架自检"主动询问后拷到 .git/hooks/pre-push 并 chmod +x，
-#       或手动：cp 本文件 .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# 安装：运行当前包 scripts/install-git-governance.mjs；托管包装器注入包路径并保留项目原 Hook。
 
 STATE=".cap/STATE.md"
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null)
@@ -26,12 +25,50 @@ is_protected_branch() {
 }
 
 # pre-push stdin: <local ref> <local sha> <remote ref> <remote sha>。
-# 删除 ref(local sha 全 0)不需要流程门；任一目标为受保护分支时才启用完整发布门。
+# 删除 ref(local sha 全 0)不需要流程门；待推送 Commit 未跟踪原始 STATE 时须有团队交接摘要。
 PROTECTED_TARGET=""
 while read local_ref local_sha remote_ref remote_sha; do
   case "$local_sha" in 0000000000000000000000000000000000000000) continue ;; esac
   branch=${remote_ref#refs/heads/}
-  if is_protected_branch "$branch"; then PROTECTED_TARGET=$branch; break; fi
+  local_branch=${local_ref#refs/heads/}
+  if [ "$local_branch" = "$local_ref" ]; then local_branch=$(git symbolic-ref -q --short HEAD 2>/dev/null || true); fi
+  CODE_DELIVERY=""
+  if [ "$branch" != "$remote_ref" ] && ! is_protected_branch "$branch" && ! git cat-file -e "${local_sha}:.cap/STATE.md" 2>/dev/null; then
+    BASE_REF=""
+    if [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+      if ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+        echo "✗ cap: 远端基线 ${remote_sha} 尚未在本机获取；先 fetch 目标分支，再重试推送。" >&2
+        exit 1
+      fi
+      BASE_REF=$remote_sha
+    fi
+    if [ -z "$BASE_REF" ]; then
+      DEFAULT_REF=$(git symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)
+      if [ -z "$DEFAULT_REF" ]; then
+        for candidate in refs/heads/main refs/heads/master refs/remotes/origin/main refs/remotes/origin/master; do
+          if git rev-parse --verify -q "$candidate^{commit}" >/dev/null 2>&1; then DEFAULT_REF=$candidate; break; fi
+        done
+      fi
+      if [ -z "$DEFAULT_REF" ]; then echo "✗ cap: 无法确定新分支的代码基线，不能核验团队交接范围。" >&2; exit 1; fi
+      BASE_REF=$(git merge-base "$DEFAULT_REF" "$local_sha" 2>/dev/null || true)
+      if [ -z "$BASE_REF" ]; then echo "✗ cap: 待推送 Commit 与默认主干无共同基线。" >&2; exit 1; fi
+    fi
+    CODE_DELIVERY=$(git diff --name-only "$BASE_REF" "$local_sha" -- . ':(exclude).cap' 2>/dev/null) || exit 1
+  fi
+  if [ -n "$CODE_DELIVERY" ]; then
+    HOOK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    PACKAGE_ROOT=${CAPITAL_AGENT_PACKAGE_ROOT:-}
+    if [ -z "$PACKAGE_ROOT" ] && [ -f "$HOOK_DIR/../scripts/cap-team-handoff.mjs" ]; then PACKAGE_ROOT="$HOOK_DIR/.."; fi
+    if [ -z "$PACKAGE_ROOT" ] || [ ! -f "$PACKAGE_ROOT/scripts/cap-team-handoff.mjs" ]; then
+      echo "✗ cap: 缺少团队交接验证器；请用当前 cap 包重新安装 Git governance。" >&2
+      exit 1
+    fi
+    if [ -z "$local_branch" ] || ! node "$PACKAGE_ROOT/scripts/cap-team-handoff.mjs" verify . --ref "$local_sha" --branch "$local_branch"; then
+      echo "✗ cap: 开发分支必须先提交已审阅的 .cap/HANDOFF.md；摘要须绑定精确代码 Commit 与 Git tree。" >&2
+      exit 1
+    fi
+  fi
+  if is_protected_branch "$branch"; then PROTECTED_TARGET=$branch; fi
 done
 
 if [ -z "$PROTECTED_TARGET" ]; then

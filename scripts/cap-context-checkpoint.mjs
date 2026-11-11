@@ -637,6 +637,12 @@ export async function main(argv = process.argv.slice(2)) {
     const index = rest.indexOf('--event')
     return observeContextResume(source || '.', index >= 0 ? { event: rest[index + 1] } : {})
   }
+  if (operation === 'read-recovery') {
+    const { readRecoveryPage } = await import('./cap-context-recovery-pages.mjs')
+    const option = name => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : undefined }
+    try { return await readRecoveryPage(source || '.', { event: option('--event'), digest: option('--digest'), page: Number(option('--page')), sha256: option('--sha256') }) }
+    catch (cause) { return { valid: false, errors: [error(cause.message || 'recovery_read_invalid', '$', 'Recovery page could not be verified')] } }
+  }
   if (operation === 'coverage') return { valid: true, requirements: await captureCoverageRequirements(source || '.') }
   if (operation === 'create-atom-log') {
     if (!source) return usageError('usage: create-atom-log <checkpoint-file> --output <jsonl-file>')
@@ -758,7 +764,16 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().then(result => {
+  main().then(async result => {
+    if (['resume', 'prepare'].includes(process.argv[2]) && result.recovery) {
+      if (!result.valid) result = { ...result, recovery: null, outputMode: 'full-fallback' }
+      else {
+        const { projectRecoveryOutput } = await import('./cap-context-recovery-pages.mjs')
+        const { inspectBoundary } = await import('./cap-runtime.mjs')
+        const repo = (await inspectBoundary(process.argv[3] || '.')).repo
+        result = await projectRecoveryOutput(repo, result)
+      }
+    }
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
     if (!result.valid) process.exitCode = 1
   }).catch(cause => {

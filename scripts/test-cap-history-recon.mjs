@@ -346,6 +346,20 @@ test('pending sync and stale harvest debt are visible and prioritized without re
   assert.equal(result.matches.some(item => JSON.stringify(item).includes('STALE_BODY_MUST_NOT_BE_READ')), false)
 })
 
+test('quarantined runtime files never become history search candidates', () => {
+  const repo = fixture()
+  const garbage = join(repo, '.cap/local-state/garbage/context/2026-11-11T00-00-00-000Z-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  mkdirSync(garbage, { recursive: true })
+  writeFileSync(join(garbage, 'manifest-quarantined.json'), JSON.stringify({
+    title: 'QUARANTINED_SEARCH_MARKER', knowledgeDisposition: 'pending-sync',
+  }))
+  const result = JSON.parse(execFileSync(process.execPath, [script, repo, '--intent', 'QUARANTINED_SEARCH_MARKER', '--json'], {
+    encoding: 'utf8', env: { ...process.env, CAPITAL_AGENT_MODE: 'local' },
+  }))
+  assert.equal(result.matches.some(item => JSON.stringify(item).includes('QUARANTINED_SEARCH_MARKER')), false)
+  assert.equal(result.matches.some(item => String(item.file || '').includes('/garbage/')), false)
+})
+
 test('unresolved knowledge debt remains visible when the next task has no keyword overlap', () => {
   const repo = fixture()
   writeFileSync(join(repo, '.cap/history/index/task_pending_unrelated.json'), JSON.stringify(historyIndex('task_pending_unrelated', {

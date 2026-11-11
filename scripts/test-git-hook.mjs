@@ -70,7 +70,7 @@ test('project hook blocks code commit when cap delivery artifacts are not staged
   await writeFile(join(repo, 'sample.txt'), 'ok\n')
   run(repo, 'git', ['add', 'sample.txt'])
   run(repo, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
-  assert.throws(() => run(repo, 'git', ['commit', '-m', 'small change']), /\.cap 研发产物/)
+  assert.throws(() => run(repo, 'git', ['commit', '-m', 'small change']), /可见 \.cap 活动态/)
 })
 
 test('project hook allows recommended ignored in-flight state while preserving task trailers', async () => {
@@ -89,6 +89,130 @@ test('project hook allows recommended ignored in-flight state while preserving t
   const message = run(repo, 'git', ['log', '-1', '--pretty=%B'])
   assert.match(message, /Task: task_demo123/)
   assert.match(message, /Session: session_demo456/)
+})
+
+test('ignored active state requires a committed, exact team handoff before development push', async () => {
+  const repo = await fixtureRepo('cap-team-handoff-')
+  const base = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
+  run(repo, 'git', ['switch', '-c', 'feature/team-handoff'])
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n!.cap/HANDOFF.md\n')
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo\n')
+  await writeFile(join(repo, 'sample.txt'), 'changed\n')
+  await writeFile(join(repo, 'task-reconnaissance.md'), 'a normal source path\n')
+  run(repo, 'git', ['add', '.gitignore', 'sample.txt', 'task-reconnaissance.md'])
+  run(repo, 'git', ['commit', '-m', 'code change'])
+  const source = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
+  const push = () => spawnSync('sh', [join(root, 'skills/cap-flow/references/templates/hooks/pre-push')], {
+    cwd: repo, input: `HEAD ${run(repo, 'git', ['rev-parse', 'HEAD']).trim()} refs/heads/feature/test 0000000000000000000000000000000000000000\n`,
+    encoding: 'utf8', env: { ...portableEnv(), CAPITAL_AGENT_PACKAGE_ROOT: root },
+  })
+  assert.equal(push().status, 1)
+  await writeFile(join(repo, '.cap/draft.json'), JSON.stringify({
+    intent: 'Share the current change with the team', decisions: 'Keep runtime state local',
+    nextActions: 'Recreate Task and verify implementation', verification: 'Pending independent verification',
+    invalidatesOn: 'Source commit, tree, branch, scope, or conditions change',
+  }))
+  run(repo, process.execPath, [join(root, 'scripts/cap-team-handoff.mjs'), 'create', repo, '--base', base, '--input', '.cap/draft.json'])
+  assert.equal(push().status, 1, 'uncommitted handoff cannot authorize push')
+  run(repo, 'git', ['add', '.cap/HANDOFF.md'])
+  run(repo, 'git', ['commit', '-m', 'docs: add team handoff'])
+  assert.equal(push().status, 0)
+  const handoff = JSON.parse(await readFile(join(repo, '.cap/HANDOFF.md'), 'utf8'))
+  assert.equal(handoff.sourceCommit, source)
+  assert.deepEqual(handoff.changedFiles, ['.gitignore', 'sample.txt', 'task-reconnaissance.md'])
+  const originalHandoff = JSON.stringify(handoff)
+  handoff.sourceTree = '0'.repeat(40)
+  const { summarySha256: ignoredHash, ...body } = handoff
+  handoff.summarySha256 = createHash('sha256').update(JSON.stringify(body)).digest('hex')
+  await writeFile(join(repo, '.cap/HANDOFF.md'), `${JSON.stringify(handoff)}\n`)
+  run(repo, 'git', ['add', '.cap/HANDOFF.md'])
+  run(repo, 'git', ['commit', '-m', 'tamper handoff'])
+  assert.equal(push().status, 1)
+  await writeFile(join(repo, '.cap/HANDOFF.md'), `${originalHandoff}\n`)
+  run(repo, 'git', ['add', '.cap/HANDOFF.md'])
+  run(repo, 'git', ['commit', '-m', 'restore handoff'])
+  assert.equal(push().status, 0)
+  await writeFile(join(repo, 'sample.txt'), 'changed again\n')
+  run(repo, 'git', ['add', 'sample.txt'])
+  run(repo, 'git', ['commit', '-m', 'code after handoff'])
+  assert.equal(push().status, 1)
+})
+
+test('managed pre-push preserves ref input for an existing project hook and the team gate', async () => {
+  const repo = await fixtureRepo('cap-team-existing-push-')
+  run(repo, 'git', ['switch', '-c', 'feature/old-hook'])
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n!.cap/HANDOFF.md\n')
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo\n')
+  run(repo, 'git', ['add', '.gitignore'])
+  run(repo, 'git', ['commit', '-m', 'ignore active state'])
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n!.cap/STATE.md\n')
+  const hook = join(repo, '.git/hooks/pre-push')
+  await writeFile(hook, '#!/bin/sh\ncat > .received-push-refs\n')
+  await chmod(hook, 0o755)
+  run(repo, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
+  const sha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
+  const line = `refs/heads/feature/old-hook ${sha} refs/heads/feature/old-hook 0000000000000000000000000000000000000000\n`
+  const result = spawnSync('sh', [hook], { cwd: repo, input: line, encoding: 'utf8', env: portableEnv() })
+  assert.equal(result.status, 1)
+  assert.equal(await readFile(join(repo, '.received-push-refs'), 'utf8'), line)
+  assert.match(`${result.stdout}${result.stderr}`, /HANDOFF\.md/)
+})
+
+test('pre-push checks every ref even when a protected ref appears first', async () => {
+  const repo = await fixtureRepo('cap-team-multi-ref-')
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo\n')
+  run(repo, 'git', ['add', '.cap/STATE.md'])
+  run(repo, 'git', ['commit', '-m', 'tracked state on main'])
+  const mainSha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
+  run(repo, 'git', ['switch', '-c', 'feature/no-handoff', 'HEAD~1'])
+  await writeFile(join(repo, '.gitignore'), '.cap/*\n!.cap/HANDOFF.md\n')
+  await writeFile(join(repo, 'sample.txt'), 'new code\n')
+  run(repo, 'git', ['add', '.gitignore', 'sample.txt'])
+  run(repo, 'git', ['commit', '-m', 'code without handoff'])
+  const featureSha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
+  const input = `refs/heads/main ${mainSha} refs/heads/main 0000000000000000000000000000000000000000\nrefs/heads/feature/no-handoff ${featureSha} refs/heads/feature/no-handoff 0000000000000000000000000000000000000000\n`
+  const result = spawnSync('sh', [join(root, 'skills/cap-flow/references/templates/hooks/pre-push')], {
+    cwd: repo, input, encoding: 'utf8', env: { ...portableEnv(), CAPITAL_AGENT_PACKAGE_ROOT: root },
+  })
+  assert.equal(result.status, 1)
+  assert.match(`${result.stdout}${result.stderr}`, /HANDOFF\.md/)
+})
+
+test('metadata-only branch push does not require a fabricated code handoff', async () => {
+  const repo = await fixtureRepo('cap-team-metadata-only-')
+  run(repo, 'git', ['switch', '-c', 'feature/profile-only'])
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/PROFILE.md'), '# Reviewed project profile\n')
+  run(repo, 'git', ['add', '.cap/PROFILE.md'])
+  run(repo, 'git', ['commit', '-m', 'docs: project profile'])
+  const sha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
+  const result = spawnSync('sh', [join(root, 'skills/cap-flow/references/templates/hooks/pre-push')], {
+    cwd: repo, input: `refs/heads/feature/profile-only ${sha} refs/heads/feature/profile-only 0000000000000000000000000000000000000000\n`,
+    encoding: 'utf8', env: { ...portableEnv(), CAPITAL_AGENT_PACKAGE_ROOT: root },
+  })
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`)
+  const unknownRemote = spawnSync('sh', [join(root, 'skills/cap-flow/references/templates/hooks/pre-push')], {
+    cwd: repo, input: `refs/heads/feature/profile-only ${sha} refs/heads/feature/profile-only ${'1'.repeat(40)}\n`,
+    encoding: 'utf8', env: { ...portableEnv(), CAPITAL_AGENT_PACKAGE_ROOT: root },
+  })
+  assert.equal(unknownRemote.status, 1)
+  assert.match(`${unknownRemote.stdout}${unknownRemote.stderr}`, /先 fetch 目标分支/)
+})
+
+test('governance installer leaves a replaced custom pre-push Hook intact when an old backup exists', async () => {
+  const repo = await fixtureRepo('cap-team-hook-conflict-')
+  run(repo, process.execPath, [join(root, 'scripts/install-git-governance.mjs')])
+  const hook = join(repo, '.git/hooks/pre-push')
+  const custom = '#!/bin/sh\necho newer-project-policy\n'
+  await writeFile(hook, custom)
+  await writeFile(`${hook}.capital-agent-original`, '#!/bin/sh\necho older-policy\n')
+  const result = spawnSync(process.execPath, [join(root, 'scripts/install-git-governance.mjs')], { cwd: repo, encoding: 'utf8', env: portableEnv() })
+  assert.equal(result.status, 1)
+  assert.match(`${result.stdout}${result.stderr}`, /pre_push_hook_conflict/)
+  assert.equal(await readFile(hook, 'utf8'), custom)
 })
 
 test('project hook blocks commit in a self-consistent sibling worktree from another Codex session root', async () => {
@@ -170,6 +294,10 @@ test('project hook requires cap-status to establish a stable Codex session root 
 
 test('pre-push allows development branch while environment verification is pending', async () => {
   const repo = await fixtureRepo('cap-pre-push-dev-')
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo\n')
+  run(repo, 'git', ['add', '.cap/STATE.md'])
+  run(repo, 'git', ['commit', '-m', 'tracked active state'])
   const output = runPrePush(repo, 'feature/example', 'task-id: task_demo\nstatus: gated\ndelivery-status: ENV_PENDING\ncap-gate: BLOCK\n')
   assert.match(output, /开发\/测试分支代码交付放行/)
 })
@@ -179,6 +307,8 @@ test('pre-push blocks protected branch without a complete review gate', async ()
   const state = 'task-id: task_demo\nstatus: gated\ndelivery-status: ENV_PENDING\ncap-gate: BLOCK\n'
   mkdirSync(join(repo, '.cap'), { recursive: true })
   writeFileSync(join(repo, '.cap/STATE.md'), state)
+  run(repo, 'git', ['add', '.cap/STATE.md'])
+  run(repo, 'git', ['commit', '-m', 'tracked active state'])
   const sha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
   const result = spawnSync('sh', [join(root, 'skills/cap-flow/references/templates/hooks/pre-push')], {
     cwd: repo,
@@ -192,6 +322,9 @@ test('pre-push blocks protected branch without a complete review gate', async ()
 test('team mode rejects a protected push even when STATE self-signs PASS', async () => {
   const repo = await fixtureRepo('cap-pre-push-self-signed-'); const home = await mkdtemp(join(tmpdir(), 'cap-pre-push-home-'))
   await mkdir(join(repo, '.cap'), { recursive: true }); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo\n')
+  run(repo, 'git', ['add', '.cap/STATE.md'])
+  run(repo, 'git', ['commit', '-m', 'tracked active state'])
   const sha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
   await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_demo\ncap-gate: PASS reviewed-head=${sha}\n`)
   await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\n')
@@ -208,6 +341,9 @@ test('team mode rejects a protected push even when STATE self-signs PASS', async
 test('explicit local mode may use an exact reviewed HEAD for protected push', async () => {
   const repo = await fixtureRepo('cap-pre-push-local-'); const home = await mkdtemp(join(tmpdir(), 'cap-pre-push-local-home-'))
   await mkdir(join(repo, '.cap'), { recursive: true }); await mkdir(join(home, '.config/capital-agent'), { recursive: true })
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_demo\n')
+  run(repo, 'git', ['add', '.cap/STATE.md'])
+  run(repo, 'git', ['commit', '-m', 'tracked active state'])
   const sha = run(repo, 'git', ['rev-parse', 'HEAD']).trim()
   await writeFile(join(repo, '.cap/STATE.md'), `task-id: task_demo\ncap-gate: PASS reviewed-head=${sha}\n`)
   await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=local\n')

@@ -8,5 +8,6 @@ local-state/
 *.token
 pending-deliveries.jsonl
 pending-deliveries.jsonl.tmp
+!HANDOFF.md
 outbox.jsonl
 outbox.jsonl.tmp

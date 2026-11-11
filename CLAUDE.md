@@ -47,8 +47,10 @@
 
 ## `.cap/` track 策略(二分)
 `.cap/` 按生命周期二分,gitignore 用 `.cap/*` + `!` 反忽略实现(见 `.gitignore`):
-- **在飞工作态**(顶层 `spec.md`/`plan.md`/`experience.md`/`STATE.md`/`verify/`/`review/`)→ **本地忽略**(churn 不污染 git 历史)。
+- **在飞工作态**(顶层 `spec.md`/`plan.md`/`experience.md`/`STATE.md`/`verify/`/`review/`)→ 本仓默认本地忽略；其他项目可在 GC 收敛和脱敏审阅后选择跟踪有效记录。
 - **已完成 / 已蒸馏**(`archive/<date>-<feat>/` 兼容归档 + `history/index/*.json` 脱敏 Task 索引 + `EVOLUTION.md` 活动窗口 + `PROFILE.md` 项目记忆)→ **纳入 git** 跨机器/团队持久；`history/<task-id>/` 原始快照继续忽略。退场(Retire op)是把前者转后者的那道闸。
+- **活动任务的团队交接**：`.cap/HANDOFF.md` 是单独跟踪的脱敏摘要，绑定已提交代码的精确 Commit、Git tree、基线与改动路径；代码 Commit 后审阅并单独提交，再推送。摘要只是待核验线索，不继承 Task、Session、授权或 PASS。新克隆需重建任务并复核来源；历史索引不能替代被忽略的原始快照。
+- **先收敛再决定 track**：运行时 context GC 先按引用图保留当前/历史有效链，隔离无引用产物；审阅隔离区精确清单后可显式清理。`reviewForGit` 只列有效链与当前任务文档的审阅候选，不自动放开 ignore 或暂存。项目确认隐私、归属与协作需要后可以提交有效记录；文件数量本身不是保留或删除理由。历史检索不读取垃圾隔离区。
 - **Evolution log 独立成 `EVOLUTION.md`**(唯一正屋),PROFILE 仅留指针；它是 50 条活动窗口，旧条目只有在 Task 索引或中心知识 ID 提供耐久证明后才出窗。
 - ⚠ **隐私**:track 前确认 archive/EVOLUTION 无密钥——Decisions log 可能含敏感配置位置 / 内网地址 / token。有则先脱敏再入仓。
 - 这是本技能族自身采用的**推荐约定**,各项目可自选 track 粒度。

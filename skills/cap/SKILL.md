@@ -43,7 +43,7 @@ L1/L2 无风险时只加载必要 reference 和当前阶段 Skill。L3/L4、安�
 
 不安装全局压缩或工具 Hook；仅在 cap 流程内按可见压缩事件恢复。
 
-可见压缩/恢复后，**恢复必须先于继续读取业务代码或执行研发动作**：同源运行 `scripts/cap-context-checkpoint.mjs resume <repo> --event <unique-visible-event>`，读 hot 和所需 warm。没有可信压缩回调时不能承诺每次自动监听；摘要不证明恢复成功。审阅来源后用 `scripts/cap-context-checkpoint.mjs prepare`，参数见 reference，沿用授权。
+可见压缩/恢复后，**恢复必须先于继续读取业务代码或执行研发动作**：运行 `scripts/cap-context-checkpoint.mjs resume <repo> --event <unique-visible-event>`。若返回 `recovery-paged`，按 `context-compaction.md` 分页完整读取并校验 hot 与所需 warm；compact 复用不等于当前模型已读取内容。没有可信压缩回调时不能承诺每次自动监听；摘要不证明恢复。审阅来源后运行 `prepare`，参数见 reference，沿用授权。
 
 ## 3. 状态分流
 
@@ -59,7 +59,7 @@ MCP 确认可用的团队模式下，`mode=platform_ready` 或缺 `task.id`：�
 
 简报模式、仓库/分支、Task、阶段、阻断/Action、Outbox 数及下一步；无人工门禁则继续。
 
-测试、构建、打包优先用 `scripts/cap-execute.mjs run --compact`：PASS 返回 Gate、哈希、字节数、Artifact；非 PASS `full-fallback` 返回脱敏头尾，canonical receipt/bundle、退出码不变。Git 先读短状态、路径、统计、补丁健康；失败、冲突、评审、安全、发布展开 patch，不能隐藏证据。
+测试、构建、打包优先用 `scripts/cap-execute.mjs run --compact`：PASS 返回 Gate、哈希、字节数、Artifact；非 PASS `full-fallback` 返回脱敏头尾，receipt/bundle、退出码不变。Git 先读短状态、路径、统计和补丁健康；失败、冲突、评审、安全、发布时展开 patch。
 
 ## 4. 平台、Task 与离线边界
 
@@ -87,7 +87,7 @@ Server Test/Review 前精确 Commit 须在上游可见。`reconciliation.pushReq
 
 提交前执行目标测试、`bash scripts/validate-skills`（适用时）、`git diff --check`，核对 task-context 范围；行为变更同步 CHANGELOG、版本。
 
-capital-agent-skills 本仓普通维护按影响面定向验证；仅用户明确要求正式 Skills 发版才运行完整发布门禁。行为变更、提交、推送或 `release` 阶段不自动触发全量。现有命令入口、Node/Python、E2E/eval 与 opt-in 压力规则见 `CONTRIBUTING.md`，不另建选择框架。
+本仓普通维护按影响面定向验证；仅正式 Skills 发版运行完整发布门禁。行为变更、提交、推送或 `release` 阶段不自动触发全量。命令和 opt-in 压力规则见 `CONTRIBUTING.md`。
 
 团队按 `skills/harvest-experience/SKILL.md` 回写摘要、路径，不传代码/秘密；本地生成并校验 `.cap/experience.md`。严格 Retire 记录可验证知识处置，完成态不直接移入 stale；按当前阶段 Skill 执行。
 

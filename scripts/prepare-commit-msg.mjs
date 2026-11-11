@@ -34,8 +34,9 @@ if (stagedCode) {
   const pendingCap = git(['status', '--porcelain', '--untracked-files=all', '--', '.cap'])
     .split(/\r?\n/).filter(Boolean)
     .filter(item => item.startsWith('??') || item[1] !== ' ')
+    .filter(item => /(?:^|\s)\.cap\/(?:STATE\.md|task-context\.md|spec\.md|plan\.md|experience\.md|verify\/|review\/)/.test(item))
   if (pendingCap.length > 0) {
-    process.stderr.write(`✗ cap: 本次提交包含代码，但仍有未暂存的 .cap 研发产物：\n${pendingCap.map(item => `  ${item}`).join('\n')}\n  请执行 git add .cap，把规格、计划、验证和评审证据与代码一起提交。\n`)
+    process.stderr.write(`✗ cap: 本次提交包含代码，但仍有未暂存的可见 .cap 活动态：\n${pendingCap.map(item => `  ${item}`).join('\n')}\n  先处理这些可见文件的提交范围；若采用本地活动态策略，须单独完成受审阅的 .cap/HANDOFF.md 团队交接。\n`)
     process.exit(1)
   }
 }
