@@ -170,6 +170,19 @@ STATE or touch any manifest chain. Run it before a task boundary/Retire, after
 reviewing the dry-run. Historical chains that contain distinct evidence remain
 intact; their size needs a separate audited archive/retention policy, not GC.
 
+Quarantine is recoverable working storage, not a permanent archive. After
+reviewing the isolation result, run `scripts/cap-context-gc.mjs <repo> --prune --json`
+to obtain the exact `planSha256`, file hashes and `reviewForGit` /
+`reviewForGitFiles` lists. The latter list reachable context artifacts and present task documents with exact hashes for
+human review; it is not permission to publish secrets or inherit a Gate. A
+deliberate `--prune --apply --plan-sha256 <reviewed digest>` rechecks the
+current and historical roots, isolated file bytes and writer lock before
+removing quarantine files. It writes a local prune log. Changed plans,
+missing references and unsafe paths fail closed. Retain distinct historical
+manifest chains until they receive a separate audited disposition. Count
+files after review and choose the project's Git tracking policy for the
+retained set; a numeric file target is never a deletion criterion.
+
 ### Explicit legacy-chain recovery
 
 When a genuinely old chain has no integrity-version markers and cannot pass current historical source/receipt checks, review original current sources, retain protected predecessor atoms, rebuild current coverage, and write a specific review note as a direct file under `.cap/context/`. Use package `scripts/cap-context-checkpoint.mjs migrate-legacy <repo> --checkpoint <reviewed-current-checkpoint> --budget-tokens <hot-budget> --event <visible-event> --review <repo-relative-review-note>` from the locked repository. This is an explicit compatibility operation, never an automatic retry or a request for repeated user authorization already granted for the task.

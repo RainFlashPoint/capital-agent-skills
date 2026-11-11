@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, statSync, linkSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { planContextGarbage, applyContextGarbage } from './cap-context-gc.mjs'
+import { fileURLToPath } from 'node:url'
+import { planContextGarbage, applyContextGarbage, planQuarantinePrune, applyQuarantinePrune } from './cap-context-gc.mjs'
 
 function fixture(t) {
   const repo = mkdtempSync(join(tmpdir(), 'cap-context-gc-'))
@@ -61,6 +62,10 @@ test('cleanup retains the published lineage and reports unreferenced files', asy
   const plan = await planContextGarbage(repo)
   assert.equal(plan.safeToApply, true)
   assert.ok(plan.retainedFiles.includes('.cap/context/manifest-current.json'))
+  assert.ok(plan.reviewForGit.includes('.cap/STATE.md'))
+  assert.ok(plan.reviewForGit.includes('.cap/context/manifest-current.json'))
+  assert.equal(plan.reviewForGit.some(path => path.includes('/garbage/')), false)
+  assert.equal(plan.reviewForGitFiles.find(item => item.path === '.cap/STATE.md').sha256, createHash('sha256').update(readFileSync(join(repo, '.cap/STATE.md'))).digest('hex'))
   assert.ok(plan.retainedFiles.includes('.cap/context/manifest-previous.json'))
   assert.ok(plan.historicalFiles.includes('.cap/context/manifest-old.json'))
   assert.ok(plan.historicalFiles.includes('.cap/context/checkpoint-old.json'))
@@ -70,6 +75,7 @@ test('cleanup retains the published lineage and reports unreferenced files', asy
   assert.ok(plan.candidates.some(item => item.path.endsWith('/checkpoint-duplicate.json')))
   assert.ok(plan.candidates.some(item => item.path.endsWith('/failed-manifest.json')))
   assert.equal(existsSync(join(repo, '.cap/context/failed-manifest.json')), true)
+  assert.equal((await planQuarantinePrune(repo)).fileCount, 0)
 })
 
 test('apply quarantines candidates and never deletes canonical evidence', async t => {
@@ -86,6 +92,38 @@ test('apply quarantines candidates and never deletes canonical evidence', async 
   assert.equal(existsSync(join(repo, '.cap/context/manifest-old.json')), true)
   assert.equal(existsSync(join(repo, '.cap/context/legacy-manifest-unselected.json')), true)
   assert.match(readFileSync(join(repo, '.cap/STATE.md'), 'utf8'), /context-manifest/)
+})
+
+test('reviewed quarantine plan prunes only isolated files and keeps the audit chain', async t => {
+  const repo = fixture(t)
+  await applyContextGarbage(repo)
+  const plan = await planQuarantinePrune(repo)
+  const cliPlan = JSON.parse(execFileSync(process.execPath, [fileURLToPath(new URL('./cap-context-gc.mjs', import.meta.url)), repo, '--prune', '--json']))
+  assert.equal(cliPlan.planSha256, plan.planSha256)
+  const reordered = JSON.parse(execFileSync(process.execPath, [fileURLToPath(new URL('./cap-context-gc.mjs', import.meta.url)), '--prune', '--json', '--plan-sha256', '0'.repeat(64), repo]))
+  assert.equal(reordered.planSha256, plan.planSha256)
+  assert.equal(plan.fileCount, 2)
+  assert.equal(plan.reviewForGit.includes('.cap/context/manifest-current.json'), true)
+  await assert.rejects(applyQuarantinePrune(repo, '0'.repeat(64)), /context_gc_prune_plan_changed/)
+  assert.equal(existsSync(join(repo, plan.batches[0].files[0].path)), true)
+  const result = await applyQuarantinePrune(repo, plan.planSha256)
+  assert.equal(result.removed, 2)
+  assert.equal(existsSync(join(repo, '.cap/context/manifest-current.json')), true)
+  assert.equal((await planQuarantinePrune(repo)).fileCount, 0)
+  assert.match(readFileSync(join(repo, result.log), 'utf8'), /checkpoint-duplicate\.json/)
+})
+
+test('prune refuses a changed quarantine inventory and a symlinked parent', async t => {
+  const repo = fixture(t)
+  await applyContextGarbage(repo)
+  const plan = await planQuarantinePrune(repo)
+  writeFileSync(join(repo, plan.batches[0].files[0].path), 'changed\n')
+  await assert.rejects(applyQuarantinePrune(repo, plan.planSha256), /context_gc_prune_plan_changed/)
+  const outside = mkdtempSync(join(tmpdir(), 'cap-context-prune-outside-'))
+  t.after(() => rmSync(outside, { recursive: true, force: true }))
+  rmSync(join(repo, '.cap/local-state/garbage/context'), { recursive: true })
+  symlinkSync(outside, join(repo, '.cap/local-state/garbage/context'))
+  await assert.rejects(planQuarantinePrune(repo), /context_gc_unsupported_directory/)
 })
 
 test('a competing cleanup lock is never removed by a failed apply', async t => {

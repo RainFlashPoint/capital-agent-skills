@@ -2,13 +2,15 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, open, readdir, rename, lstat, readFile, rm, link } from 'node:fs/promises'
+import { appendFile, mkdir, open, readdir, rename, rmdir, lstat, readFile, rm, link } from 'node:fs/promises'
 import { basename, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const MAX_FILES = 4096
 const MAX_TOTAL_BYTES = 64 * 1024 * 1024
 const CONTEXT_DIR = '.cap/context'
+const QUARANTINE_DIR = '.cap/local-state/garbage/context'
+const PRUNE_LOG = '.cap/local-state/garbage/context-pruned.jsonl'
 
 function gitRoot(candidate = '.') {
   return execFileSync('git', ['-C', resolve(candidate), 'rev-parse', '--show-toplevel'], {
@@ -178,6 +180,18 @@ export async function planContextGarbage(candidate = '.') {
     if (!duplicateOf) seenByHash.set(sha256, item.path)
   }
   const candidateBytes = candidates.reduce((sum, item) => sum + item.size, 0)
+  const reviewForGit = [...retained].sort().map(name => `${CONTEXT_DIR}/${name}`)
+  for (const path of ['.cap/STATE.md', '.cap/task-context.md', '.cap/spec.md', '.cap/plan.md']) {
+    const info = await lstat(join(repo, path)).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error))
+    if (info && (!info.isFile() || info.isSymbolicLink())) throw new Error(`context_gc_review_file_invalid:${path}`)
+    if (info) reviewForGit.push(path)
+  }
+  reviewForGit.sort()
+  const reviewForGitFiles = []
+  for (const path of reviewForGit) {
+    const bytes = await readFile(join(repo, path))
+    reviewForGitFiles.push({ path, size: bytes.length, sha256: hashBytes(bytes) })
+  }
   const uniqueCandidateHashes = new Set()
   let potentialDeduplicatedBytes = 0
   for (const item of candidates) {
@@ -194,12 +208,92 @@ export async function planContextGarbage(candidate = '.') {
     currentFiles: [...current].sort().map(name => `${CONTEXT_DIR}/${name}`),
     historicalFiles: [...retained].filter(name => !current.has(name)).sort().map(name => `${CONTEXT_DIR}/${name}`),
     retainedFiles: [...retained].sort().map(name => `${CONTEXT_DIR}/${name}`),
+    reviewForGit,
+    reviewForGitFiles,
     candidates,
     candidateCount: candidates.length,
     candidateBytes,
     potentialDeduplicatedBytes,
     safeToApply: Boolean(manifestPointer && taskId),
     applyMode: 'quarantine-only',
+  }
+}
+
+/** Quarantine is recoverable only until its exact inventory is reviewed for pruning. */
+export async function planQuarantinePrune(candidate = '.') {
+  const repo = resolve(gitRoot(candidate))
+  const context = await planContextGarbage(repo)
+  if (!context.safeToApply) throw new Error('context_gc_active_manifest_missing')
+  const root = join(repo, QUARANTINE_DIR)
+  for (const path of ['.cap/local-state', '.cap/local-state/garbage', QUARANTINE_DIR]) {
+    const info = await lstat(join(repo, path)).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error))
+    if (!info) break
+    if (!info?.isDirectory() || info.isSymbolicLink()) throw new Error(`context_gc_unsupported_directory:${path}`)
+  }
+  const batches = []
+  let totalFiles = 0
+  let totalBytes = 0
+  for (const batch of await readdir(root, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
+    if (!batch.isDirectory() || batch.isSymbolicLink() || !/^\d{4}-\d\d-\d\dT[\d-]+Z-[0-9a-f-]{36}$/.test(batch.name)) throw new Error(`context_gc_invalid_quarantine_batch:${batch.name}`)
+    const directory = join(root, batch.name)
+    const files = []
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (!entry.isFile() || entry.isSymbolicLink() || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(entry.name)) throw new Error(`context_gc_invalid_quarantine_file:${batch.name}/${entry.name}`)
+      const path = join(directory, entry.name)
+      const bytes = await readFile(path)
+      totalFiles += 1
+      totalBytes += bytes.length
+      if (totalFiles > MAX_FILES || totalBytes > MAX_TOTAL_BYTES) throw new Error('context_gc_quarantine_budget')
+      files.push({ path: `${QUARANTINE_DIR}/${batch.name}/${entry.name}`, size: bytes.length, sha256: hashBytes(bytes) })
+    }
+    batches.push({ name: batch.name, files: files.sort((a, b) => a.path.localeCompare(b.path)) })
+  }
+  batches.sort((a, b) => a.name.localeCompare(b.name))
+  const inventory = { stateSha256: context.stateSha256, inventorySha256: context.inventorySha256, retainedFiles: context.retainedFiles, reviewForGitFiles: context.reviewForGitFiles, batches }
+  return {
+    schemaVersion: 1, repo, taskId: context.taskId,
+    planSha256: hashBytes(Buffer.from(JSON.stringify(inventory))),
+    batchCount: batches.length, fileCount: totalFiles, bytes: totalBytes, batches,
+    reviewForGit: context.reviewForGit, reviewForGitFiles: context.reviewForGitFiles,
+    applyMode: 'exact-plan-prune',
+  }
+}
+
+/** Prune only a reviewed plan, after checking all current and historical roots again. */
+export async function applyQuarantinePrune(candidate = '.', planSha256 = '') {
+  if (!/^[a-f0-9]{64}$/.test(planSha256)) throw new Error('context_gc_prune_plan_required')
+  const repo = resolve(gitRoot(candidate))
+  const lockPath = join(repo, '.cap/.context-gc.lock')
+  const prepareLockPath = join(repo, '.cap/.context-prepare.lock')
+  const lock = await open(lockPath, 'wx', 0o600)
+  let prepareLock
+  try {
+    prepareLock = await open(prepareLockPath, 'wx', 0o600)
+    const plan = await planQuarantinePrune(repo)
+    if (plan.planSha256 !== planSha256) throw new Error('context_gc_prune_plan_changed')
+    const logPath = join(repo, PRUNE_LOG)
+    const logInfo = await lstat(logPath).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error))
+    if (logInfo && (!logInfo.isFile() || logInfo.isSymbolicLink())) throw new Error('context_gc_prune_log_invalid')
+    let removed = 0
+    for (const batch of plan.batches) {
+      for (const file of batch.files) {
+        const absolute = join(repo, file.path)
+        const info = await lstat(absolute)
+        if (!info.isFile() || info.isSymbolicLink() || info.size !== file.size || hashBytes(await readFile(absolute)) !== file.sha256) throw new Error(`context_gc_prune_source_changed:${file.path}`)
+        const record = { taskId: plan.taskId, planSha256, path: file.path, sha256: file.sha256 }
+        await appendFile(logPath, `${JSON.stringify({ ...record, status: 'planned' })}\n`, { mode: 0o600 })
+        await rm(absolute)
+        await appendFile(logPath, `${JSON.stringify({ ...record, status: 'removed' })}\n`, { mode: 0o600 })
+        removed += 1
+      }
+      await rmdir(join(repo, QUARANTINE_DIR, batch.name))
+    }
+    return { valid: true, planSha256, removed, reviewForGit: plan.reviewForGit, log: removed ? PRUNE_LOG : '' }
+  } finally {
+    await prepareLock?.close().catch(() => {})
+    if (prepareLock) await rm(prepareLockPath, { force: true }).catch(() => {})
+    await lock.close().catch(() => {})
+    await rm(lockPath, { force: true }).catch(() => {})
   }
 }
 
@@ -261,10 +355,15 @@ export async function applyContextGarbage(candidate = '.', plan = null) {
 }
 
 async function main(argv = process.argv.slice(2)) {
-  const repo = argv.find(value => !value.startsWith('-')) || '.'
+  const digestIndex = argv.indexOf('--plan-sha256')
+  const positional = argv.filter((value, index) => !value.startsWith('-') && (digestIndex < 0 || index !== digestIndex + 1))
+  const repo = positional[0] || '.'
   const apply = argv.includes('--apply')
   const json = argv.includes('--json')
-  const result = apply ? await applyContextGarbage(repo) : await planContextGarbage(repo)
+  const prune = argv.includes('--prune')
+  const result = prune
+    ? apply ? await applyQuarantinePrune(repo, digestIndex >= 0 ? argv[digestIndex + 1] : '') : await planQuarantinePrune(repo)
+    : apply ? await applyContextGarbage(repo) : await planContextGarbage(repo)
   process.stdout.write(json ? `${JSON.stringify(result)}\n` : `${JSON.stringify(result, null, 2)}\n`)
 }
 

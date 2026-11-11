@@ -66,7 +66,7 @@ updated: 2026-08-06
 ## 3. 提交信息
 
 - Conventional Commits:`<type>(<scope>): <subject>`;中文 subject 允许。
-- **团队交接与运行态分离**：推荐把 `.cap/STATE.md`、task-context、spec、plan、verify、review 和 context 检查点留在本地并忽略；不得以忽略规则隐藏团队交接摘要 `.cap/HANDOFF.md`。代码 Commit 后，审阅脱敏摘要，再单独提交它；摘要须绑定该代码 Commit、Git tree、基线 Commit 与精确改动路径。推送前验证待推送 Commit 中的摘要，不能把本机尚未提交的文件当成交接。已有项目显式跟踪原始活动态时可继续其既有策略，提交 Hook 仍阻断遗漏的已跟踪活动态，不强制静默迁移。
+- **团队交接与运行态收敛**：先用 context GC 的引用清单区分有效链与无引用产物，再审阅有效记录的隐私和归属。项目可跟踪审阅后的有效 `.cap` 文件，也可只共享 `.cap/HANDOFF.md`；忽略规则不能替代 GC，也不能隐藏应交付的摘要。代码 Commit 后，审阅脱敏摘要，再单独提交它；摘要须绑定该代码 Commit、Git tree、基线 Commit 与精确改动路径。推送前验证待推送 Commit 中的摘要，不能把本机尚未提交的文件当成交接。已有项目显式跟踪原始活动态时可继续其既有策略，提交 Hook 仍阻断遗漏的已跟踪活动态，不强制静默迁移。
 - `.cap/HANDOFF.md` 仅是待核验线索，不传递 Task、Session、授权、测试/Review PASS、Delivery 或 Server Gate。新克隆必须重新侦察、创建自己的 Task/Session 并复核来源；历史索引中的 `artifactRoot` 若指向未跟踪快照，不代表原始证据可从 Git 获取。
 - 推送前用当前包的 `scripts/cap-team-handoff.mjs` 校验；`create` 只从已提交代码生成来源字段，文字说明先在本地 draft 中审阅。摘要失效或代码又变动后重新生成并提交；不能改 JSON 字段绕过绑定。具体顺序见 [`team-git-handoff.md`](team-git-handoff.md)。
 - Capital Agent Hook 自动从 `.cap/STATE.md` 追加 `Task:` / `Session:` trailer。提交完成后以 `git show -s --format='%B' HEAD` 为准确认，不能只在聊天里声称已关联。
