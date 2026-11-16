@@ -126,10 +126,10 @@ test('P1-P4 trust projections retain authority, readiness, supply and gate polic
       preflight: {
         schema: 'harness-preflight/v1',
         repository: { repository_id: 'repo-1', project_key: 'project-1', lifecycle: 'active' },
-        authority: { status: 'granted', policy_id: 'policy-1', policy_version: 3, remediation: '' },
+        authority: { status: 'granted', policy_id: 'policy-1', policy_version: 3, code: 'harness_authorized', remediation: '' },
         readiness: { status: 'ready', branch: 'main', commit_visible: true, commands: 2, blockers: [] },
-        supply: { status: 'available', candidates: [{ provider_id: 'provider-1', effective: 'healthy', action_types: ['test'], reasons: [] }] },
-        decision: { create_allowed: true, blocked_by: [], user_message: '可创建 Harness Action' },
+        supply: { status: 'available', candidates: [{ provider_id: 'provider-1', effective: 'healthy', action_types: ['test'], reasons: [], available_concurrency: 2 }] },
+        decision: { create_allowed: true, blocked_by: [], blocker_codes: [], user_message: '可创建 Harness Action' },
       },
       harnessReadiness: { status: 'ready', branch: 'main', commit_visible: true, commands: 2, blockers: [] },
       gates: { policy: { name: 'legacy', version: 1, required: ['commit', 'quality'] }, items: [{ key: 'quality', label: '质量验证', status: 'pending', reason: '等待独立证据' }], ready: false, blocked: false, current: 'quality', currentCommit: 'a'.repeat(40), candidateExplicit: true, candidateProtocolObserved: true },
@@ -140,11 +140,32 @@ test('P1-P4 trust projections retain authority, readiness, supply and gate polic
   assert.equal(compact.task.preflight.authority.status, 'granted')
   assert.equal(compact.task.preflight.readiness.commitVisible, true)
   assert.equal(compact.task.preflight.supply.candidates[0].providerId, 'provider-1')
+  assert.equal(compact.task.preflight.supply.candidates[0].availableConcurrency, 2)
+  assert.equal(compact.task.preflight.decision.blockerCodes, undefined)
+  assert.equal(compact.task.preflight.authority.code, 'harness_authorized')
   assert.equal(compact.task.preflight.decision.createAllowed, true)
   assert.equal(compact.task.gates.policy.id, 'legacy')
   assert.equal(compact.task.gates.current, 'quality')
   assert.equal(compact.task.harnessReadiness.status, 'ready')
   assert.equal(compact.task.preflight.raw, undefined)
+})
+
+test('unknown P2/P4 contract fields force full fallback instead of silent loss', () => {
+  const preflight = compactCapStatus(mockStatus({
+    task: {
+      ...mockStatus().task,
+      preflight: { schema: 'harness-preflight/v1', repository: {}, authority: {}, readiness: {}, supply: {}, decision: {}, future_field: true },
+    },
+  }))
+  assert.equal(preflight.outputMode, 'full-fallback')
+
+  const gates = compactCapStatus(mockStatus({
+    task: {
+      ...mockStatus().task,
+      gates: { policy: {}, items: [], ready: false, future_gate_field: 'unknown' },
+    },
+  }))
+  assert.equal(gates.outputMode, 'full-fallback')
 })
 
 test('compact status preserves remote update and dirty-worktree safety semantics', () => {

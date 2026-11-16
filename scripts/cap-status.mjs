@@ -577,6 +577,41 @@ function harnessReadinessSummary(value) {
   }
 }
 
+const PREFLIGHT_KEYS = new Set(['schema', 'repository', 'authority', 'readiness', 'supply', 'decision'])
+const PREFLIGHT_REPOSITORY_KEYS = new Set(['repository_id', 'repositoryId', 'project_key', 'projectKey', 'lifecycle'])
+const PREFLIGHT_AUTHORITY_KEYS = new Set(['status', 'policy_id', 'policyId', 'policy_version', 'policyVersion', 'exception_id', 'exceptionId', 'expires_at', 'expiresAt', 'code', 'remediation'])
+const PREFLIGHT_READINESS_KEYS = new Set(['status', 'branch', 'commit_visible', 'commitVisible', 'commands', 'blockers'])
+const PREFLIGHT_SUPPLY_KEYS = new Set(['status', 'candidates'])
+const PREFLIGHT_CANDIDATE_KEYS = new Set(['provider_id', 'providerId', 'effective', 'action_types', 'actionTypes', 'reasons', 'available_concurrency', 'availableConcurrency'])
+const PREFLIGHT_DECISION_KEYS = new Set(['create_allowed', 'createAllowed', 'blocked_by', 'blockedBy', 'blocker_codes', 'blockerCodes', 'user_message', 'userMessage'])
+const GATE_KEYS = new Set(['policy', 'items', 'ready', 'blocked', 'current', 'currentCommit', 'candidateExplicit', 'candidateProtocolObserved', 'verdict', 'gateStatus', 'level_required', 'levelRequired', 'level_satisfied', 'levelSatisfied', 'reasons', 'evidence_ids', 'evidenceIds'])
+const GATE_POLICY_KEYS = new Set(['id', 'policyId', 'name', 'version', 'policyVersion', 'required'])
+const GATE_ITEM_KEYS = new Set(['key', 'label', 'status', 'reason'])
+
+function hasUnknownKeys(value, allowed) {
+  return !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !allowed.has(key))
+}
+
+function preflightNeedsFull(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (hasUnknownKeys(value, PREFLIGHT_KEYS)) return true
+  if (value.repository && hasUnknownKeys(value.repository, PREFLIGHT_REPOSITORY_KEYS)) return true
+  if (value.authority && hasUnknownKeys(value.authority, PREFLIGHT_AUTHORITY_KEYS)) return true
+  if (value.readiness && hasUnknownKeys(value.readiness, PREFLIGHT_READINESS_KEYS)) return true
+  if (value.supply && hasUnknownKeys(value.supply, PREFLIGHT_SUPPLY_KEYS)) return true
+  if (Array.isArray(value.supply?.candidates) && value.supply.candidates.some(item => hasUnknownKeys(item, PREFLIGHT_CANDIDATE_KEYS))) return true
+  if (value.decision && hasUnknownKeys(value.decision, PREFLIGHT_DECISION_KEYS)) return true
+  return false
+}
+
+function gatesNeedsFull(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (hasUnknownKeys(value, GATE_KEYS)) return true
+  if (value.policy && hasUnknownKeys(value.policy, GATE_POLICY_KEYS)) return true
+  if (Array.isArray(value.items) && value.items.some(item => hasUnknownKeys(item, GATE_ITEM_KEYS))) return true
+  return false
+}
+
 function harnessPreflightSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const repository = value.repository || {}
@@ -597,6 +632,7 @@ function harnessPreflightSummary(value) {
       policyVersion: Number(authority.policy_version ?? authority.policyVersion ?? 0),
       exceptionId: authority.exception_id || authority.exceptionId || null,
       expiresAt: authority.expires_at || authority.expiresAt || null,
+      code: authority.code || '',
       remediation: authority.remediation || '',
     },
     readiness: harnessReadinessSummary(readiness),
@@ -607,11 +643,13 @@ function harnessPreflightSummary(value) {
         effective: item?.effective || '',
         actionTypes: Array.isArray(item?.action_types) ? item.action_types : Array.isArray(item?.actionTypes) ? item.actionTypes : [],
         reasons: Array.isArray(item?.reasons) ? item.reasons : [],
+        availableConcurrency: Number(item?.available_concurrency ?? item?.availableConcurrency ?? 0),
       })) : [],
     },
     decision: {
       createAllowed: decision.create_allowed === true || decision.createAllowed === true,
       blockedBy: Array.isArray(decision.blocked_by) ? decision.blocked_by : Array.isArray(decision.blockedBy) ? decision.blockedBy : [],
+      blockerCodes: Array.isArray(decision.blocker_codes) ? decision.blocker_codes : Array.isArray(decision.blockerCodes) ? decision.blockerCodes : [],
       userMessage: decision.user_message || decision.userMessage || '',
     },
   }
@@ -713,6 +751,12 @@ function needsFullStatus(result = {}) {
     || Number(result.platform?.outbox?.retainedUnscopedPending || 0) > 0
     || blockerNeedsFull(result.task?.blocker)
     || blockerNeedsFull(result.workflow?.blocker)
+    || preflightNeedsFull(result.task?.preflight)
+    || gatesNeedsFull(result.task?.gates)
+    || preflightNeedsFull(result.task?.currentAction?.preflight)
+    || gatesNeedsFull(result.task?.currentAction?.gate || result.task?.currentAction?.gates)
+    || preflightNeedsFull(result.task?.nextAction?.preflight)
+    || gatesNeedsFull(result.task?.nextAction?.gate || result.task?.nextAction?.gates)
 }
 
 /**
