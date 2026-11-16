@@ -476,6 +476,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       currentCommit: remoteTask?.currentCommit || remoteTask?.gates?.currentCommit || '',
       currentGate: remoteTask?.currentGate || remoteTask?.gates?.current || '',
       currentAction: remoteTask?.currentAction || null,
+      harnessReadiness: remoteTask?.harnessReadiness || null,
+      preflight: remoteTask?.preflight || null,
+      gates: remoteTask?.gates || null,
       blocker: restartRequired
         ? { code: 'mcp_runtime_missing_restart_required', detail: 'Capital Agent 已配置，但当前会话没有加载 MCP 工具', remediation: '选择重启恢复团队模式，或明确本次改用本地模式继续' }
         : boundary.blocked ? { code: boundary.code, detail: boundary.detail, remediation: boundary.remediation } : remoteTask?.blocker || null,
@@ -555,7 +558,82 @@ function actionSummary(action) {
     action: action.action || '',
     reason: action.reason || '',
     remediation: action.remediation || '',
+    providerId: action.providerId || action.provider_id || '',
+    updatedAt: action.updatedAt || action.updated_at || action.at || '',
+    preflight: harnessPreflightSummary(action.preflight),
+    gate: harnessGatesSummary(action.gate || action.gates),
     requiresUser: action.requiresUser === true,
+  }
+}
+
+function harnessReadinessSummary(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return {
+    status: value.status || '',
+    branch: value.branch || '',
+    commitVisible: value.commit_visible === true || value.commitVisible === true,
+    commands: Number(value.commands || 0),
+    blockers: Array.isArray(value.blockers) ? value.blockers.filter(item => typeof item === 'string').slice(0, 50) : [],
+  }
+}
+
+function harnessPreflightSummary(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const repository = value.repository || {}
+  const authority = value.authority || {}
+  const readiness = value.readiness || {}
+  const supply = value.supply || {}
+  const decision = value.decision || {}
+  return {
+    schema: value.schema || '',
+    repository: {
+      repositoryId: repository.repository_id || repository.repositoryId || '',
+      projectKey: repository.project_key || repository.projectKey || '',
+      lifecycle: repository.lifecycle || '',
+    },
+    authority: {
+      status: authority.status || '',
+      policyId: authority.policy_id || authority.policyId || '',
+      policyVersion: Number(authority.policy_version ?? authority.policyVersion ?? 0),
+      exceptionId: authority.exception_id || authority.exceptionId || null,
+      expiresAt: authority.expires_at || authority.expiresAt || null,
+      remediation: authority.remediation || '',
+    },
+    readiness: harnessReadinessSummary(readiness),
+    supply: {
+      status: supply.status || '',
+      candidates: Array.isArray(supply.candidates) ? supply.candidates.slice(0, 50).map(item => ({
+        providerId: item?.provider_id || item?.providerId || '',
+        effective: item?.effective || '',
+        actionTypes: Array.isArray(item?.action_types) ? item.action_types : Array.isArray(item?.actionTypes) ? item.actionTypes : [],
+        reasons: Array.isArray(item?.reasons) ? item.reasons : [],
+      })) : [],
+    },
+    decision: {
+      createAllowed: decision.create_allowed === true || decision.createAllowed === true,
+      blockedBy: Array.isArray(decision.blocked_by) ? decision.blocked_by : Array.isArray(decision.blockedBy) ? decision.blockedBy : [],
+      userMessage: decision.user_message || decision.userMessage || '',
+    },
+  }
+}
+
+function harnessGatesSummary(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const policy = value.policy || {}
+  return {
+    policy: { id: policy.id || policy.policyId || policy.name || '', version: Number(policy.version ?? policy.policyVersion ?? 0), required: Array.isArray(policy.required) ? policy.required : [] },
+    items: Array.isArray(value.items) ? value.items.slice(0, 50).map(item => ({ key: item?.key || '', label: item?.label || '', status: item?.status || '', reason: item?.reason || '' })) : [],
+    ready: value.ready === true,
+    blocked: value.blocked === true,
+    current: value.current || '',
+    currentCommit: value.currentCommit || '',
+    candidateExplicit: value.candidateExplicit === true,
+    candidateProtocolObserved: value.candidateProtocolObserved === true,
+    verdict: value.verdict || value.gateStatus || '',
+    levelRequired: value.level_required || value.levelRequired || '',
+    levelSatisfied: value.level_satisfied || value.levelSatisfied || '',
+    reasons: Array.isArray(value.reasons) ? value.reasons : [],
+    evidenceIds: Array.isArray(value.evidence_ids) ? value.evidence_ids : Array.isArray(value.evidenceIds) ? value.evidenceIds : [],
   }
 }
 
@@ -575,6 +653,8 @@ function blockerSummary(blocker) {
       status: blocker.preflight.status || '',
       detail: blocker.preflight.detail || '',
       remediation: blocker.preflight.remediation || '',
+      schema: blocker.preflight.schema || '',
+      decision: blocker.preflight.decision ? harnessPreflightSummary(blocker.preflight).decision : null,
     } : null,
   }
 }
@@ -616,8 +696,10 @@ function needsFullStatus(result = {}) {
     if (Object.keys(blocker).some(key => !allowed.has(key))) return true
     if (blocker.preflight !== undefined) {
       if (!blocker.preflight || typeof blocker.preflight !== 'object' || Array.isArray(blocker.preflight)) return true
-      const preflightAllowed = new Set(['code', 'reason', 'status', 'detail', 'remediation'])
+      const preflightAllowed = new Set(['code', 'reason', 'status', 'detail', 'remediation', 'schema', 'decision'])
       if (Object.keys(blocker.preflight).some(key => !preflightAllowed.has(key))) return true
+      if (blocker.preflight.decision !== undefined && (!blocker.preflight.decision || typeof blocker.preflight.decision !== 'object' || Array.isArray(blocker.preflight.decision)
+        || Object.keys(blocker.preflight.decision).some(key => !['createAllowed', 'blockedBy', 'userMessage'].includes(key)))) return true
     }
     return false
   }
@@ -720,6 +802,9 @@ export function compactCapStatus(result = {}) {
       currentAction: actionSummary(task.currentAction),
       blocker: blockerSummary(task.blocker),
       nextAction: actionSummary(task.nextAction),
+      harnessReadiness: harnessReadinessSummary(task.harnessReadiness),
+      preflight: harnessPreflightSummary(task.preflight),
+      gates: harnessGatesSummary(task.gates),
       executionMode: task.executionMode || '',
       verificationCommands: task.verificationCommands || [],
       parentTaskId: task.parentTaskId || '',
@@ -790,7 +875,7 @@ export function statusDecisionSignature(result = {}) {
     installation: { status: installation.status || '', conditions: installation.conditions || [], upgradeRecommended: installation.upgradeRecommended === true, updateAvailable: installation.updateAvailable === true, safeToUpgrade: installation.safeToUpgrade === true, bootstrapRecommended: installation.bootstrapRecommended === true, reason: installation.reason || '', changedFileCount: Array.isArray(installation.changedFiles) ? installation.changedFiles.length : Number(installation.changedFileCount || 0) },
     platform: { configured: platform.configured === true, connected: platform.connected ?? null, serverUrl: platform.serverUrl || '', mcpRuntime: platform.mcpRuntime || 'unknown', localFallback: platform.localFallback === true, handshake: platform.handshake ? { ok: platform.handshake.ok === true, reason: platform.handshake.reason || '', status: platform.handshake.status || 0 } : null, runtime: platform.runtime || null, pendingDeliveries: { total: Number(platform.pendingDeliveries?.total || 0), sent: Number(platform.pendingDeliveries?.sent || 0), pending: Number(platform.pendingDeliveries?.pending || 0), confirmed: Number(platform.pendingDeliveries?.confirmed || 0) }, outbox: { totalPending: Number(outbox.totalPending || 0), pending: Number(outbox.pending || 0), historicalPending: Number(outbox.historicalPending || 0), retainedHistoricalPending: Number(outbox.retainedHistoricalPending || 0), unscopedPending: Number(outbox.unscopedPending || 0), retainedUnscopedPending: Number(outbox.retainedUnscopedPending || 0), ready: Number(outbox.ready || 0), blocked: Number(outbox.blocked || 0), oldestCreatedAt: outbox.oldestCreatedAt || '', next: outbox.next ? { id: outbox.next.id || '', type: outbox.next.type || '', localTaskRef: outbox.next.localTaskRef || '' } : null } },
     repository: { root: result.repository?.root || '', remote: result.repository?.remote || '', branch: result.repository?.branch || '', head: result.repository?.head || '', upstream: result.repository?.upstream || '', upstreamHead: result.repository?.upstreamHead || '', dirty: result.repository?.dirty === true, harnessMode: result.repository?.harnessMode || '', harnessEligible: result.repository?.harnessEligible === true, sessionRootBlocked: result.repository?.sessionRoot?.blocked === true },
-    task: { id: task.id || '', previousId: task.previousId || '', sessionId: task.sessionId || '', previousSessionId: task.previousSessionId || '', requiresNewSession: task.requiresNewSession === true, remoteStatus: task.remoteStatus || '', remoteStage: task.remoteStage || '', gatesReady: task.gatesReady === true, currentCommit: task.currentCommit || '', currentGate: task.currentGate || '', currentAction: actionSummary(task.currentAction), blocker: blockerSummary(task.blocker), nextAction: actionSummary(task.nextAction), executionMode: task.executionMode || '', verificationCommands: task.verificationCommands || [], parentTaskId: task.parentTaskId || '', retirementStatus: task.retirementStatus || '', historyArtifactRoot: task.historyArtifactRoot || '', localExecution: task.localExecution ? { stage: task.localExecution.stage || '', status: task.localExecution.status || '', nextAction: task.localExecution.nextAction || '', gated: task.localExecution.gated === true, executionRequired: task.localExecution.executionRequired === true, executionGate: task.localExecution.executionGate || '' } : null, serverDelivery: task.serverDelivery ? { source: task.serverDelivery.source || '', taskId: task.serverDelivery.taskId || '', stage: task.serverDelivery.stage || '', status: task.serverDelivery.status || '', currentCommit: task.serverDelivery.currentCommit || '', currentGate: task.serverDelivery.currentGate || '', action: actionSummary(task.serverDelivery.action), gatesReady: task.serverDelivery.gatesReady === true } : null },
+    task: { id: task.id || '', previousId: task.previousId || '', sessionId: task.sessionId || '', previousSessionId: task.previousSessionId || '', requiresNewSession: task.requiresNewSession === true, remoteStatus: task.remoteStatus || '', remoteStage: task.remoteStage || '', gatesReady: task.gatesReady === true, currentCommit: task.currentCommit || '', currentGate: task.currentGate || '', currentAction: actionSummary(task.currentAction), blocker: blockerSummary(task.blocker), nextAction: actionSummary(task.nextAction), harnessReadiness: harnessReadinessSummary(task.harnessReadiness), preflight: harnessPreflightSummary(task.preflight), gates: harnessGatesSummary(task.gates), executionMode: task.executionMode || '', verificationCommands: task.verificationCommands || [], parentTaskId: task.parentTaskId || '', retirementStatus: task.retirementStatus || '', historyArtifactRoot: task.historyArtifactRoot || '', localExecution: task.localExecution ? { stage: task.localExecution.stage || '', status: task.localExecution.status || '', nextAction: task.localExecution.nextAction || '', gated: task.localExecution.gated === true, executionRequired: task.localExecution.executionRequired === true, executionGate: task.localExecution.executionGate || '' } : null, serverDelivery: task.serverDelivery ? { source: task.serverDelivery.source || '', taskId: task.serverDelivery.taskId || '', stage: task.serverDelivery.stage || '', status: task.serverDelivery.status || '', currentCommit: task.serverDelivery.currentCommit || '', currentGate: task.serverDelivery.currentGate || '', action: actionSummary(task.serverDelivery.action), gatesReady: task.serverDelivery.gatesReady === true } : null },
     reconciliation: { recordedHead: reconciliation.recordedHead || '', headPushed: reconciliation.headPushed === true, pushRequired: reconciliation.pushRequired === true, initialDeliveryNeeded: reconciliation.initialDeliveryNeeded === true, localUnrecorded: reconciliation.localUnrecorded === true, remoteUnrecorded: reconciliation.remoteUnrecorded === true, needsDeliveryReconciliation: reconciliation.needsDeliveryReconciliation === true, unrecordedCommitCount: Array.isArray(reconciliation.unrecordedCommits) ? reconciliation.unrecordedCommits.length : Number(reconciliation.unrecordedCommitCount || 0) },
     boundary: { blocked: result.boundary?.blocked === true, code: result.boundary?.code || '', mismatches: result.boundary?.mismatches || [] },
     correction: result.correction || { required: false, reason: '' },

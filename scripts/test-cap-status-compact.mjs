@@ -117,6 +117,36 @@ test('real Server aliases and provider preflight remain explicit in compact outp
   assert.equal(blockerStatus.task.blocker.preflight.remediation, 'restart provider')
 })
 
+test('P1-P4 trust projections retain authority, readiness, supply and gate policy without raw payloads', () => {
+  const full = mockStatus({
+    mode: 'platform_attached',
+    repository: { ...mockStatus().repository, harnessMode: 'server', harnessEligible: true },
+    task: {
+      ...mockStatus().task,
+      preflight: {
+        schema: 'harness-preflight/v1',
+        repository: { repository_id: 'repo-1', project_key: 'project-1', lifecycle: 'active' },
+        authority: { status: 'granted', policy_id: 'policy-1', policy_version: 3, remediation: '' },
+        readiness: { status: 'ready', branch: 'main', commit_visible: true, commands: 2, blockers: [] },
+        supply: { status: 'available', candidates: [{ provider_id: 'provider-1', effective: 'healthy', action_types: ['test'], reasons: [] }] },
+        decision: { create_allowed: true, blocked_by: [], user_message: '可创建 Harness Action' },
+      },
+      harnessReadiness: { status: 'ready', branch: 'main', commit_visible: true, commands: 2, blockers: [] },
+      gates: { policy: { name: 'legacy', version: 1, required: ['commit', 'quality'] }, items: [{ key: 'quality', label: '质量验证', status: 'pending', reason: '等待独立证据' }], ready: false, blocked: false, current: 'quality', currentCommit: 'a'.repeat(40), candidateExplicit: true, candidateProtocolObserved: true },
+    },
+  })
+  const compact = compactCapStatus(full)
+  assert.equal(compact.task.preflight.schema, 'harness-preflight/v1')
+  assert.equal(compact.task.preflight.authority.status, 'granted')
+  assert.equal(compact.task.preflight.readiness.commitVisible, true)
+  assert.equal(compact.task.preflight.supply.candidates[0].providerId, 'provider-1')
+  assert.equal(compact.task.preflight.decision.createAllowed, true)
+  assert.equal(compact.task.gates.policy.id, 'legacy')
+  assert.equal(compact.task.gates.current, 'quality')
+  assert.equal(compact.task.harnessReadiness.status, 'ready')
+  assert.equal(compact.task.preflight.raw, undefined)
+})
+
 test('compact status preserves remote update and dirty-worktree safety semantics', () => {
   const full = mockStatus({
     installation: {

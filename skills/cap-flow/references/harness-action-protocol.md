@@ -80,6 +80,8 @@ Server 验证 Patch Evidence 后才结束 Patch Action。成功只代表“新 C
 
 STATE 可记录：`action-id/type/status/source-commit/run-id/next-poll` 以及从 Server 终态提炼的分类、解除条件和人类可读摘要。STATE 不得自行生成权威事实：`server-validated=true`、最终 Gate PASS、Provider 原始输出正文。权威结果始终通过 `get_task_action` 从 Server 读取；STATE 与阶段报告只是该结果的可审计本地镜像。
 
+客户端状态投影可以保留 Server 返回的 P1–P4 信任字段，但只能做有界、只读的结构化摘要：P2 `harness-preflight/v1` 只映射 repository、authority、readiness、supply 和 decision；P4 gate 只映射当前 policy、required gate items、当前 Commit、verdict/level、reasons 与 evidence IDs。未知字段必须触发完整状态回退，不能被压缩投影静默丢弃。投影中的 `createAllowed`、`ready` 或 `verdict` 都不能被客户端重新计算、升级或写回为 Server 事实；它们只用于选择下一步和展示阻塞原因。
+
 ## Delivery 与经验回写
 
 Action 协议只负责阶段执行和 Gate。真实 Commit 仍通过统一 Task Delivery 回写；阶段产物仍通过 Task Artifact 元数据回写；经验仍通过 `record_experience(task_id + commit_sha)` 沉淀。三者不得被旧 Action completion 替代，也不得重复上传代码正文。

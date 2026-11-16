@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "taskId": "task_cfc025cd-584f-4f05-8451-d488070b26fb",
+  "parentTaskId": "",
+  "title": "cap-test hard state machine and v0.14.0 release",
+  "intentSummary": "Bind impact analysis, targeted tests, freeze and one final full regression to exact Commit/source fingerprint, then publish and install capital-agent-skills v0.14.0.",
+  "keywords": [
+    "cap-test",
+    "state-machine",
+    "targeted",
+    "full-attempt",
+    "source-fingerprint",
+    "delivery",
+    "release"
+  ],
+  "branch": "codex/cap-test-state-machine",
+  "baseCommit": "262000210f9b29aca56d0ac02fc839b20a86cc08",
+  "deliveryCommit": "41a839af98dba01edb20902256f0a153f83451e6",
+  "completedAt": "2026-10-28T00:24:00Z",
+  "status": "completed",
+  "knowledgeDisposition": "synced",
+  "artifactRoot": ".cap/history/task_cfc025cd-584f-4f05-8451-d488070b26fb",
+  "knowledgeDocumentId": "kn_exp_943089228be2e78c6d9e8b912a6520d2",
+  "experienceIndex": {
+    "schema": "cap-experience-index/v1",
+    "title": "将模型容易越序的测试流程收敛为绑定精确源码快照的确定性状态机",
+    "sourceCommit": "41a839af98dba01edb20902256f0a153f83451e6",
+    "retrievalCues": [
+      "当 Agent 会重复全量测试、跳过影响分析、重置最终全量次数，或把非同一源码快照的验证证据用于 Delivery/发布时。",
+      "cap-test、impact plan、targeted、freeze、full attempt、source fingerprint、canonical evidence、submodule dirt。",
+      "同一源码快照能重复消费最终全量；冻结后缺失证据仍建议原快照重试；dirty submodule 内容变化未使旧证据失效；Delivery 只绑定实现等价而非精确 Commit。"
+    ],
+    "problemPatterns": [
+      "仅靠 Skill 文本约束模型执行顺序，会出现过度全量、越序、重试配额被重置，以及验证证据与真实源码不一致。",
+      "流程状态、源码身份和最终全量消费次数原先没有统一落入可重验的确定性账本；可编辑 STATE、工作树路径或调用方自报字段不能作为权威。"
+    ],
+    "decisionRules": [
+      "当测试流程包含影响分析、定向回归、候选冻结和最终全量时，必须由硬状态机按顺序推进，并把所有证据绑定同一 Task、精确 Commit 与源码 fingerprint，因为文本提示无法可靠限制模型的重复或越序行为。"
+    ],
+    "invalidationSignals": [
+      "test-state 阶段枚举、execution receipt schema、源码 fingerprint 组成、Git common-dir 账本位置、Delivery evidence contract 或 local-only Harness 策略变化。"
+    ],
+    "entryPoints": [
+      "`scripts/cap-test-state.mjs`、`scripts/cap-execute.mjs`、`scripts/cap-push-candidate.mjs`。"
+    ],
+    "symbols": [
+      "PASS",
+      "Task",
+      "Commit",
+      "Delivery",
+      "Server",
+      "Harness",
+      "Gate"
+    ],
+    "invariants": [
+      "顺序固定为 impact analysis → targeted PASS → freeze → one final full attempt；Task baseline 写后不变；full-attempt 账本跨同仓 worktree 共享；精确 Commit 与 index/worktree/untracked/submodule 内容指纹任一变化都会使旧证据失效；local-only 仓只登记普通 Delivery，不伪造 Server Harness Gate。"
+    ],
+    "codePaths": [
+      "scripts/cap-test-state.mjs",
+      "scripts/cap-execute.mjs",
+      "scripts/cap-push-candidate.mjs",
+      "runtime/execution/test-state.mjs",
+      "runtime/execution/local-flow.mjs",
+      "scripts/cap-context-fingerprint.mjs",
+      "scripts/client-delivery.mjs",
+      "scripts/test-cap-test-state.mjs"
+    ],
+    "path": ".cap/history/task_cfc025cd-584f-4f05-8451-d488070b26fb/experience.md"
+  }
+}
