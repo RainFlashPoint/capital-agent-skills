@@ -119,6 +119,27 @@ async function fetchPlatformTask(serverUrl, userKey, taskId, fetchImpl) {
   } catch { return null }
 }
 
+async function fetchPlatformHarnessPreflight(serverUrl, userKey, task, fetchImpl) {
+  if (!serverUrl || !userKey || !task?.id || task.status === 'done') return null
+  const actionType = ['review', 'patch'].includes(task.currentAction?.type || task.currentAction?.actionType) ? (task.currentAction.type || task.currentAction.actionType) : 'test'
+  const commit = task.currentCommit || task.gates?.currentCommit || ''
+  const query = new URLSearchParams({ action_type: actionType, ...(commit ? { commit_sha: commit } : {}) })
+  try {
+    const response = await fetchImpl(`${serverUrl}/api/tasks/${encodeURIComponent(task.id)}/preflight?${query}`, { headers: { 'x-user-key': userKey } })
+    if (!response.ok) return null
+    const body = await response.json()
+    return body.data || null
+  } catch { return null }
+}
+
+function observedHarnessEligibility(harnessMode, task = null) {
+  if (harnessMode === 'local-only') return false
+  const value = task?.harnessPreflight?.decision?.create_allowed
+    ?? task?.harnessPreflight?.decision?.createAllowed
+    ?? task?.harnessEligible
+  return typeof value === 'boolean' ? value : null
+}
+
 async function fetchPlatformHealth(serverUrl, fetchImpl) {
   if (!serverUrl) return null
   try {
@@ -340,7 +361,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
       mode: 'session_root_blocked',
       installation,
       platform: { configured: teamConfigured, connected: null, serverUrl: explicitLocal ? '' : serverUrl || '', handshake: null, mcpRuntime: mcpRuntimeState, localFallback: false, runtime: null, pendingDeliveries: { total: 0, sent: 0, pending: 0 }, outbox: emptyOutbox },
-      repository: { root: sessionRoot.currentRoot, remote: '', branch, head, upstream: '', upstreamHead: '', dirty: false, harnessMode: '', harnessEligible: false, sessionRoot },
+      repository: { root: sessionRoot.currentRoot, remote: '', branch, head, upstream: '', upstreamHead: '', dirty: false, harnessMode: '', harnessEligible: null, sessionRoot },
       task: { id: '', previousId: '', sessionId: '', previousSessionId: '', requiresNewSession: false, remoteStatus: '', remoteStage: '', gatesReady: false, currentCommit: '', currentGate: '', currentAction: null, blocker: { code: boundary.code, detail: boundary.detail, remediation: boundary.remediation }, nextAction: null, executionMode: '', verificationCommands: [], parentTaskId: '', retirementStatus: '', historyArtifactRoot: '' },
       reconciliation: { recordedHead: '', headPushed: false, pushRequired: false, initialDeliveryNeeded: false, localUnrecorded: false, remoteUnrecorded: false, needsDeliveryReconciliation: false, unrecordedCommits: [] },
       boundary,
@@ -380,7 +401,9 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
   const runtime = platform ? await fetchPlatformHealth(serverUrl, fetchImpl) : null
   const followUpTaskId = activeFollowUpId(stateTask)
   const followUpTask = followUpTaskId ? await fetchPlatformTask(serverUrl, userKey, followUpTaskId, fetchImpl) : null
-  const remoteTask = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
+  const remoteTaskCandidate = followUpTask?.status && followUpTask.status !== 'done' ? followUpTask : stateTask
+  const harnessPreflight = await fetchPlatformHarnessPreflight(serverUrl, userKey, remoteTaskCandidate, fetchImpl)
+  const remoteTask = remoteTaskCandidate ? { ...remoteTaskCandidate, harnessPreflight } : null
   const switchingTask = Boolean(remoteTask?.id && taskId && remoteTask.id !== taskId)
   const pendingDeliveries = gitRoot && taskId && !offline && !localRun && !restartRequired && !boundary.blocked ? await flushPendingDeliveries(repo, { activeTaskRef: taskId, canonicalTask: stateTask, fetchImpl, homeDir }).catch(() => ({ total: 0, sent: 0, pending: 0 })) : { total: 0, sent: 0, pending: 0 }
   const emptyOutbox = { totalPending: 0, pending: 0, historicalPending: 0, retainedHistoricalPending: 0, unscopedPending: 0, retainedUnscopedPending: 0, ready: 0, blocked: 0, oldestCreatedAt: '', next: null, events: [] }
@@ -463,7 +486,7 @@ export async function inspectCapStatus({ repoRoot = '.', homeDir = homedir(), fe
         : taskId ? 'platform_attached_unverified' : 'platform_unverified',
     installation,
     platform: { configured: teamConfigured, connected: localRun ? null : platform, serverUrl: explicitLocal ? '' : serverUrl || '', handshake, mcpRuntime: mcpRuntimeState, localFallback: explicitLocalFallback, runtime: runtime ? { buildCommit: runtime.build?.commit || '', schemaRevision: runtime.schemaRevision || '', taskStoreMode: runtime.taskStoreMode || '', database: runtime.database || '' } : null, pendingDeliveries, outbox },
-    repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty, harnessMode, harnessEligible: harnessMode === 'server', sessionRoot },
+    repository: { root: gitRoot || repo, remote, branch, head, upstream, upstreamHead, dirty, harnessMode, harnessEligible: observedHarnessEligibility(harnessMode, remoteTask), sessionRoot },
     task: {
       id: remoteTask?.id || taskId,
       previousId: switchingTask ? taskId : '',
@@ -826,7 +849,7 @@ export function compactCapStatus(result = {}) {
       upstreamHead: repository.upstreamHead || '',
       dirty: repository.dirty === true,
       harnessMode: repository.harnessMode || '',
-      harnessEligible: repository.harnessEligible === true,
+      harnessEligible: repository.harnessEligible === true ? true : repository.harnessEligible === false ? false : null,
       sessionRoot: repository.sessionRoot ? {
         blocked: repository.sessionRoot.blocked === true,
         code: repository.sessionRoot.code || '',
@@ -894,6 +917,9 @@ export function compactCapStatus(result = {}) {
     },
     reasons: result.reasons || [],
   })
+  // `false` is a deliberate local-only/denied decision; generic compact
+  // pruning must not erase it and turn a known denial into "unobserved".
+  if (repository.harnessEligible === false && compact?.repository) compact.repository.harnessEligible = false
   // These explicit `false` values are safety-relevant decisions, while an
   // omitted value means the compact projection did not observe the decision.
   if (installation.safeToUpgrade === false) compact.installation.safeToUpgrade = false
@@ -918,7 +944,7 @@ export function statusDecisionSignature(result = {}) {
     contextGate: contextDecision(result.contextGate),
     installation: { status: installation.status || '', conditions: installation.conditions || [], upgradeRecommended: installation.upgradeRecommended === true, updateAvailable: installation.updateAvailable === true, safeToUpgrade: installation.safeToUpgrade === true, bootstrapRecommended: installation.bootstrapRecommended === true, reason: installation.reason || '', changedFileCount: Array.isArray(installation.changedFiles) ? installation.changedFiles.length : Number(installation.changedFileCount || 0) },
     platform: { configured: platform.configured === true, connected: platform.connected ?? null, serverUrl: platform.serverUrl || '', mcpRuntime: platform.mcpRuntime || 'unknown', localFallback: platform.localFallback === true, handshake: platform.handshake ? { ok: platform.handshake.ok === true, reason: platform.handshake.reason || '', status: platform.handshake.status || 0 } : null, runtime: platform.runtime || null, pendingDeliveries: { total: Number(platform.pendingDeliveries?.total || 0), sent: Number(platform.pendingDeliveries?.sent || 0), pending: Number(platform.pendingDeliveries?.pending || 0), confirmed: Number(platform.pendingDeliveries?.confirmed || 0) }, outbox: { totalPending: Number(outbox.totalPending || 0), pending: Number(outbox.pending || 0), historicalPending: Number(outbox.historicalPending || 0), retainedHistoricalPending: Number(outbox.retainedHistoricalPending || 0), unscopedPending: Number(outbox.unscopedPending || 0), retainedUnscopedPending: Number(outbox.retainedUnscopedPending || 0), ready: Number(outbox.ready || 0), blocked: Number(outbox.blocked || 0), oldestCreatedAt: outbox.oldestCreatedAt || '', next: outbox.next ? { id: outbox.next.id || '', type: outbox.next.type || '', localTaskRef: outbox.next.localTaskRef || '' } : null } },
-    repository: { root: result.repository?.root || '', remote: result.repository?.remote || '', branch: result.repository?.branch || '', head: result.repository?.head || '', upstream: result.repository?.upstream || '', upstreamHead: result.repository?.upstreamHead || '', dirty: result.repository?.dirty === true, harnessMode: result.repository?.harnessMode || '', harnessEligible: result.repository?.harnessEligible === true, sessionRootBlocked: result.repository?.sessionRoot?.blocked === true },
+    repository: { root: result.repository?.root || '', remote: result.repository?.remote || '', branch: result.repository?.branch || '', head: result.repository?.head || '', upstream: result.repository?.upstream || '', upstreamHead: result.repository?.upstreamHead || '', dirty: result.repository?.dirty === true, harnessMode: result.repository?.harnessMode || '', harnessEligible: result.repository?.harnessEligible === true ? true : result.repository?.harnessEligible === false ? false : null, sessionRootBlocked: result.repository?.sessionRoot?.blocked === true },
     task: { id: task.id || '', previousId: task.previousId || '', sessionId: task.sessionId || '', previousSessionId: task.previousSessionId || '', requiresNewSession: task.requiresNewSession === true, remoteStatus: task.remoteStatus || '', remoteStage: task.remoteStage || '', gatesReady: task.gatesReady === true, currentCommit: task.currentCommit || '', currentGate: task.currentGate || '', currentAction: actionSummary(task.currentAction), blocker: blockerSummary(task.blocker), nextAction: actionSummary(task.nextAction), harnessReadiness: harnessReadinessSummary(task.harnessReadiness), preflight: harnessPreflightSummary(task.preflight), gates: harnessGatesSummary(task.gates), executionMode: task.executionMode || '', verificationCommands: task.verificationCommands || [], parentTaskId: task.parentTaskId || '', retirementStatus: task.retirementStatus || '', historyArtifactRoot: task.historyArtifactRoot || '', localExecution: task.localExecution ? { stage: task.localExecution.stage || '', status: task.localExecution.status || '', nextAction: task.localExecution.nextAction || '', gated: task.localExecution.gated === true, executionRequired: task.localExecution.executionRequired === true, executionGate: task.localExecution.executionGate || '' } : null, serverDelivery: task.serverDelivery ? { source: task.serverDelivery.source || '', taskId: task.serverDelivery.taskId || '', stage: task.serverDelivery.stage || '', status: task.serverDelivery.status || '', currentCommit: task.serverDelivery.currentCommit || '', currentGate: task.serverDelivery.currentGate || '', action: actionSummary(task.serverDelivery.action), gatesReady: task.serverDelivery.gatesReady === true } : null },
     reconciliation: { recordedHead: reconciliation.recordedHead || '', headPushed: reconciliation.headPushed === true, pushRequired: reconciliation.pushRequired === true, initialDeliveryNeeded: reconciliation.initialDeliveryNeeded === true, localUnrecorded: reconciliation.localUnrecorded === true, remoteUnrecorded: reconciliation.remoteUnrecorded === true, needsDeliveryReconciliation: reconciliation.needsDeliveryReconciliation === true, unrecordedCommitCount: Array.isArray(reconciliation.unrecordedCommits) ? reconciliation.unrecordedCommits.length : Number(reconciliation.unrecordedCommitCount || 0) },
     boundary: { blocked: result.boundary?.blocked === true, code: result.boundary?.code || '', mismatches: result.boundary?.mismatches || [] },

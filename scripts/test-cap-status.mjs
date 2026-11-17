@@ -281,6 +281,32 @@ test('repository profile exposes local-only Harness eligibility without disablin
   assert.equal(result.task.id, 'task_tools')
 })
 
+test('server Harness eligibility remains unknown until a server preflight is observed', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-harness-unknown-'))
+  await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: server\n')
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, offline: true })
+  assert.equal(result.repository.harnessEligible, null)
+})
+
+test('client Harness eligibility is sourced from the task preflight endpoint', async () => {
+  const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-harness-preflight-')); const calls = []
+  await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
+  await writeFile(join(home, '.config/capital-agent/env'), 'CAPITAL_AGENT_MODE=server\nCAPITAL_AGENT_SERVER_URL=https://example.test\nCAPITAL_AGENT_USER_KEY=user-1\n')
+  await writeFile(join(repo, '.cap/PROFILE.md'), 'harness-mode: server\n')
+  await writeFile(join(repo, '.cap/STATE.md'), 'task-id: task_preflight\nsession-id: session_preflight\nstage: test\nstatus: in-progress\n')
+  const fetchImpl = async url => {
+    calls.push(String(url))
+    if (url.endsWith('/api/auth/handshake')) return { ok: true, status: 200, json: async () => ({ data: { capabilities: { taskWrite: true, commitReconcile: true } } }) }
+    if (url.endsWith('/api/health')) return { ok: true, status: 200, json: async () => ({}) }
+    if (url.includes('/preflight')) return { ok: true, status: 200, json: async () => ({ data: { decision: { create_allowed: false, blocked_by: ['authority_denied'] } } }) }
+    return { ok: true, status: 200, json: async () => ({ data: { id: 'task_preflight', status: 'active', currentStage: 'test', currentCommit: 'a'.repeat(40) } }) }
+  }
+  const result = await inspectCapStatus({ repoRoot: repo, homeDir: home, fetchImpl, mcpRuntime: 'loaded', environment: { CODEX_THREAD_ID: 'preflight-test', CAPITAL_AGENT_SESSION_LOCK_DIR: join(home, 'session-locks') } })
+  assert.equal(result.repository.harnessEligible, false)
+  assert.ok(calls.some(url => url.includes('/api/tasks/task_preflight/preflight')))
+})
+
 test('local-only repository does not fall back to a Server Test Action in team-configured mode', async () => {
   const repo = await fixture(); const home = await mkdtemp(join(tmpdir(), 'cap-home-harness-local-gate-'))
   await mkdir(join(home, '.config/capital-agent'), { recursive: true }); await mkdir(join(repo, '.cap'), { recursive: true })
