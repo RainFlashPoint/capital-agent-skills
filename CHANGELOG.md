@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 校准契约守卫：按排除法发现各目录源码，保守识别不限变量名的 JS/Python 安全开关；full 盘点显式 advisory，不以发现项阻断。分开报告 Git 清单、生产源码和实际读取数，排除已跟踪第三方 schema，并明确文件名接线仅为词法线索。
+
 - 测试阶段增加工厂级契约守卫：检查新增契约是否被生产代码引用，并拦截安全判断 opt-in；独立 guard envelope 先于主命令执行，两者 AND 汇总，最新指针和状态检查绑定并重验 guard 证据。显式命令不能绕过；仅 PROFILE 中带原因的仓级例外可禁用，不提升为 Server Gate。
 
 - 归档 `feat/stage-experience-wip`（`b45aea8`）：这批 stage-level experience 工作基于 v0.13.5，尚未合并，与当前主线存在文件重叠；恢复时需 rebase 并重跑测试。该分支仅用于归档，不得合并到任何分支。

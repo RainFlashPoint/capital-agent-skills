@@ -69,3 +69,15 @@ In the future Server integration, the verified Gate result is required to advanc
 ## 6. Explicit non-goals
 
 This repository does not claim that the local HMAC test secret is a production trust root, that local execution is a Server Gate, or that a payment system was deployed. Those are integration acceptance criteria for the platform repository.
+
+## Contract audit boundaries
+
+`runtime/execution/contract-audit.mjs` 是保守的词法启发式检查器。源码按扩展名识别（JS/TS 家族和 Python），位置不限于某些根目录；从 Git 的 tracked + 未忽略 untracked 清单中排除测试、fixtures、依赖（包括已提交的 node_modules/vendor/third_party）、.cap、构建产物和缓存。忽略的未跟踪文件不在清单内；不支持的语言不扫描。
+
+契约为 docs/contracts 下的 JSON 或任意非排除位置的 *.schema.json。生产源码中的带引号文件名仅是**词法接线证据**，不能证明运行时实际加载、校验了 schema，或执行了引用代码；未调用的 import、未使用的字符串同样可能通过。协议版本字符串不等于文件名引用；测试和注释不提供接线证据。
+
+安全扫描只识别 if 中直接的布尔开关：不限接收变量名，覆盖 enforce/require 等约定开关的 JS 比较与 Python == True / is True / == true / 裸 truthy；还需安全路径标识符或该 if 首条受控语句中的安全调用上下文。普通配置赋值、非安全文件中的普通 truthy、legacy 业务字段不应触发。检测不是 AST/控制流分析；别名、计算属性、复合条件、跨行条件、模板插值、间接调用可能漏检，仅匹配独立 if 行，动作证据只取首条受控语句；无法确认范围时跳过，后续安全语句可能漏检。路径或动作名称也不能证明安全语义。宁可漏检，避免扩大模式造成误报；不能作为权限、默认拒绝或契约有效性的证明。需要独立运行时测试/评审。
+
+`--mode diff` 以 HEAD 为基准，仅检查新增/重命名/未跟踪契约及新增的安全条件行；已提交问题不会自动成为本次增量失败。`--mode full` 明确输出 `advisory:true`，完成盘点时即使有 findings 也 `ok:true`、退出 0，`gatePassed:null`，不是门禁通过；应查看 failures。diff 则 `advisory:false`，`gatePassed` 与 findings 对应。任何模式读取失败、符号链接、非法参数等不完整扫描都 `ok:false`、`scanComplete:false`、退出 1，无门禁结论。
+
+两个模式的计数含义一致：`inventoryFiles` 是 Git 清单中当前存在的全部路径数；`productionFiles` 是按上述规则剩余源码数；`inspectedFiles` 是实际成功读取内容的唯一文件数（包括被检查契约），缓存复读不重复计数。`checked` 是本次检查的契约数；diff 没有契约/源码变更时 inspectedFiles 可为 0，这不证明检测器覆盖有效。

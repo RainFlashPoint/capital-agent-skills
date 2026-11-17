@@ -1,0 +1,1259 @@
+{
+  "date": "2026-11-17T09:06:52.130Z",
+  "auditSha256": "2c30679ba775562efd5a2380d0f1654d1d1d7e186d726ada0416165428d25d13",
+  "baseline": {
+    "commit": "f4bb97b81847a859fe9f25db0d9d66dc042e1a8a",
+    "rawRedReport": ".cap/verify/audit-parent-reviewed-red.tap",
+    "rawRedSha256": "dfffab06e3f1cba7b4ef0473b222575950bb666226909db2c3c5b3df34ff0c12",
+    "rawRedStdout": "✖ wiring backend/app/validator.py (347.327125ms)\n✖ wiring workers/runner/lib/validator.mjs (357.178583ms)\n✖ wiring server/check.js (341.330875ms)\n✖ wiring services/check.ts (352.156709ms)\n✖ wiring bin/check.cjs (346.133541ms)\n✖ wiring check.jsx (351.358375ms)\n✖ JS user explicit (347.23625ms)\n✖ JS cfg explicit (433.390833ms)\n✖ JS ctx explicit (356.054667ms)\n✖ Python input.enforce == True (338.837834ms)\n✖ Python input.enforce is True (328.271ms)\n✔ Python input.enforce == true (358.941167ms)\n✖ Python cfg.enforce (333.3815ms)\n✖ Python input.enforce (332.142167ms)\n✔ non-safety truthy (346.680291ms)\n✔ aggregate path is business (344.338417ms)\n✔ navigate path is business (350.7175ms)\n✔ unrelated adjacent identifier (332.616917ms)\n✔ unrelated function declaration (338.748333ms)\n✔ unrelated following call (391.488042ms)\n✔ unrelated same-line call (338.293209ms)\n✔ regex sample is data (330.35675ms)\n✔ normal config read (342.544708ms)\n✔ legacy business field (334.875208ms)\n✔ comment and string (341.628292ms)\n✔ Python multiline string (416.521209ms)\n✔ ordinary feature (365.832042ms)\n✔ business legacy explicit (359.159917ms)\n✖ safety action in ordinary path (431.495292ms)\n✔ unwired contract (317.033084ms)\n✔ test-only reference (313.070708ms)\n✔ version only reference (343.251291ms)\n✔ comment only reference (631.579792ms)\n✖ excluded node_modules (457.789875ms)\n✖ excluded web/node_modules/next (407.875334ms)\n✖ excluded vendor (387.744084ms)\n✖ excluded third_party (401.406417ms)\n✖ excluded dist (409.388875ms)\n✖ excluded build (420.241958ms)\n✖ excluded .cap (391.336959ms)\n✖ excluded backend/__pycache__ (395.594ms)\n✖ excluded tests (339.497ms)\n✖ excluded fixtures (345.867834ms)\n✖ full is advisory; diff ignores committed legacy findings (467.465875ms)\n✖ consistent counters measure inventory, production and unique reads (435.237291ms)\n✖ modified source scans added lines with file-wide comment state (430.813166ms)\n✖ tracked dependency schemas excluded even in full inventory (285.246583ms)\n✔ incomplete scans and invalid modes remain failures in advisory mode (404.139458ms)\nℹ tests 48\nℹ suites 0\nℹ pass 20\nℹ fail 28\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 18067.687459\n\n✖ failing tests:\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ wiring backend/app/validator.py (347.327125ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.start (node:internal/test_runner/test:1003:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ wiring workers/runner/lib/validator.mjs (357.178583ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ wiring server/check.js (341.330875ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ wiring services/check.ts (352.156709ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ wiring bin/check.cjs (346.133541ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ wiring check.jsx (351.358375ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ JS user explicit (347.23625ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ JS cfg explicit (433.390833ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ JS ctx explicit (356.054667ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ Python input.enforce == True (338.837834ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ Python input.enforce is True (328.271ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ Python cfg.enforce (333.3815ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ Python input.enforce (332.142167ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ safety action in ordinary path (431.495292ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded node_modules (457.789875ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded web/node_modules/next (407.875334ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded vendor (387.744084ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded third_party (401.406417ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded dist (409.388875ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded build (420.241958ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded .cap (391.336959ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded backend/__pycache__ (395.594ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded tests (339.497ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:44:22\n✖ excluded fixtures (345.867834ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:44:158)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:45:1\n✖ full is advisory; diff ignores committed legacy findings (467.465875ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1 !== 0\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:45:299)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1,\n    expected: 0,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:46:1\n✖ consistent counters measure inventory, production and unique reads (435.237291ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  undefined !== 6\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:46:291)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: undefined,\n    expected: 6,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:47:1\n✖ modified source scans added lines with file-wide comment state (430.813166ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  true !== false\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:47:252)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/test-contract-audit.mjs:48:1\n✖ tracked dependency schemas excluded even in full inventory (285.246583ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1 !== 0\n  \n      at TestContext.<anonymous> (file:///Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/scripts/test-contract-audit.mjs:48:199)\n      at Test.runInAsyncScope (node:async_hooks:214:14)\n      at Test.run (node:internal/test_runner/test:1106:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)\n      at Test.postRun (node:internal/test_runner/test:1235:19)\n      at Test.run (node:internal/test_runner/test:1163:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1,\n    expected: 0,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "caseMatrix": [
+    {
+      "id": "wiring backend/app/validator.py",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "backend/app/validator.py": "schema = \"a.schema.json\""
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 1,
+        "inspectedFiles": 2,
+        "failures": []
+      }
+    },
+    {
+      "id": "wiring workers/runner/lib/validator.mjs",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "workers/runner/lib/validator.mjs": "const schema = \"a.schema.json\""
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 1,
+        "inspectedFiles": 2,
+        "failures": []
+      }
+    },
+    {
+      "id": "wiring server/check.js",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "server/check.js": "const schema = \"a.schema.json\""
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 1,
+        "inspectedFiles": 2,
+        "failures": []
+      }
+    },
+    {
+      "id": "wiring services/check.ts",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "services/check.ts": "const schema = \"a.schema.json\""
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 1,
+        "inspectedFiles": 2,
+        "failures": []
+      }
+    },
+    {
+      "id": "wiring bin/check.cjs",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "bin/check.cjs": "const schema = \"a.schema.json\""
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 1,
+        "inspectedFiles": 2,
+        "failures": []
+      }
+    },
+    {
+      "id": "wiring check.jsx",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "check.jsx": "const schema = \"a.schema.json\""
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 1,
+        "inspectedFiles": 2,
+        "failures": []
+      }
+    },
+    {
+      "id": "JS user explicit",
+      "input": {
+        "backend/gate.mjs": "if (user.enforce === true) { deny() }"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/gate.mjs",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "JS cfg explicit",
+      "input": {
+        "backend/gate.mjs": "if (cfg.enforce === true) { deny() }"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/gate.mjs",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "JS ctx explicit",
+      "input": {
+        "backend/gate.mjs": "if (ctx.enforce === true) { deny() }"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/gate.mjs",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "Python input.enforce == True",
+      "input": {
+        "backend/gate.py": "if input.enforce == True:\n    deny()\n"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/gate.py",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "Python input.enforce is True",
+      "input": {
+        "backend/gate.py": "if input.enforce is True:\n    deny()\n"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/gate.py",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "Python input.enforce == true",
+      "input": {
+        "backend/gate.py": "if input.enforce == true:\n    deny()\n"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/gate.py",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "Python cfg.enforce",
+      "input": {
+        "backend/gate.py": "if cfg.enforce:\n    deny()\n"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/gate.py",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "Python input.enforce",
+      "input": {
+        "backend/gate.py": "if input.enforce:\n    deny()\n"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/gate.py",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "non-safety truthy",
+      "input": {
+        "backend/theme.js": "if (input.enforce) render()"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "aggregate path is business",
+      "input": {
+        "backend/aggregate.js": "if (cfg.enforce) render()"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "navigate path is business",
+      "input": {
+        "backend/navigate.js": "if (cfg.enforce) render()"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "unrelated adjacent identifier",
+      "input": {
+        "backend/theme.js": "if (cfg.enforce) render()\nconst aggregate = 1"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "unrelated function declaration",
+      "input": {
+        "backend/theme.js": "if (input.enforce) render()\nfunction deny() {}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "unrelated following call",
+      "input": {
+        "backend/theme.js": "if (input.enforce) render()\ndeny()"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "unrelated same-line call",
+      "input": {
+        "backend/theme.js": "if (input.enforce) render(); deny()"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "regex sample is data",
+      "input": {
+        "backend/gate.js": "const pattern = /if (cfg.enforce) deny()/;"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "normal config read",
+      "input": {
+        "backend/gate.py": "enabled = cfg.enforce\n"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "legacy business field",
+      "input": {
+        "backend/gate.py": "if user.legacy:\n    archive_order()"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "comment and string",
+      "input": {
+        "backend/gate.js": "// if (ctx.enforce === true) deny()\nconst sample=\"if (user.enforce === true) deny()\""
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "Python multiline string",
+      "input": {
+        "backend/gate.py": "text = \"\"\"\nif cfg.enforce:\n    deny()\n\"\"\""
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "ordinary feature",
+      "input": {
+        "backend/gate.js": "if (cfg.darkMode === true) render()"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "business legacy explicit",
+      "input": {
+        "backend/gate.js": "if (user.legacy === true) archiveOrder()"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": []
+      }
+    },
+    {
+      "id": "safety action in ordinary path",
+      "input": {
+        "backend/feature.js": "if (ctx.enforce === true) { deny() }"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "safety_opt_in"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 0,
+        "inventoryFiles": 3,
+        "productionFiles": 1,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "safety_opt_in",
+            "file": "backend/feature.js",
+            "line": 1,
+            "detail": "Possible safety enforcement controlled by an optional boolean condition (heuristic).",
+            "remediation": "Check enforcement defaults; use an auditable policy for any exception."
+          }
+        ]
+      }
+    },
+    {
+      "id": "unwired contract",
+      "input": {
+        "docs/contracts/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "contract_not_wired"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 1,
+        "inventoryFiles": 3,
+        "productionFiles": 0,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "contract_not_wired",
+            "file": "docs/contracts/a.schema.json",
+            "detail": "No quoted filename reference in production source (lexical evidence only).",
+            "remediation": "Wire runtime consumption and verify it independently, or record a reasoned PROFILE exemption."
+          }
+        ]
+      }
+    },
+    {
+      "id": "test-only reference",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "backend/tests/check.py": "schema=\"a.schema.json\""
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "contract_not_wired"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 1,
+        "failures": [
+          {
+            "code": "contract_not_wired",
+            "file": "docs/contracts/a.schema.json",
+            "detail": "No quoted filename reference in production source (lexical evidence only).",
+            "remediation": "Wire runtime consumption and verify it independently, or record a reasoned PROFILE exemption."
+          }
+        ]
+      }
+    },
+    {
+      "id": "version only reference",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "backend/gate.py": "schema=\"a/v1\""
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "contract_not_wired"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 1,
+        "inspectedFiles": 2,
+        "failures": [
+          {
+            "code": "contract_not_wired",
+            "file": "docs/contracts/a.schema.json",
+            "detail": "No quoted filename reference in production source (lexical evidence only).",
+            "remediation": "Wire runtime consumption and verify it independently, or record a reasoned PROFILE exemption."
+          }
+        ]
+      }
+    },
+    {
+      "id": "comment only reference",
+      "input": {
+        "docs/contracts/a.schema.json": "{}",
+        "backend/check.js": "/* \"a.schema.json\" */"
+      },
+      "expected": {
+        "ok": false,
+        "failures": [
+          "contract_not_wired"
+        ]
+      },
+      "output": {
+        "exitCode": 1,
+        "ok": false,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": false,
+        "checked": 1,
+        "inventoryFiles": 4,
+        "productionFiles": 1,
+        "inspectedFiles": 2,
+        "failures": [
+          {
+            "code": "contract_not_wired",
+            "file": "docs/contracts/a.schema.json",
+            "detail": "No quoted filename reference in production source (lexical evidence only).",
+            "remediation": "Wire runtime consumption and verify it independently, or record a reasoned PROFILE exemption."
+          }
+        ]
+      }
+    },
+    {
+      "id": "excluded node_modules",
+      "input": {
+        "node_modules/gate.js": "if (cfg.enforce === true) deny()",
+        "node_modules/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded web/node_modules/next",
+      "input": {
+        "web/node_modules/next/gate.js": "if (cfg.enforce === true) deny()",
+        "web/node_modules/next/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded vendor",
+      "input": {
+        "vendor/gate.js": "if (cfg.enforce === true) deny()",
+        "vendor/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded third_party",
+      "input": {
+        "third_party/gate.js": "if (cfg.enforce === true) deny()",
+        "third_party/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded dist",
+      "input": {
+        "dist/gate.js": "if (cfg.enforce === true) deny()",
+        "dist/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded build",
+      "input": {
+        "build/gate.js": "if (cfg.enforce === true) deny()",
+        "build/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded .cap",
+      "input": {
+        ".cap/gate.js": "if (cfg.enforce === true) deny()",
+        ".cap/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded backend/__pycache__",
+      "input": {
+        "backend/__pycache__/gate.js": "if (cfg.enforce === true) deny()",
+        "backend/__pycache__/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded tests",
+      "input": {
+        "tests/gate.js": "if (cfg.enforce === true) deny()",
+        "tests/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "excluded fixtures",
+      "input": {
+        "fixtures/gate.js": "if (cfg.enforce === true) deny()",
+        "fixtures/a.schema.json": "{}"
+      },
+      "expected": {
+        "ok": true,
+        "failures": []
+      },
+      "output": {
+        "exitCode": 0,
+        "ok": true,
+        "mode": "diff",
+        "advisory": false,
+        "scanComplete": true,
+        "gatePassed": true,
+        "checked": 0,
+        "inventoryFiles": 4,
+        "productionFiles": 0,
+        "inspectedFiles": 0,
+        "failures": []
+      }
+    }
+  ],
+  "calibration": [
+    {
+      "name": "skills",
+      "root": "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix",
+      "head": "f4bb97b81847a859fe9f25db0d9d66dc042e1a8a",
+      "branch": "codex/factory-contract-guard",
+      "status": "M CHANGELOG.md\n M docs/specs/trusted-execution-protocol.md\n M ontology/source-lock.json\n M runtime/execution/contract-audit.mjs\n M scripts/test-contract-guard.mjs\n M skills/cap-flow/references/local-execution.md\n?? docs/reports/\n?? scripts/test-contract-audit.mjs",
+      "diffHash": "c7f4b01d1308c0e12d83fc10fd8c1eeb9a1a84f77c92b4c4be0dd8fa4f41260e",
+      "unchangedDuringScan": true,
+      "modes": [
+        {
+          "command": [
+            "node",
+            "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/runtime/execution/contract-audit.mjs",
+            "--repo",
+            "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix",
+            "--mode",
+            "diff"
+          ],
+          "exitCode": 0,
+          "stdout": "{\n  \"ok\": true,\n  \"mode\": \"diff\",\n  \"advisory\": false,\n  \"scanComplete\": true,\n  \"gatePassed\": true,\n  \"checked\": 0,\n  \"inventoryFiles\": 272,\n  \"productionFiles\": 75,\n  \"inspectedFiles\": 1,\n  \"failures\": []\n}\n",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "node",
+            "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/runtime/execution/contract-audit.mjs",
+            "--repo",
+            "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix",
+            "--mode",
+            "full"
+          ],
+          "exitCode": 0,
+          "stdout": "{\n  \"ok\": true,\n  \"mode\": \"full\",\n  \"advisory\": true,\n  \"scanComplete\": true,\n  \"gatePassed\": null,\n  \"checked\": 0,\n  \"inventoryFiles\": 272,\n  \"productionFiles\": 75,\n  \"inspectedFiles\": 75,\n  \"failures\": []\n}\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "name": "ticket",
+      "root": "/Users/hongzhi/.codex/worktrees/3587/capital-agent-ticket",
+      "head": "5d98c52e992db3c2b68c128da56e6042922a036f",
+      "branch": "codex/fix-ticket-unified-regressions",
+      "status": "M .cap/PROFILE.md",
+      "diffHash": "6e5ce2480505b5cfc05131c5c488c34a422bd3e4eada5c8bbae230fa22d94127",
+      "unchangedDuringScan": true,
+      "modes": [
+        {
+          "command": [
+            "node",
+            "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/runtime/execution/contract-audit.mjs",
+            "--repo",
+            "/Users/hongzhi/.codex/worktrees/3587/capital-agent-ticket",
+            "--mode",
+            "diff"
+          ],
+          "exitCode": 0,
+          "stdout": "{\n  \"ok\": true,\n  \"mode\": \"diff\",\n  \"advisory\": false,\n  \"scanComplete\": true,\n  \"gatePassed\": true,\n  \"checked\": 0,\n  \"inventoryFiles\": 574,\n  \"productionFiles\": 237,\n  \"inspectedFiles\": 0,\n  \"failures\": []\n}\n",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "node",
+            "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/runtime/execution/contract-audit.mjs",
+            "--repo",
+            "/Users/hongzhi/.codex/worktrees/3587/capital-agent-ticket",
+            "--mode",
+            "full"
+          ],
+          "exitCode": 0,
+          "stdout": "{\n  \"ok\": true,\n  \"mode\": \"full\",\n  \"advisory\": true,\n  \"scanComplete\": true,\n  \"gatePassed\": null,\n  \"checked\": 0,\n  \"inventoryFiles\": 574,\n  \"productionFiles\": 237,\n  \"inspectedFiles\": 237,\n  \"failures\": [\n    {\n      \"code\": \"safety_opt_in\",\n      \"file\": \"backend/app/agent_kernel/policy.py\",\n      \"line\": 98,\n      \"detail\": \"Possible safety enforcement controlled by an optional boolean condition (heuristic).\",\n      \"remediation\": \"Check enforcement defaults; use an auditable policy for any exception.\"\n    }\n  ]\n}\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "name": "server",
+      "root": "/Users/hongzhi/.codex/worktrees/7ba4/capital-agent-server",
+      "head": "6da8a1e30535f7015ad2f6ef204bce7511fccebc",
+      "branch": "codex/harness-p2-observation-2d",
+      "status": "",
+      "diffHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "unchangedDuringScan": true,
+      "modes": [
+        {
+          "command": [
+            "node",
+            "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/runtime/execution/contract-audit.mjs",
+            "--repo",
+            "/Users/hongzhi/.codex/worktrees/7ba4/capital-agent-server",
+            "--mode",
+            "diff"
+          ],
+          "exitCode": 0,
+          "stdout": "{\n  \"ok\": true,\n  \"mode\": \"diff\",\n  \"advisory\": false,\n  \"scanComplete\": true,\n  \"gatePassed\": true,\n  \"checked\": 0,\n  \"inventoryFiles\": 615,\n  \"productionFiles\": 279,\n  \"inspectedFiles\": 0,\n  \"failures\": []\n}\n",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "node",
+            "/Users/hongzhi/Desktop/lzsk1/capital-agent-skills-recovery-fix/runtime/execution/contract-audit.mjs",
+            "--repo",
+            "/Users/hongzhi/.codex/worktrees/7ba4/capital-agent-server",
+            "--mode",
+            "full"
+          ],
+          "exitCode": 0,
+          "stdout": "{\n  \"ok\": true,\n  \"mode\": \"full\",\n  \"advisory\": true,\n  \"scanComplete\": true,\n  \"gatePassed\": null,\n  \"checked\": 3,\n  \"inventoryFiles\": 615,\n  \"productionFiles\": 279,\n  \"inspectedFiles\": 282,\n  \"failures\": [\n    {\n      \"code\": \"contract_not_wired\",\n      \"file\": \"docs/contracts/evidence-v1.schema.json\",\n      \"detail\": \"No quoted filename reference in production source (lexical evidence only).\",\n      \"remediation\": \"Wire runtime consumption and verify it independently, or record a reasoned PROFILE exemption.\"\n    },\n    {\n      \"code\": \"contract_not_wired\",\n      \"file\": \"docs/contracts/gate-v1.schema.json\",\n      \"detail\": \"No quoted filename reference in production source (lexical evidence only).\",\n      \"remediation\": \"Wire runtime consumption and verify it independently, or record a reasoned PROFILE exemption.\"\n    },\n    {\n      \"code\": \"contract_not_wired\",\n      \"file\": \"docs/contracts/harness-preflight-v1.schema.json\",\n      \"detail\": \"No quoted filename reference in production source (lexical evidence only).\",\n      \"remediation\": \"Wire runtime consumption and verify it independently, or record a reasoned PROFILE exemption.\"\n    }\n  ]\n}\n",
+          "stderr": ""
+        }
+      ]
+    }
+  ]
+}

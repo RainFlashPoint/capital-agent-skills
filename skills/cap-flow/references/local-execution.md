@@ -44,3 +44,15 @@ Task、Session、仓库、分支、HEAD、index/worktree/untracked 内容、执�
 CLI 示例和升级说明见仓库 `docs/local-efficiency-upgrade.md`。
 
 契约守卫的 `diff` 模式以 `HEAD` 为基准检查当前暂存、未暂存与未跟踪增量，已提交改动不在该增量内；提交前应运行守卫。`--mode full` 用于主动盘点全部契约，结果仍是启发式本地观察，不能证明运行时语义已正确接线。历史 recorder 仅沿用既有明确允许列表的诊断/迁移边界，当前 recorder 的冻结、全量完成与恢复均重验 guard 回执。
+
+## Contract audit boundaries
+
+`runtime/execution/contract-audit.mjs` 是保守的词法启发式检查器。源码按扩展名识别（JS/TS 家族和 Python），位置不限于某些根目录；从 Git 的 tracked + 未忽略 untracked 清单中排除测试、fixtures、依赖（包括已提交的 node_modules/vendor/third_party）、.cap、构建产物和缓存。忽略的未跟踪文件不在清单内；不支持的语言不扫描。
+
+契约为 docs/contracts 下的 JSON 或任意非排除位置的 *.schema.json。生产源码中的带引号文件名仅是**词法接线证据**，不能证明运行时实际加载、校验了 schema，或执行了引用代码；未调用的 import、未使用的字符串同样可能通过。协议版本字符串不等于文件名引用；测试和注释不提供接线证据。
+
+安全扫描只识别 if 中直接的布尔开关：不限接收变量名，覆盖 enforce/require 等约定开关的 JS 比较与 Python == True / is True / == true / 裸 truthy；还需安全路径标识符或该 if 首条受控语句中的安全调用上下文。普通配置赋值、非安全文件中的普通 truthy、legacy 业务字段不应触发。检测不是 AST/控制流分析；别名、计算属性、复合条件、跨行条件、模板插值、间接调用可能漏检，仅匹配独立 if 行，动作证据只取首条受控语句；无法确认范围时跳过，后续安全语句可能漏检。路径或动作名称也不能证明安全语义。宁可漏检，避免扩大模式造成误报；不能作为权限、默认拒绝或契约有效性的证明。需要独立运行时测试/评审。
+
+`--mode diff` 以 HEAD 为基准，仅检查新增/重命名/未跟踪契约及新增的安全条件行；已提交问题不会自动成为本次增量失败。`--mode full` 明确输出 `advisory:true`，完成盘点时即使有 findings 也 `ok:true`、退出 0，`gatePassed:null`，不是门禁通过；应查看 failures。diff 则 `advisory:false`，`gatePassed` 与 findings 对应。任何模式读取失败、符号链接、非法参数等不完整扫描都 `ok:false`、`scanComplete:false`、退出 1，无门禁结论。
+
+两个模式的计数含义一致：`inventoryFiles` 是 Git 清单中当前存在的全部路径数；`productionFiles` 是按上述规则剩余源码数；`inspectedFiles` 是实际成功读取内容的唯一文件数（包括被检查契约），缓存复读不重复计数。`checked` 是本次检查的契约数；diff 没有契约/源码变更时 inspectedFiles 可为 0，这不证明检测器覆盖有效。

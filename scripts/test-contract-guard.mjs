@@ -59,7 +59,7 @@ test('new opt-in safety checks fail; test files and ordinary feature flags are e
 test('diff does not block legacy modifications; full inventory finds committed unwired contracts',async t=>{
  const root=await fixture(t);await file(root,'docs/contracts/old.schema.json','{}');git(root,'add','.');git(root,'commit','-qm','legacy')
  await file(root,'docs/contracts/old.schema.json','{"changed":true}')
- assert.equal(scan(root).code,0);assert.equal(scan(root,'full').code,1)
+ assert.equal(scan(root).code,0);const full=scan(root,'full');assert.equal(full.code,0);assert.equal(full.advisory,true);assert.equal(full.failures[0].code,'contract_not_wired')
 })
 test('unknown audit mode or invalid repository cannot yield PASS',async t=>{
  const root=await fixture(t);assert.notEqual(scan(root,'anything').code,0)
