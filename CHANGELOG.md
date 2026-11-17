@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 测试阶段增加工厂级契约守卫：检查新增契约是否被生产代码引用，并拦截安全判断 opt-in；独立 guard envelope 先于主命令执行，两者 AND 汇总，最新指针和状态检查绑定并重验 guard 证据。显式命令不能绕过；仅 PROFILE 中带原因的仓级例外可禁用，不提升为 Server Gate。
+
 - 归档 `feat/stage-experience-wip`（`b45aea8`）：这批 stage-level experience 工作基于 v0.13.5，尚未合并，与当前主线存在文件重叠；恢复时需 rebase 并重跑测试。该分支仅用于归档，不得合并到任何分支。
 
 - 修复旧 Task 快照的引用漏检：隔离区先按旧 STATE、manifest 和哈希重建引用链，列出需恢复文件并阻断 prune；已误隔离的有效链不会被当成可删除候选。

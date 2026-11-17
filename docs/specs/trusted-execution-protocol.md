@@ -6,6 +6,8 @@
 
 实际链路为：本地 Task/阶段 → request.json → 普通宿主进程 → bundle.json → 本地重新校验。请求绑定 Task、Session、仓库、分支、HEAD、脏源码快照、命令哈希和协议版本；结果绑定退出码、输出哈希和执行后快照。status 重算哈希与身份，不把 gate.json PASS 直接当证据。最近失败或中断优先于历史成功；执行锁防止同一仓库同时记录两个动作，动作 ID 不复用。
 
+`test` 阶段另运行工厂级 contract guard：独立守卫 envelope 先于项目主命令执行，二者按 AND 汇总。最新指针引用守卫的 ID、请求哈希、来源和结果；status 会重新验证守卫证据，缺失、篡改、失败或策略漂移都不能被主命令 PASS 覆盖。显式项目命令不会关闭守卫。该本地审计仍是 `local-observed`，不是 Server Gate 或恶意本机写者无法伪造的远程证明。
+
 这是本机一致性检查，不能认证恶意本机写者，不能证明命令覆盖了全部业务验收，也没有连接 Server Gate。使用与兼容范围见 [本地升级说明](../local-efficiency-upgrade.md)。
 
 ## 后续设计与保留的 v1 参考实现

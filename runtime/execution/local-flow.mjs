@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { digest, canonical } from '../ontology/schema.mjs'
 import { inspectContextFingerprint } from '../../scripts/cap-context-fingerprint.mjs'
 import { inspectSessionRoot } from '../../scripts/cap-session-root.mjs'
-import { fail, field, stageName, resolveExecutionStage, git, repoRoot, safePath, jsonFile, textFile, atomicJson, executionContract, versions, commandFor, argvCheck, timeoutCheck, observeCommand } from './local-support.mjs'
+import { fail, field, stageName, resolveExecutionStage, git, repoRoot, safePath, jsonFile, textFile, atomicJson, executionContract, GUARD_CONSTRAINTS, verifyRecordedGuard, versions, commandFor, argvCheck, timeoutCheck, observeCommand } from './local-support.mjs'
 import { completeTestRun, inspectTestState, reconcileTerminalTestRun, reserveTestRun, testExecutionGate } from './test-state.mjs'
 export { executionContract } from './local-support.mjs'
 
@@ -49,6 +49,8 @@ export function executionNextActions(reason='', { stage='', action='', testPhase
  if(code==='verified_local_evidence') return []
  const context={stage,action}
  const make=(kind,label,extra={})=>({kind,label,reason:String(reason||''),requiresUser:false,...context,...extra})
+ if(code==='execution_guard_missing')return [make('run_contract_guard','补齐契约守卫并重新执行'),make('rerun_with_new_action_id','守卫通过后重跑')]
+ if(code==='execution_guard_failed')return [make('fix_contract_guard_findings','按守卫输出修复未接线契约或 opt-in 判定'),make('rerun_with_new_action_id','修复后重跑')]
  if(code==='execution_missing'||code==='execution_command_missing'||code==='execution_command_disabled') return [make('configure_execution_command',code==='execution_command_disabled'?'PROFILE 明确声明当前阶段没有执行套件':'发现或补齐本地执行命令')]
  if(code==='command_failed'||code==='timed_out'||code==='output_limit'||code==='spawn_failed') return [make('diagnose_command_failure','检查失败输出并修复实现或测试命令'),make('rerun_with_new_action_id','修复后重新执行', {requiresSourceChange:false})]
  if(code==='source_changed_during_execution'||code==='execution_source_changed') return stage==='test'
@@ -96,10 +98,10 @@ async function facts(path,options={}) {
  const config=await textFile(repo,'.cap/execution-config.json').catch(e=>{if(e.code==='ENOENT')return '';throw e})
  return {state,identity:{repo,task,session,branch,commit},snapshot:{...await inspectContextFingerprint(repo),configuration:digest(config)},stage:stageName(field(state,'stage'))}
 }
-function makeEnvelope(f,options,stage,contract,command) {
+function makeEnvelope(f,options,stage,contract,command,extra={}) {
  const id=options.id||`action-${randomUUID()}`;if(!idPattern.test(id))fail('execution_id_invalid')
  const testScope=stage==='test'?options.testScope:undefined
- return {schemaVersion:2,trust:'local-observed',id,...f.identity,stage,action:contract.action,constraints:contract.constraints,commandHash:digest(command),...(testScope?{testScope}:{}),versions,snapshot:f.snapshot,startedAt:new Date().toISOString()}
+ return {schemaVersion:2,trust:'local-observed',id,...f.identity,stage,action:contract.action,constraints:contract.constraints,commandHash:digest(command),...(testScope?{testScope}:{}),versions,snapshot:f.snapshot,startedAt:new Date().toISOString(),...extra}
 }
 export async function buildLocalEnvelope(repoPath='.',options={}) {
  const f=await facts(repoPath,{...options,checkSession:true})
@@ -110,7 +112,7 @@ export async function buildLocalEnvelope(repoPath='.',options={}) {
  if(options.constraints&&!same(options.constraints,contract.constraints))fail('execution_constraints_not_supported')
  const command=await commandFor(f.identity.repo,stage,options.command,contract.action)
  if(!command.argv.length)fail(command.disabled?'execution_command_disabled: PROFILE declares no runner for this stage':'execution_command_missing: configure .cap/execution-config.json or pass argv after --')
- return makeEnvelope(f,options,stage,contract,command.argv)
+ return makeEnvelope(f,options,stage,contract,command.argv,command.guard?{guardPolicyHash:digest(command.guard)}:{})
 }
 function gateFor(envelope,receipt) {
  const blockers=[]
@@ -141,6 +143,30 @@ function verifyCanonicalEvidence(evidence,pointer,expected) {
  const bundle={schemaVersion:2,envelope:evidence.envelope,receipt:evidence.receipt,envelopeHash:evidence.envelopeHash,receiptHash:evidence.receiptHash}
  return verifyBundle(bundle,evidence.envelope,expected)
 }
+async function executeEnvelope(envelope,initial,repo,argv,{env,timeoutMs}) {
+ const artifactDir=join(repo,'.cap/execution',envelope.id)
+ try{await mkdir(artifactDir)}catch(e){if(e.code==='EEXIST')fail('execution_id_used');throw e}
+  await atomicJson(join(artifactDir,'gate.json'),{schemaVersion:3,status:'pending',envelope,envelopeHash:digest(envelope)},{exclusive:true})
+  // The command runs with ordinary host permissions. This is observation, not authorization or an OS sandbox.
+  const result=await observeCommand(argv,{cwd:repo,env,timeoutMs})
+  let after
+  try{after=await facts(repo)}catch{after={snapshot:null,identity:null}}
+  const identityChanged=!same(initial.identity,after.identity)
+  const receipt={schemaVersion:2,authority:'local-observed',...initial.identity,envelopeId:envelope.id,envelopeHash:digest(envelope),finishedAt:new Date().toISOString(),exitCode:result.exitCode,signal:result.signal,status:result.status,stdoutHash:digest(result.stdout),stderrHash:digest(result.stderr),afterSnapshot:identityChanged?null:after.snapshot,runtime:{node:process.version,platform:process.platform,arch:process.arch}}
+  const gate=gateFor(envelope,receipt)
+  const diagnostic={...executionDiagnostic(result.stdout,result.stderr),status:result.status}
+  const evidence={schemaVersion:3,status:'terminal',envelope,receipt,diagnostic,envelopeHash:digest(envelope),receiptHash:digest(receipt),diagnosticHash:digest(diagnostic),gate}
+  // The embedded gate is only a human-facing derivative; readers recompute it from the hashed evidence.
+  await atomicJson(join(artifactDir,'gate.json'),evidence)
+ return {envelope,receipt,gate,artifactDir,stdout:result.stdout,stderr:result.stderr,diagnostic}
+}
+function combineGuard(main,guard) {
+ if(!guard)return main
+ const passed=main.passed&&guard.passed
+ const sourceDrift=main.blockers.includes('source_changed_during_execution')
+ const reason=sourceDrift?main.blockers[0]:!guard.passed?'execution_guard_failed':main.blockers[0]||'verified_local_evidence'
+ return {...main,gate:passed?'PASS':'BLOCKED',passed,guard,blockers:[...new Set([...main.blockers,...(!guard.passed?['execution_guard_failed']:[]),...(guard.blockers||[]).map(value=>`guard:${value}`)])],nextActions:executionNextActions(reason,{stage:main.stage,action:main.action}),remediation:passed?main.remediation:sourceDrift?main.remediation:!guard.passed?'按守卫输出修复并重跑':main.remediation}
+}
 export async function runLocalAction(repoPath='.',options={}) {
  const initial=await facts(repoPath,{...options,checkSession:true}),repo=initial.identity.repo
  const stage=resolveExecutionStage(options,initial.stage),contract=executionContract(stage)
@@ -150,35 +176,41 @@ export async function runLocalAction(repoPath='.',options={}) {
  if(options.constraints&&!same(options.constraints,contract.constraints))fail('execution_constraints_not_supported')
  const selected=await commandFor(repo,stage,options.command,contract.action)
  if(!selected.argv.length)fail(selected.disabled?'execution_command_disabled: PROFILE declares no runner for this stage':'execution_command_missing: configure .cap/execution-config.json or pass argv after --')
- argvCheck(selected.argv);const timeoutMs=timeoutCheck(options.timeoutMs??120000)
- const envelope=makeEnvelope(initial,options,stage,contract,selected.argv)
+ argvCheck(selected.argv);const timeoutMs=timeoutCheck(options.timeoutMs??120000),env=options.env??process.env
+ const mainOptions={...options,id:options.id||`action-${randomUUID()}`}
+ const guardEnvelope=selected.guard&&!selected.guard.disabled
+  ?makeEnvelope(initial,{...options,id:`guard-${randomUUID()}`,testScope:undefined},stage,contract,selected.guard.argv,{kind:'guard',guardSource:selected.guard.source,guardOf:mainOptions.id})
+  :null
+ const guardBinding=selected.guard?.disabled
+  ?{disabled:true,source:selected.guard.source,reason:selected.guard.reason,policyHash:digest(selected.guard)}
+  :guardEnvelope?{id:guardEnvelope.id,requestHash:digest(guardEnvelope),source:selected.guard.source}:null
+ const envelope=makeEnvelope(initial,mainOptions,stage,contract,selected.argv,selected.guard?{guardPolicyHash:digest(selected.guard),guard:guardBinding}:{})
  await safePath(repo,'.cap/execution',{create:true})
  const lock=join(repo,'.cap/execution/.lock')
  try{await mkdir(lock)}catch(e){if(e.code==='EEXIST')fail('execution_in_progress_or_interrupted');throw e}
- let artifactDir
  try {
   await atomicJson(join(lock,'owner.json'),{schemaVersion:2,pid:process.pid,id:envelope.id,startedAt:envelope.startedAt},{exclusive:true})
-  artifactDir=join(repo,'.cap/execution',envelope.id)
-  if(await lstat(artifactDir).catch(error=>{if(error.code==='ENOENT')return null;throw error}))fail('execution_id_used')
-  const testReservation=stage==='test'
-   ? await reserveTestRun(repo,{scope:options.testScope,command:selected.argv,actionId:envelope.id})
-   : null
-  try{await mkdir(artifactDir)}catch(e){if(e.code==='EEXIST')fail('execution_id_used');throw e}
-  await atomicJson(join(artifactDir,'gate.json'),{schemaVersion:3,status:'pending',envelope,envelopeHash:digest(envelope)},{exclusive:true})
-  await atomicJson(join(repo,`.cap/execution/latest-${stage}.json`),{schemaVersion:2,id:envelope.id,requestHash:digest(envelope)})
-  // The command runs with ordinary host permissions. This is observation, not authorization or an OS sandbox.
-  const result=await observeCommand(selected.argv,{cwd:repo,env:options.env??process.env,timeoutMs})
-  let after
-  try{after=await facts(repo)}catch{after={snapshot:null,identity:null}}
-  const identityChanged=!same(initial.identity,after.identity)
-  const receipt={schemaVersion:2,authority:'local-observed',...initial.identity,envelopeId:envelope.id,envelopeHash:digest(envelope),finishedAt:new Date().toISOString(),exitCode:result.exitCode,signal:result.signal,status:result.status,stdoutHash:digest(result.stdout),stderrHash:digest(result.stderr),afterSnapshot:identityChanged?null:after.snapshot,runtime:{node:process.version,platform:process.platform,arch:process.arch}}
-  let gate=gateFor(envelope,receipt)
-  const diagnostic={...executionDiagnostic(result.stdout,result.stderr),status:result.status}
-  const evidence={schemaVersion:3,status:'terminal',envelope,receipt,diagnostic,envelopeHash:digest(envelope),receiptHash:digest(receipt),diagnosticHash:digest(diagnostic),gate}
-  // The embedded gate is only a human-facing derivative; readers recompute it from the hashed evidence.
-  await atomicJson(join(artifactDir,'gate.json'),evidence)
+  if(await lstat(join(repo,'.cap/execution',envelope.id)).catch(error=>{if(error.code==='ENOENT')return null;throw error}))fail('execution_id_used')
+  const testReservation=stage==='test'?await reserveTestRun(repo,{scope:options.testScope,command:selected.argv,actionId:envelope.id}):null
+  const pointer={schemaVersion:2,id:envelope.id,requestHash:digest(envelope),guard:null}
+  await atomicJson(join(repo,`.cap/execution/latest-${stage}.json`),pointer)
+  let guardRun=null,guardSummary=null
+  if(selected.guard?.disabled) {
+   pointer.guard=guardBinding
+   guardSummary={...pointer.guard,passed:true}
+  }else if(selected.guard) {
+   argvCheck(selected.guard.argv)
+   pointer.guard={...guardBinding,gate:'PENDING'}
+   await atomicJson(join(repo,`.cap/execution/latest-${stage}.json`),pointer)
+   guardRun=await executeEnvelope(guardEnvelope,initial,repo,selected.guard.argv,{env,timeoutMs})
+   pointer.guard.gate=guardRun.gate.gate
+   guardSummary={...pointer.guard,passed:guardRun.gate.passed,blockers:guardRun.gate.blockers,artifactDir:guardRun.artifactDir}
+  }
+  await atomicJson(join(repo,`.cap/execution/latest-${stage}.json`),pointer)
+  const mainRun=await executeEnvelope(envelope,initial,repo,selected.argv,{env,timeoutMs})
+  let gate=combineGuard(mainRun.gate,guardSummary)
   if(testReservation) {
-   await completeTestRun(repo,{scope:options.testScope,commandHash:testReservation.commandHash,actionId:envelope.id,passed:gate.passed,resultStatus:receipt.status,requestHash:digest(envelope),receiptHash:digest(receipt)})
+   await completeTestRun(repo,{scope:options.testScope,commandHash:testReservation.commandHash,actionId:envelope.id,passed:gate.passed,resultStatus:mainRun.receipt.status,requestHash:digest(envelope),receiptHash:digest(mainRun.receipt)})
    if(options.testScope==='full') {
     const sequence=await testExecutionGate(repo,envelope)
     if(!sequence.passed) {
@@ -187,8 +219,17 @@ export async function runLocalAction(repoPath='.',options={}) {
     }
    }
   }
-  return {envelope,receipt,gate,artifactDir,stdout:result.stdout,stderr:result.stderr,diagnostic}
+  return {...mainRun,gate,guardRun}
  }finally {await rm(lock,{recursive:true,force:true})}
+}
+async function inspectGuard(repo,pointer,request,expected,contract) {
+ if(!contract.constraints.some(value=>GUARD_CONSTRAINTS.includes(value)))return null
+ if(!pointer.guard)fail('execution_guard_missing')
+ try {
+  const verified=await verifyRecordedGuard(repo,request,pointer.guard)
+  if(!verified?.passed||(!verified.disabled&&pointer.guard.gate!=='PASS'))fail('execution_guard_failed')
+  return verified
+ }catch{fail('execution_guard_failed')}
 }
 export async function inspectLocalExecution(repoPath='.',options={}) {
  let stage='',required=false,action=null
@@ -222,7 +263,9 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
     }
    }
    if(stage==='test'&&evidence.status==='terminal'&&request?.testScope==='full') await reconcileTerminalTestRun(repo,request.id)
-   const gate=verifyCanonicalEvidence(evidence,pointer,{...f,stage})
+   const mainGate=verifyCanonicalEvidence(evidence,pointer,{...f,stage})
+   const guard=await inspectGuard(repo,pointer,request,{...f,stage},contract)
+   const gate=combineGuard(mainGate,guard)
    if(stage==='test') {
     const sequence=await testExecutionGate(repo,request)
     const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid','test_environment_retry_available','test_environment_retry_ready'].includes(sequence.reason)
@@ -232,6 +275,7 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
    return {required,stage,action,passed:gate.passed,reason,artifactDir:dir,gate,nextActions:gate.nextActions,remediation:gate.remediation}
   }
   const request=await jsonFile(repo,`${dir}/request.json`)
+  const guard=await inspectGuard(repo,pointer,request,{...f,stage},contract)
   // Prior tasks never enroll a new task into mandatory execution.
   if(request.task!==f.identity.task||request.session!==f.identity.session)return {required,stage,action,passed:false,reason:'execution_identity_changed',artifactDir:dir}
   required=true
@@ -240,7 +284,7 @@ export async function inspectLocalExecution(repoPath='.',options={}) {
   if(bundle.receipt?.diagnosticPath !== 'diagnostic.json' || !hashPattern.test(bundle.receipt?.diagnosticHash || '')) fail('execution_diagnostic_invalid')
   const diagnostic=await jsonFile(repo,`${dir}/diagnostic.json`).catch(()=>null)
   if(!diagnostic || digest(diagnostic)!==bundle.receipt.diagnosticHash) fail('execution_diagnostic_invalid')
-  const gate=verifyBundle(bundle,request,{...f,stage})
+  const gate=combineGuard(verifyBundle(bundle,request,{...f,stage}),guard)
   if(stage==='test') {
    const sequence=await testExecutionGate(repo,request)
    const sequenceOwnsRecovery=gate.passed||['test_full_failed','test_full_attempt_incomplete','test_full_already_attempted','test_targeted_evidence_invalid','test_environment_retry_available','test_environment_retry_ready'].includes(sequence.reason)

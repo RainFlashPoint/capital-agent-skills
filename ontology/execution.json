@@ -6,7 +6,7 @@
     "define": { "action": null, "constraints": [], "evidence": "spec" },
     "plan": { "action": null, "constraints": [], "evidence": "plan" },
     "implement": { "action": "build", "constraints": ["source-snapshot", "command-exit-zero"], "evidence": "build" },
-    "test": { "action": "test", "constraints": ["source-snapshot", "command-exit-zero"], "evidence": "verification" },
+    "test": { "action": "test", "constraints": ["source-snapshot", "command-exit-zero", "contract-wired", "no-opt-in-safety"], "evidence": "verification" },
     "review": { "action": null, "constraints": [], "evidence": "review" },
     "release": { "action": "package", "constraints": ["source-snapshot", "command-exit-zero"], "evidence": "delivery" }
   }

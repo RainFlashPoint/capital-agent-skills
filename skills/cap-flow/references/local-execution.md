@@ -10,6 +10,8 @@
 
 主流程优先使用项目已有验证入口。记录器优先级为显式 argv、`.cap/PROFILE.md` 的 `test-commands`、`.cap/execution-config.json` 中的阶段/动作配置、package.json 已声明的脚本和语言项目文件。PROFILE 某槽位明确写成 `none — 原因` 时，视为该阶段没有套件，不再回退到自动猜测；需要执行时返回 `configure_execution_command` 修复动作。没有可用入口也返回该动作（补项目测试脚本或 `.cap/execution-config.json`）；不要求用户猜命令，也不猜测成功。Release 优先使用 `package`、`pack`、`prepare`，再回退 `build`，不放部署操作。
 
+test 合约声明 `contract-wired` 与 `no-opt-in-safety` 时，工厂先运行独立 `contract-guard`，再运行所选主测试命令；两个 envelope 都各自绑定源码快照，最终 Gate 要求两者都 PASS。显式 argv 只替换主命令，不能跳过守卫。默认使用工厂内置审计器；如确需仓库专用守卫，可在 PROFILE 的 `test-commands` 声明 `contract-guard` 命令。只有 PROFILE 中可审计的 `contract-guard: "none — <原因>"` 可作仓库级例外，空原因或请求参数不能关闭守卫。最新阶段指针绑定守卫请求哈希、来源与 Gate；检查时独立重验守卫 artifact，缺失或失败均阻断。
+
 第一次运行后，同 Task/Session 的该阶段自动要求有效证据。需要三个命令阶段都检查时，可在 STATE 写 `execution-required: true`；这不改变文档阶段或现有团队流程。运行 `scripts/cap-execute.mjs` 后，由 `scripts/cap-status.mjs` 重验最近一次执行；实际阶段交接仍由 cap-flow 单写者负责。
 
 `stage=test` 的本地命令额外使用 `.cap/execution/test-state.json` 强制确定性顺序：先登记影响/测试计划、全部定向
@@ -40,3 +42,5 @@ Task、Session、仓库、分支、HEAD、index/worktree/untracked 内容、执�
 退场将 execution 和 release 一起归档并校验 manifest 哈希。历史经验先用 `scripts/cap-history-audit.mjs` 只读筛查，再按任务需要审核；历史 PASS 不授予新 Task 执行证据，审计通过也不等于内容正确或可跨机构复用。
 
 CLI 示例和升级说明见仓库 `docs/local-efficiency-upgrade.md`。
+
+契约守卫的 `diff` 模式以 `HEAD` 为基准检查当前暂存、未暂存与未跟踪增量，已提交改动不在该增量内；提交前应运行守卫。`--mode full` 用于主动盘点全部契约，结果仍是启发式本地观察，不能证明运行时语义已正确接线。历史 recorder 仅沿用既有明确允许列表的诊断/迁移边界，当前 recorder 的冻结、全量完成与恢复均重验 guard 回执。

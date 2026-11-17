@@ -1473,13 +1473,13 @@ test('an interrupted full attempt reports source change instead of an impossible
   t.after(() => { if (runner.exitCode === null) runner.kill('SIGKILL') })
 
   let interruptedPointer = null
-  for (let attempts = 0; attempts < 200; attempts += 1) {
+  for (let attempts = 0; attempts < 2000; attempts += 1) {
     const lockOwner = await lstat(join(root, '.cap/execution/.lock/owner.json')).catch(() => null)
     const pointer = await readFile(pending, 'utf8').then(JSON.parse).catch(() => null)
     const gate = pointer?.id
       ? await readFile(join(root, '.cap/execution', pointer.id, 'gate.json'), 'utf8').then(JSON.parse).catch(() => null)
       : null
-    if (lockOwner && pointer?.id !== previousPointer.id && gate?.status === 'pending') {
+    if (lockOwner && pointer?.id !== previousPointer.id && gate?.status === 'pending' && gate.envelope?.kind !== 'guard') {
       interruptedPointer = pointer
       break
     }

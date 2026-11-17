@@ -34,6 +34,7 @@ harness-mode: server | local-only   # 业务交付仓用 server；Skills/工具/
 tech-stack: [<填写，例如：next.js, fastapi, postgres>]
 test-commands: { unit: "<例如 pytest>", coverage: "<例如 pytest --cov=<pkg> --cov-fail-under=80>", e2e: "<例如 playwright test>", typecheck: "<例如 tsc --noEmit>", build: "<例如 pnpm build>" }
 <!-- 某槽位无对应套件/工具时，显式写 "none — <原因>"，不要留空；coverage 用具体包名替换 <pkg>、阈值替换默认 80/分支 70。 -->
+<!-- 可选槽位 contract-guard：默认不填，使用工厂内置守卫；仓库专用守卫填 argv 命令字符串。仅带明确原因的 "none — <原因>" 可作可审计豁免，不能由请求参数关闭。 -->
 
 ## Verification environment
 

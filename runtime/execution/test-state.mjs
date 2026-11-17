@@ -16,6 +16,7 @@ import {
   textFile,
   argvCheck,
   versions,
+  verifyRecordedGuard,
 } from './local-support.mjs'
 
 const statePath = '.cap/execution/test-state.json'
@@ -454,6 +455,12 @@ async function verifyTargetedEvidence(repo, state, commandHash, { expectedRecord
   if (evidence.envelopeHash !== result.requestHash || evidence.receiptHash !== result.receiptHash || digest(receipt) !== result.receiptHash || evidence.diagnosticHash !== digest(evidence.diagnostic)) fail('test_targeted_evidence_invalid')
   if (receipt?.authority !== 'local-observed' || receipt.envelopeId !== result.actionId || receipt.envelopeHash !== result.requestHash || receipt.status !== 'passed' || receipt.exitCode !== 0 || receipt.signal || !same(receipt.afterSnapshot, request.snapshot)) fail('test_targeted_evidence_invalid')
   for (const key of ['repo', 'task', 'session', 'branch', 'commit']) if (receipt[key] !== state.identity[key]) fail('test_targeted_evidence_invalid')
+  // Historical recorder receipts predate the guard contract. They remain
+  // eligible only through the existing explicit migration allowlist; current
+  // recorder evidence must always carry a valid guard.
+  if (!legacyRecorderVersions.has(expectedRecorder)) {
+    try{if(!(await verifyRecordedGuard(repo,request))?.passed)fail('test_targeted_evidence_invalid')}catch{fail('test_targeted_evidence_invalid')}
+  }
   return {
     commandHash,
     actionHash: digest(result.actionId),
@@ -482,7 +489,8 @@ async function terminalFullResult(repo, state, actionId, { requireLatest = true,
   for (const key of ['repo', 'task', 'session', 'branch', 'commit']) if (request[key] !== state.identity[key]) fail('test_full_evidence_invalid')
   for (const key of ['root', 'index', 'worktree', 'untracked']) if (request.snapshot?.[key] !== state.snapshot[key]) fail('test_full_evidence_invalid')
   const first = actionId === state.fullAttempt?.actionId
-  if (!evidenceVersions(request, expectedRecorder || (first ? expectedFirstRecorder(state) : versions.recorder))) fail('test_full_evidence_invalid')
+  const recorder = expectedRecorder || (first ? expectedFirstRecorder(state) : versions.recorder)
+  if (!evidenceVersions(request, recorder)) fail('test_full_evidence_invalid')
   if (evidence.envelopeHash !== digest(request)) fail('test_full_evidence_invalid')
   if (evidence.receiptHash !== digest(receipt) || evidence.diagnosticHash !== digest(evidence.diagnostic)) fail('test_full_evidence_invalid')
   if (receipt.envelopeId !== actionId || receipt.envelopeHash !== evidence.envelopeHash) fail('test_full_evidence_invalid')
@@ -492,8 +500,11 @@ async function terminalFullResult(repo, state, actionId, { requireLatest = true,
   if (!['passed', 'failed', 'timed_out', 'output_limit', 'spawn_failed'].includes(receipt.status)) fail('test_full_evidence_invalid')
   if (!(receipt.exitCode === null || Number.isSafeInteger(receipt.exitCode)) || !(receipt.signal === null || typeof receipt.signal === 'string' && receipt.signal.length > 0)) fail('test_full_evidence_invalid')
   if (!hashPattern.test(receipt.stdoutHash || '') || !hashPattern.test(receipt.stderrHash || '')) fail('test_full_evidence_invalid')
+  const guard=!legacyRecorderVersions.has(recorder)
+    ? await verifyRecordedGuard(repo,request).catch(()=>fail('test_full_evidence_invalid'))
+    : null
   return {
-    passed: receipt.status === 'passed' && receipt.exitCode === 0 && !receipt.signal,
+    passed: receipt.status === 'passed' && receipt.exitCode === 0 && !receipt.signal && (guard ? guard.passed === true : legacyRecorderVersions.has(recorder)),
     resultStatus: receipt.status,
     requestHash: evidence.envelopeHash,
     receiptHash: evidence.receiptHash,
