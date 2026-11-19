@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "taskId": "task_6892b2bb-9852-4209-b1d5-420d45b2c8f8",
+  "parentTaskId": "",
+  "title": "压缩后上下文体积评估与冷证据规则",
+  "intentSummary": "评估压缩后上下文体积并约束冷证据；本任务实现未纳入主线，代码归档于 feat/stage-experience-wip(b45aea8)",
+  "keywords": [],
+  "branch": "codex/reference-contract-guard",
+  "baseCommit": "262000210f9b29aca56d0ac02fc839b20a86cc08",
+  "deliveryCommit": "",
+  "completedAt": "2026-11-19",
+  "status": "completed",
+  "knowledgeDisposition": "no-reusable-experience",
+  "artifactRoot": ".cap/history/task_6892b2bb-9852-4209-b1d5-420d45b2c8f8"
+}

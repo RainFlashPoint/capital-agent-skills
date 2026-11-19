@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### 本地观察期（2026-11-19 起）
+
+本仓 `main` 领先 `origin/main`（`37c68fe` / v0.14.5）17 个提交，其中 12 个为行为变更，
+含工厂级契约守卫（`contract-wired`、`no-opt-in-safety`）及其校准修复。
+
+**团队安装仍使用 v0.14.5。** 观察期为在实际工作中评估守卫误报率，1–2 周后再决定推送节奏。
+
+观察期判据：误报 ≤ 2 次且每次可归因；至少 1 次真实命中（非探针构造）；
+0 次因嫌麻烦而写 `contract-guard: none` 豁免。**第三条最关键**——若出现为绕过守卫而写豁免，
+说明守卫尚未到可推广程度。
+
+本仓 `.git/hooks/pre-push` 为两层：层 1 拦「实际推送内容超出 `origin/main` 的 main 推送」
+（按待推送目标分支判断，不按当前分支，避免在 main 上推开发分支被误拦）；
+层 2 为 cap 治理钩子（开发分支需 `.cap/HANDOFF.md`，受保护分支需 `cap-gate: PASS`）。
+发布时删除层 1 或显式 `git push --no-verify`。`hooks` 不进版本控制，仅本机生效。
+
+原挂起的 `task_6892b2bb`（压缩后上下文体积评估与冷证据规则）已按 `intake.py retire`
+正式退场归档至 `.cap/history/`，快照不入 Git，仅脱敏索引 `history/index/` 进 Git。
+该任务实现未并入主线，代码在归档分支 `feat/stage-experience-wip`（`b45aea8`）。
+
 - 校准契约守卫：按排除法发现各目录源码，保守识别不限变量名的 JS/Python 安全开关；full 盘点显式 advisory，不以发现项阻断。分开报告 Git 清单、生产源码和实际读取数，排除已跟踪第三方 schema，并明确文件名接线仅为词法线索。
 
 - 测试阶段增加工厂级契约守卫：检查新增契约是否被生产代码引用，并拦截安全判断 opt-in；独立 guard envelope 先于主命令执行，两者 AND 汇总，最新指针和状态检查绑定并重验 guard 证据。显式命令不能绕过；仅 PROFILE 中带原因的仓级例外可禁用，不提升为 Server Gate。
