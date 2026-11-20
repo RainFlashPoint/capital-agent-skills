@@ -2,7 +2,7 @@
 
 把 Coding Agent 的需求、实现、测试、评审、发布和经验复用变成一条可恢复、可验证、可移植的研发主线。
 
-<!-- release-version: 0.14.7 -->
+<!-- release-version: 0.14.8 -->
 
 [![CI](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/ci.yml)
 [![Release Check](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml/badge.svg)](https://github.com/RainFlashPoint/capital-agent-skills/actions/workflows/release-check.yml)
@@ -10,7 +10,7 @@
 
 ## 公开状态与证据
 
-当前候选版本：`v0.14.7`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
+当前候选版本：`v0.14.8`。版本单一事实源是 [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)；marketplace、README、CHANGELOG、Tag 与 GitHub Release 的关系由 `scripts/release-contract.mjs` 确定性检查。
 
 公开证据按入口区分：
 
