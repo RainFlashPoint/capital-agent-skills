@@ -1,27 +1,21 @@
 {
   "schema": "cap-team-handoff/v1",
   "repository": "remote:github.com/RainFlashPoint/capital-agent-skills",
-  "branch": "codex/cap-test-state-machine",
-  "baseCommit": "18996d6d3654570c64ed2661f88955b7ca5ca581",
-  "sourceCommit": "7894709aaf9f34dbb0d0c928c663d52b2a9aa6c6",
-  "sourceTree": "752c91a9805d469f953e1a829d71dd46f63f7c24",
+  "branch": "codex/macos-runner-sandbox-fix",
+  "baseCommit": "9fcb36174bb864da76eec45f593a678d8260729d",
+  "sourceCommit": "2efb988e5ae536053d112bfb2d8ea5caa3afcf52",
+  "sourceTree": "4118e22686a86e9a6842ee0b88595ee178b29204",
   "changedFiles": [
     "CHANGELOG.md",
-    "CLAUDE.md",
-    "scripts/cap-context-gc.mjs",
-    "scripts/test-cap-context-gc.mjs",
-    "scripts/test-cap-history-recon.mjs",
-    "skills/cap-flow/references/collaboration-discipline.md",
-    "skills/cap-flow/references/context-compaction.md",
-    "skills/cap-flow/references/task-reconnaissance.md",
-    "skills/cap-flow/references/team-git-handoff.md"
+    "runtime/local-test-provider.mjs",
+    "scripts/test-local-test-provider.mjs"
   ],
-  "intent": "Converge Capital Agent context runtime artifacts by reference reachability and make reviewed retained records available for Git sharing",
-  "decisions": "Preserve current and historical referenced chains; quarantine unreferenced files; prune only an exact reviewed quarantine inventory under writer locks; list retained artifacts and task documents with hashes for separate privacy and ownership review",
-  "nextActions": "Receiving clone verifies this summary and the referenced Commit, reviews retained records before Git tracking, and rebuilds its own Task, Session, authorization and tests",
-  "verification": "Local release-check passed on source Commit 7894709aaf9f34dbb0d0c928c663d52b2a9aa6c6; remote CI and receiving-clone verification are pending",
-  "invalidatesOn": "Source Commit, Git tree, branch, changed paths, runtime retention policy, repository identity or user authorization changes",
+  "intent": "Restore system Python startup for the macOS Test Runner and cover credential-lock recovery.",
+  "decisions": "Allow the required system toolchain selector and Command Line Tools reads while keeping the existing host file, signal, and IPC restrictions.",
+  "nextActions": "Observe GitHub CI for the development branch and track automatic Runner pickup and Review on a separately eligible Server candidate.",
+  "verification": "The source commit passed 60 tests on macOS with zero failures or skips, including Python startup, credential-lock recovery, and isolation regressions. Skill validation and git diff --check passed locally. Remote verification is pending.",
+  "invalidatesOn": "Changes to the source tree, sandbox policy, or supported OS toolchain require re-verification.",
   "verificationStatus": "pending-verification",
   "nonTransferable": "Task / Session / authorization / Gate / Delivery / Outbox / PASS",
-  "summarySha256": "7b19c33cb3a128d0556bc441075c2ee812c63cc8b6257e9a58036a08c7aa1b5e"
+  "summarySha256": "e7694588669465f7281001fdb9fac41bbba1591de90e0e28a8726e275b5c8e75"
 }
