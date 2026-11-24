@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 修复 macOS 本地 Test Runner 沙箱中系统 Python 的启动问题。允许读取精确的 Xcode 工具链选择链接和 Command Line Tools 目录，保留宿主文件、跨沙箱信号和 IPC 的隔离。
+
 ## 0.14.8
 
 ### 本地观察期（2026-11-19 起）

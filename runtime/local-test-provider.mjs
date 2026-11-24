@@ -161,10 +161,14 @@ export async function sandboxInvocation(command, cwd, sandboxHome) {
   const canonicalCwd = await realpath(cwd)
   const canonicalHome = await realpath(sandboxHome)
   if (process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec')) {
-    const readableRoots = ['/System', '/usr', '/bin', '/sbin', '/opt/homebrew', '/Library/Java', '/private/etc', '/private/var/select/sh', '/dev'].filter(existsSync)
+    const readableRoots = ['/System', '/usr', '/bin', '/sbin', '/opt/homebrew', '/Library/Java', '/Library/Developer/CommandLineTools', '/private/etc', '/private/var/select/sh', '/dev'].filter(existsSync)
     const readable = readableRoots.map(path => `(subpath ${JSON.stringify(path)})`).join(' ')
+    // xcrun checks these selectors even when their Xcode target is missing
+    // and it falls back to Command Line Tools.
+    const developerSelectors = ['/private/var/db/xcode_select_link', '/private/var/select/developer_dir']
+    const selectorReads = developerSelectors.map(path => `(literal ${JSON.stringify(path)})`).join(' ')
     // realpath(3) needs metadata on ancestors such as /opt, but no content access.
-    const metadata = [...new Set([canonicalCwd, canonicalHome, ...readableRoots].flatMap(path => {
+    const metadataAncestors = [canonicalCwd, canonicalHome, ...readableRoots, ...developerSelectors].flatMap(path => {
       const ancestors = []
       let current = dirname(path)
       while (current && current !== dirname(current)) {
@@ -172,7 +176,9 @@ export async function sandboxInvocation(command, cwd, sandboxHome) {
         current = dirname(current)
       }
       return ancestors
-    }))].filter(existsSync).map(path => `(literal ${JSON.stringify(path)})`).join(' ')
+    })
+    const metadata = [...new Set([...metadataAncestors, '/Applications', '/Applications/Xcode.app'])]
+      .filter(existsSync).map(path => `(literal ${JSON.stringify(path)})`).join(' ')
     const profile = `(version 1)
 (deny default)
 (import "system.sb")
@@ -180,7 +186,7 @@ export async function sandboxInvocation(command, cwd, sandboxHome) {
 (allow signal (target same-sandbox))
 (allow network*)
 (allow file-read-metadata ${metadata})
-(allow file-read* ${readable} (subpath ${JSON.stringify(canonicalCwd)}) (subpath ${JSON.stringify(canonicalHome)}))
+(allow file-read* ${readable} ${selectorReads} (subpath ${JSON.stringify(canonicalCwd)}) (subpath ${JSON.stringify(canonicalHome)}))
 (allow file-write* (subpath ${JSON.stringify(canonicalCwd)}) (subpath ${JSON.stringify(canonicalHome)}) (literal "/dev/null"))`
     return { command: '/usr/bin/sandbox-exec', args: ['-p', profile, '/bin/bash', '--noprofile', '--norc', '-c', command], mode: 'macos-sandbox' }
   }

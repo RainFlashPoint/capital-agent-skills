@@ -83,6 +83,49 @@ test('macOS sandbox permits child termination but denies host signals and file a
   assert.equal(result.stderr, '')
 })
 
+test('macOS sandbox starts system Python and recovers a credential lock after its holder dies', {
+  skip: !macSandbox || !existsSync('/usr/bin/python3') || !existsSync('/Library/Developer/CommandLineTools/usr/bin/python3'),
+}, async t => {
+  const fixture = await sandboxFixture(t)
+  const started = await fixture.run('/usr/bin/python3 --version')
+  assert.equal(started.status, 0, started.stderr || String(started.error))
+  assert.match(started.stdout, /^Python 3\./)
+
+  const locker = [
+    'import fcntl, sys',
+    'with open(sys.argv[1], "a") as lock:',
+    '    fcntl.flock(lock, fcntl.LOCK_EX)',
+    '    print("locked", flush=True)',
+    '    sys.stdin.read()',
+  ].join('\n')
+  const probe = `
+import fcntl, os, subprocess
+path = os.path.join(os.environ["HOME"], "credentials.lock")
+holder = subprocess.Popen(
+    ["/usr/bin/python3", "-c", ${JSON.stringify(locker)}, path],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+)
+try:
+    assert holder.stdout.readline().strip() == "locked"
+    with open(path, "a") as contender:
+        try:
+            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            raise AssertionError("credential lock admitted a second holder")
+        holder.kill()
+        holder.wait(timeout=5)
+        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+finally:
+    if holder.poll() is None:
+        holder.kill()
+        holder.wait(timeout=5)
+`
+  const locked = await fixture.run(`/usr/bin/python3 -c ${shellQuote(probe)}`)
+  assert.equal(locked.status, 0, locked.stderr || String(locked.error))
+})
+
 test('macOS sandbox resolves Homebrew PostgreSQL symlinks and reports shared-memory blockers', { skip: !macSandbox || !existsSync('/opt/homebrew/bin/initdb') || !existsSync('/opt/homebrew/share/postgresql/postgres.bki') }, async t => {
   const fixture = await sandboxFixture(t)
   const command = `/opt/homebrew/bin/initdb --no-locale -A trust -L /opt/homebrew/share/postgresql -D ${shellQuote(join(fixture.cwd, 'pgdata'))}`
